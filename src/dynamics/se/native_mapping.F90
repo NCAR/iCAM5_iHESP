@@ -76,7 +76,7 @@ contains
     use global_norms_mod, only: wrap_repro_sum
     use cam_pio_utils, only : cam_pio_openfile, cam_pio_createfile
     use element_mod, only : element_t
-    use hybrid_mod, only : hybrid_t, hybrid_create
+    use hybrid_mod, only : hybrid_t, config_thread_region
     use pio, only : pio_noerr, pio_openfile, pio_createfile, pio_closefile, &
          pio_get_var, pio_put_var, pio_write_darray,pio_int, pio_double, &
          pio_def_var, pio_put_att, pio_global, file_desc_t, var_desc_t, &
@@ -261,8 +261,9 @@ contains
           end if
        enddo
 
-       ithr=omp_get_thread_num()
-       hybrid = hybrid_create(par,ithr,1)
+       hybrid = config_thread_region(par,'serial')
+!       ithr=omp_get_thread_num()
+!       hybrid = hybrid_create(par,ithr,1)
 
 
 
@@ -522,5 +523,4 @@ contains
 
 
 end module native_mapping
-
 

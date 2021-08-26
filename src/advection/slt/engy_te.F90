@@ -1,6 +1,5 @@
-
 subroutine engy_te(cwava   ,w       ,t       ,u      ,v        , &
-                   phis    ,pdel    ,ps      ,engy   , nlon    )
+                   phis    ,pdel    ,engy    , nlon  )
 
 !----------------------------------------------------------------------- 
 ! 
@@ -34,7 +33,6 @@ subroutine engy_te(cwava   ,w       ,t       ,u      ,v        , &
   real(r8), intent(in)  :: v   (plon,plev)      ! v-component
   real(r8), intent(in)  :: phis(plon)           ! Geopotential
   real(r8), intent(in)  :: pdel(plon,plev)      ! pressure diff between interfaces
-  real(r8), intent(in)  :: ps  (plon     )      ! Surface pressure
   real(r8), intent(out) :: engy                 ! accumulator
 !
 !---------------------------Local variables-----------------------------
@@ -51,11 +49,10 @@ subroutine engy_te(cwava   ,w       ,t       ,u      ,v        , &
 !
   do k=1,plev
      do i=1,nlon
-        engy = engy + ( cpair*t(i,k) + 0.5_r8*( u(i,k)*u(i,k) + v(i,k)*v(i,k) ) )*pdel(i,k)
+        engy = engy + ( cpair*t(i,k)                          + &
+                        0.5_r8*( u(i,k)*u(i,k) + v(i,k)*v(i,k) ) + &
+                        phis(i) )*pdel(i,k)
      end do
-  end do
-  do i=1,nlon
-     engy = engy + phis(i)*ps(i)
   end do
 
   engy = engy*const

@@ -23,7 +23,7 @@ module dust_model
   integer, parameter :: dust_nnum = 2
   character(len=6), parameter :: dust_names(dust_nbin+dust_nnum) = (/ 'dst_a1', 'dst_a3', 'num_a1', 'num_a3' /)
   real(r8),         parameter :: dust_dmt_grd(dust_nbin+1) = (/ 0.1e-6_r8, 1.0e-6_r8, 10.0e-6_r8/)
-  real(r8),         parameter :: dust_emis_sclfctr(dust_nbin) = (/ 0.011_r8,0.989_r8 /)
+  real(r8),         parameter :: dust_emis_sclfctr(dust_nbin) = (/ 0.032_r8,0.968_r8 /)
 #elif ( defined MODAL_AERO_4MODE )
   integer, parameter :: dust_nbin = 3
   integer, parameter :: dust_nnum = 3
@@ -32,7 +32,7 @@ module dust_model
   real(r8),         parameter :: dust_dmt_grd(dust_nbin+1) = &
                                  (/ 0.01e-6_r8, 0.1e-6_r8, 1.0e-6_r8, 10.0e-6_r8 /) ! Aitken dust
   real(r8),         parameter :: dust_emis_sclfctr(dust_nbin) = &
-                                 (/ 1.65E-05_r8, 0.011_r8, 0.989_r8 /) ! Aitken dust
+                                 (/ 1.65E-05_r8, 0.011_r8, 0.999_r8 /) ! Aitken dust
 #elif ( defined MODAL_AERO_7MODE )
   integer, parameter :: dust_nbin = 2
   integer, parameter :: dust_nnum = 2

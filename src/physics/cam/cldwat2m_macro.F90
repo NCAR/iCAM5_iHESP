@@ -1091,7 +1091,6 @@
          endif 
       enddo
    enddo
-
    nl_star(:ncol,top_lev:) = max(0._r8,nl_dprime(:ncol,top_lev:)+QQnl2(:ncol,top_lev:)*dt) 
    ni_star(:ncol,top_lev:) = max(0._r8,ni_dprime(:ncol,top_lev:)+QQni2(:ncol,top_lev:)*dt)
 

@@ -42,7 +42,6 @@
 #               Use this to replace default Fortran compiler optimization.
 # COSP_LIBDIR   Directory where COSP library will be built.
 # MCT_LIBDIR    Directory where MCT library will be built.
-# GPTL_SRCDIR   Source directory for GPTL timing library
 #
 # Note: An internal implementation of the ESMF time-manager interface is provided
 #       with the sequential CCSM distribution in models/utils/esmf_wrf_timemgr.
@@ -68,9 +67,6 @@ endif
 # Load dependency search path.
 dirs := . $(shell cat Filepath)
 
-# Add paths for GPTL
-dirs += $(GPTL_SRCDIR) $(GPTL_SRCDIR)/gptl
-
 # Set cpp search path, include netcdf
 cpp_dirs := $(dirs) $(INC_NETCDF) $(INC_MPI) $(INC_PNETCDF) \
 	$(ROOTDIR)/models/csm_share/include
@@ -92,13 +88,7 @@ touch_filepath:
 # Get list of files and build dependency file for all .o files
 #   using perl scripts mkSrcfiles and mkDepends
 
-SOURCES := $(shell cat Srcfiles)
-
-# Append GPTL source files
-SOURCES += gptl.c util.c get_memusage.c print_memusage.c
-SOURCES += gptl_papi.c f_wrappers.c perf_mod.F90 perf_utils.F90
-SOURCES += pr_summary.c gptlf.F90 print_rusage.c memstats.c
-SOURCES += getoverhead.c hashstats.c
+SOURCES   := $(shell cat Srcfiles)
 
 # if a source is of form .F90.in strip the .in before creating the list of objects
 SOURCES := $(SOURCES:%.F90.in=%.F90)
@@ -1117,17 +1107,3 @@ export FREEFLAGS
 export FIXEDFLAGS
 
 include $(CURDIR)/Depends
-
-
-# Dependencies on GPTL
-t_driver_timers_mod.o: perf_mod.o
-domain_mod.o: perf_mod.o
-
-# GPTL dependencies
-perf_mod.o: perf_utils.o
-f_wrappers.o: gptl.h private.h
-f_wrappers_pmpi.o: gptl.h private.h
-gptl.o: gptl.h private.h gptlf.o
-util.o: gptl.h private.h
-gptl_papi.o: gptl.h private.h
-pmpi.o: gptl.h private.h

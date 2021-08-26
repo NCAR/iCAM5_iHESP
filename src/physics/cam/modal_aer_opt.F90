@@ -206,7 +206,7 @@ subroutine modal_aer_opt_init()
       endif
 
       write(fldname,'(a,i1)') 'AODDUST', m
-      write(lngname,'(a,i1,a)') 'Aerosol optical depth 550 nm mode ',m,' from dust'
+      write(lngname,'(a,i1,a)') 'Aerosol optical depth 550 nm model ',m,' from dust'
       call addfld (fldname, '  ', 1, 'A', lngname, phys_decomp, flag_xyfill=.true.)
       if (m>3 .and. history_aero_optics) then
          call add_default (fldname, 1, ' ')

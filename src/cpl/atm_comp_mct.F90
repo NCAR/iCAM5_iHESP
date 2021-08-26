@@ -12,7 +12,7 @@ module atm_comp_mct
   use seq_infodata_mod
   use seq_timemgr_mod
 
-  use shr_kind_mod     , only: r8 => shr_kind_r8, cl=>shr_kind_cl
+  use shr_kind_mod     , only: r8 => shr_kind_r8, cl=>shr_kind_cl, cx=>shr_kind_cx
   use shr_file_mod     , only: shr_file_getunit, shr_file_freeunit, &
                                shr_file_setLogUnit, shr_file_setLogLevel, &
                                shr_file_getLogUnit, shr_file_getLogLevel, &
@@ -49,13 +49,6 @@ module atm_comp_mct
   use runtime_opts     , only: read_namelist
   use scamMod          , only: single_column,scmlat,scmlon
 
- !Water isotopes:
-
-  use water_tracer_vars, only: wtrc_nsrfvap, wtrc_iasrfvap, wtrc_indices, wtrc_species, &
-                               trace_water
-  use water_tracers    , only: wtrc_ratio
-  use water_isotopes   , only: isph2o, isph216o, isphdo, isph218o
-
 !
 ! !PUBLIC TYPES:
   implicit none
@@ -86,12 +79,12 @@ module atm_comp_mct
   type(cam_in_t) , pointer :: cam_in(:)
   type(cam_out_t), pointer :: cam_out(:)
 
-  integer, parameter  :: nlen = 256     ! Length of character strings
+  integer, parameter  :: nlen = 1024     ! Length of character strings
   character(len=nlen) :: fname_srf_cam  ! surface restart filename
   character(len=nlen) :: pname_srf_cam  ! surface restart full pathname
 
   ! Filename specifier for restart surface file
-  character(len=cl) :: rsfilename_spec_cam
+  character(len=cx) :: rsfilename_spec_cam
 
   ! Are all surface types present   
   logical :: lnd_present ! if true => land is present
@@ -211,9 +204,9 @@ CONTAINS
        call seq_infodata_GetData( infodata,                                           &
             case_name=caseid, case_desc=ctitle,                                       &
             start_type=starttype,                                                     &
-            atm_adiabatic=adiabatic,                                                  &
-            atm_ideal_phys=ideal_phys,                                                &
-            aqua_planet=aqua_planet,                                                  &
+!            atm_adiabatic=adiabatic,                                                  &
+!            atm_ideal_phys=ideal_phys,                                                &
+!            aqua_planet=aqua_planet,                                                  &
             brnch_retain_casename=brnch_retain_casename,                              &
             single_column=single_column, scmlat=scmlat, scmlon=scmlon,                &
             orb_eccen=eccen, orb_mvelpp=mvelpp, orb_lambm0=lambm0, orb_obliqr=obliqr, &
@@ -222,6 +215,10 @@ CONTAINS
        !
        ! Get nsrest from startup type methods
        !
+       adiabatic = .false.
+       ideal_phys = .false.
+       aqua_planet = .false.
+
        if (     trim(starttype) == trim(seq_infodata_start_type_start)) then
           nsrest = 0
        else if (trim(starttype) == trim(seq_infodata_start_type_cont) ) then

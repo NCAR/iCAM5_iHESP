@@ -2017,8 +2017,7 @@ CONTAINS
      if(dycore_is('LR')) then
         allocate(lontmp_st(splon))
      end if
-     do while (fincllonlat(ff,t) /= ' ')
-
+     do while (len_trim(fincllonlat(ff,t)) > 0)
         lonlatname(ff) = trim(fincllonlat(ff,t))
         call getlatind(lonlatname(ff),latind(ff,1),latind(ff,2),latname(ff),latdeg     ,plat)
 	
@@ -3409,7 +3408,6 @@ CONTAINS
 
      integer :: lchnk, plat
 
-     character(len=16) :: time_per_freq
 
      if(restart) then
         tape => restarthistory_tape
@@ -3618,24 +3616,6 @@ CONTAINS
      ierr=pio_put_att (tape(t)%File, PIO_GLOBAL, 'initial_file', ncdata)
      ierr=pio_put_att (tape(t)%File, PIO_GLOBAL, 'topography_file', bnd_topo)
 
-     ! Determine what time period frequency is being output for each file
-     ! Note that nhtfrq is now in timesteps
-     dtime = get_step_size()
-     if (nhtfrq(t) == 0) then                                !month 
-        time_per_freq = 'month_1'
-     else if (mod(nhtfrq(t)*dtime,86400) == 0) then          ! day
-        write(time_per_freq,999) 'day_',nhtfrq(t)*dtime/86400
-     else if (mod(nhtfrq(t)*dtime,3600) == 0) then           ! hour
-        write(time_per_freq,999) 'hour_',(nhtfrq(t)*dtime)/3600
-     else if (mod(nhtfrq(t)*dtime,60) == 0) then           ! hour
-        write(time_per_freq,999) 'minute_',(nhtfrq(t)*dtime)/60
-     else                                                    ! second
-        write(time_per_freq,999) 'second_',nhtfrq(t)*dtime
-     end if
-999  format(a,i0)
-
-     ierr=pio_put_att (tape(t)%File, PIO_GLOBAL, 'time_period_freq', trim(time_per_freq))
-    
      if(.not. is_satfile(t)) then
         if(ngroup(t)==0 .or. restart) then
            if(ncoloutput) then

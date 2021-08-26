@@ -48,7 +48,6 @@ public :: &
      size_dist_param_liq, &
      size_dist_param_basic, &
      avg_diameter, &
-     rising_factorial, &
      ice_deposition_sublimation, &
      kk2000_liq_autoconversion, &
      ice_autoconversion, &
@@ -195,21 +194,6 @@ real(r8) :: gamma_bs_plus3
 real(r8) :: gamma_half_br_plus5
 real(r8) :: gamma_half_bs_plus5
 
-!=========================================================
-! Utilities that are cheaper if the compiler knows that
-! some argument is an integer.
-!=========================================================
-
-interface rising_factorial
-   module procedure rising_factorial_r8
-   module procedure rising_factorial_integer
-end interface rising_factorial
-
-interface var_coef
-   module procedure var_coef_r8
-   module procedure var_coef_integer
-end interface var_coef
-
 !==========================================================================
 contains
 !==========================================================================
@@ -311,34 +295,6 @@ end function NewMGHydrometeorProps
 !FORMULAS
 !========================================================================
 
-! Use gamma function to implement rising factorial extended to the reals.
-pure function rising_factorial_r8(x, n) result(res)
-  real(r8), intent(in) :: x, n
-  real(r8) :: res
-
-  res = gamma(x+n)/gamma(x)
-
-end function rising_factorial_r8
-
-! Rising factorial can be performed much cheaper if n is a small integer.
-pure function rising_factorial_integer(x, n) result(res)
-  real(r8), intent(in) :: x
-  integer, intent(in) :: n
-  real(r8) :: res
-
-  integer :: i
-  real(r8) :: factor
-
-  res = 1._r8
-  factor = x
-
-  do i = 1, n
-     res = res * factor
-     factor = factor + 1._r8
-  end do
-
-end function rising_factorial_integer
-
 ! Calculate correction due to latent heat for evaporation/sublimation
 elemental function calc_ab(t, qv, xxl) result(ab)
   real(r8), intent(in) :: t     ! Temperature
@@ -374,19 +330,14 @@ elemental subroutine size_dist_param_liq(props, qcic, ncic, rho, pgam, lamc)
      props_loc = props
 
      ! Get pgam from fit to observations of martin et al. 1994
-     pgam = 0.0005714_r8*1.e-6_r8*ncic*rho + 0.2714_r8
+     pgam = 0.0005714_r8*(ncic/1.e6_r8*rho) + 0.2714_r8
      pgam = 1._r8/(pgam**2) - 1._r8
      pgam = max(pgam, 2._r8)
+     pgam = min(pgam, 15._r8)
 
      ! Set coefficient for use in size_dist_param_basic.
-     ! The 3D case is so common and optimizable that we specialize it:
-     if (props_loc%eff_dim == 3._r8) then
-        props_loc%shape_coef = pi / 6._r8 * props_loc%rho * &
-             rising_factorial(pgam+1._r8, 3)
-     else
-        props_loc%shape_coef = pi / 6._r8 * props_loc%rho * &
-             rising_factorial(pgam+1._r8, props_loc%eff_dim)
-     end if
+     props_loc%shape_coef = pi * props_loc%rho / 6._r8 * &
+          rising_factorial(pgam+1._r8, props_loc%eff_dim)
 
      ! Limit to between 2 and 50 microns mean size.
      props_loc%lambda_bounds = (pgam+1._r8)*1._r8/[50.e-6_r8, 2.e-6_r8]
@@ -400,6 +351,17 @@ elemental subroutine size_dist_param_liq(props, qcic, ncic, rho, pgam, lamc)
      pgam = -100._r8
      lamc = 0._r8
   end if
+
+contains
+
+  ! Use gamma function to implement rising factorial extended to the reals.
+  pure function rising_factorial(x, n)
+    real(r8), intent(in) :: x, n
+    real(r8) :: rising_factorial
+
+    rising_factorial = gamma(x+n)/gamma(x)
+
+  end function rising_factorial
 
 end subroutine size_dist_param_liq
 
@@ -454,27 +416,15 @@ real(r8) elemental function avg_diameter(q, n, rho_air, rho_sub)
 
 end function avg_diameter
 
-elemental function var_coef_r8(relvar, a) result(res)
+real(r8) elemental function var_coef(relvar, a)
   ! Finds a coefficient for process rates based on the relative variance
   ! of cloud water.
   real(r8), intent(in) :: relvar
   real(r8), intent(in) :: a
-  real(r8) :: res
 
-  res = rising_factorial(relvar, a) / relvar**a
+  var_coef = gamma(relvar + a) / (gamma(relvar) * relvar**a)
 
-end function var_coef_r8
-
-elemental function var_coef_integer(relvar, a) result(res)
-  ! Finds a coefficient for process rates based on the relative variance
-  ! of cloud water.
-  real(r8), intent(in) :: relvar
-  integer, intent(in) :: a
-  real(r8) :: res
-
-  res = rising_factorial(relvar, a) / relvar**a
-
-end function var_coef_integer
+end function var_coef
 
 !========================================================================
 !MICROPHYSICAL PROCESS CALCULATIONS
@@ -601,9 +551,9 @@ elemental subroutine kk2000_liq_autoconversion(microp_uniform, qcic, &
      ! switch for sub-columns, don't include sub-grid qc
 
      prc = prc_coef * &
-          1350._r8 * qcic**2.47_r8 * (ncic*1.e-6_r8*rho)**(-1.79_r8)
-     nprc = prc * (1._r8/droplet_mass_25um)
-     nprc1 = prc*ncic/qcic
+          1350._r8 * qcic**2.47_r8 * (ncic/1.e6_r8*rho)**(-1.79_r8)
+     nprc = prc/droplet_mass_25um
+     nprc1 = prc/(qcic/ncic)
 
   else
      prc=0._r8
@@ -631,29 +581,17 @@ elemental subroutine ice_autoconversion(t, qiic, lami, n0i, dcs, prci, nprci)
   ! Assume autoconversion timescale of 180 seconds.
   real(r8), parameter :: ac_time = 180._r8
 
-  ! Average mass of an ice particle.
-  real(r8) :: m_ip
-  ! Ratio of autoconversion diameter to average diameter.
-  real(r8) :: d_rat
-
   if (t <= tmelt .and. qiic >= qsmall) then
 
-     d_rat = lami*dcs
+     nprci = n0i/(lami*ac_time)*exp(-lami*dcs)
 
-     ! Rate of ice particle conversion (number).
-     nprci = n0i/(lami*ac_time)*exp(-d_rat)
-
-     m_ip = (rhoi*pi/6._r8) / lami**3
-
-     ! Rate of mass conversion.
-     ! Note that this is:
-     ! m n (d^3 + 3 d^2 + 6 d + 6)
-     prci = m_ip * nprci * &
-          (((d_rat + 3._r8)*d_rat + 6._r8)*d_rat + 6._r8)
+     prci = pi*rhoi*n0i/(6._r8*ac_time)* &
+          (dcs**3/lami+3._r8*dcs**2/lami**2+ &
+          6._r8*dcs/lami**3+6._r8/lami**4)*exp(-lami*dcs)
 
   else
-     prci = 0._r8
-     nprci = 0._r8
+     prci=0._r8
+     nprci=0._r8
   end if
 
 end subroutine ice_autoconversion
@@ -662,7 +600,7 @@ end subroutine ice_autoconversion
 !===================================
 
 elemental subroutine immersion_freezing(microp_uniform, t, pgam, lamc, &
-     qcic, ncic, relvar, mnuccc, nnuccc)
+     cdist1, qcic, relvar, mnuccc, nnuccc)
 
   logical, intent(in) :: microp_uniform
 
@@ -672,10 +610,10 @@ elemental subroutine immersion_freezing(microp_uniform, t, pgam, lamc, &
   ! Cloud droplet size distribution parameters
   real(r8), intent(in) :: pgam
   real(r8), intent(in) :: lamc
+  real(r8), intent(in) :: cdist1
 
-  ! MMR and number concentration of in-cloud liquid water
+  ! MMR of in-cloud liquid water
   real(r8), intent(in) :: qcic
-  real(r8), intent(in) :: ncic
 
   ! Relative variance of cloud water
   real(r8), intent(in) :: relvar
@@ -685,24 +623,27 @@ elemental subroutine immersion_freezing(microp_uniform, t, pgam, lamc, &
   real(r8), intent(out) :: nnuccc ! Number
 
   ! Coefficients that will be omitted for sub-columns
-  real(r8) :: dum
+  real(r8) :: dum, dum1
 
 
   if (.not. microp_uniform) then
-     dum = var_coef(relvar, 2)
+     dum = var_coef(relvar, 2._r8)
+     dum1 = var_coef(relvar, 1._r8)
   else
      dum = 1._r8
+     dum1 = 1._r8
   end if
 
   if (qcic >= qsmall .and. t < 269.15_r8) then
 
-     nnuccc = &
-          pi/6._r8*ncic*rising_factorial(pgam+1._r8, 3)* &
-          bimm*(exp(aimm*(tmelt - t))-1._r8)/lamc**3
+     mnuccc = dum * &
+          pi*pi/36._r8*rhow* &
+          cdist1*gamma(7._r8+pgam)* &
+          bimm*(exp(aimm*(tmelt - t))-1._r8)/lamc**3/lamc**3
 
-     mnuccc = dum * nnuccc * &
-          pi/6._r8*rhow* &
-          rising_factorial(pgam+4._r8, 3)/lamc**3
+     nnuccc = dum1 * &
+          pi/6._r8*cdist1*gamma(pgam+4._r8) &
+          *bimm*(exp(aimm*(tmelt - t))-1._r8)/lamc**3
 
   else
      mnuccc = 0._r8
@@ -716,7 +657,7 @@ end subroutine immersion_freezing
 ! dust size and number in multiple bins are read in from companion routine
 
 pure subroutine contact_freezing (microp_uniform, t, p, rndst, nacon, &
-     pgam, lamc, qcic, ncic, relvar, mnucct, nnucct)
+     pgam, lamc, cdist1, qcic, relvar, mnucct, nnucct)
 
   logical, intent(in) :: microp_uniform
 
@@ -728,10 +669,10 @@ pure subroutine contact_freezing (microp_uniform, t, p, rndst, nacon, &
   ! Size distribution parameters for cloud droplets
   real(r8), intent(in) :: pgam(:)
   real(r8), intent(in) :: lamc(:)
+  real(r8), intent(in) :: cdist1(:)
 
-  ! MMR and number concentration of in-cloud liquid water
+  ! MMR of in-cloud liquid water
   real(r8), intent(in) :: qcic(:)
-  real(r8), intent(in) :: ncic(:)
 
   ! Relative cloud water variance
   real(r8), intent(in) :: relvar(:)
@@ -750,9 +691,6 @@ pure subroutine contact_freezing (microp_uniform, t, p, rndst, nacon, &
 
   ! Coefficients not used for subcolumns
   real(r8) :: dum, dum1
-
-  ! Common factor between mass and number.
-  real(r8) :: contact_factor
 
   integer  :: i
 
@@ -778,13 +716,13 @@ pure subroutine contact_freezing (microp_uniform, t, p, rndst, nacon, &
 
         ndfaer = 1.381e-23_r8*t(i)*nslip/(6._r8*pi*viscosity*rndst(i,:))  ! aerosol diffusivity (m2/s)
 
-        contact_factor = dot_product(ndfaer,nacon(i,:)*tcnt) * pi * &
-             ncic(i) * (pgam(i) + 1._r8) / lamc(i)
+        mnucct(i) = dum *  &
+             dot_product(ndfaer,nacon(i,:)*tcnt)*pi*pi/3._r8*rhow* &
+             cdist1(i)*gamma(pgam(i)+5._r8)/lamc(i)**4
 
-        mnucct(i) = dum * contact_factor * &
-             pi/3._r8*rhow*rising_factorial(pgam(i)+2._r8, 3)/lamc(i)**3
-
-        nnucct(i) =  dum1 * 2._r8 * contact_factor
+        nnucct(i) =  dum1 *  &
+             dot_product(ndfaer,nacon(i,:)*tcnt)*2._r8*pi*  &
+             cdist1(i)*gamma(pgam(i)+2._r8)/lamc(i)
 
      else
 
@@ -816,8 +754,10 @@ elemental subroutine snow_self_aggregation(t, rho, asn, rhosn, qsic, nsic, nsagg
   real(r8), intent(out) :: nsagg
 
   if (qsic >= qsmall .and. t <= tmelt) then
-     nsagg = -1108._r8*eii/(4._r8*720._r8*rhosn)*asn*qsic*nsic*rho*&
-          ((qsic/nsic)*(1._r8/(rhosn*pi)))**((bs-1._r8)/3._r8)
+     nsagg = -1108._r8*asn*eii* &
+          pi**((1._r8-bs)/3._r8)*rhosn**((-2._r8-bs)/3._r8)* &
+          rho**((2._r8+bs)/3._r8)*qsic**((2._r8+bs)/3._r8)* &
+          (nsic*rho)**((4._r8-bs)/3._r8) /(4._r8*720._r8*rho)
   else
      nsagg=0._r8
   end if
@@ -863,9 +803,6 @@ elemental subroutine accrete_cloud_water_snow(t, rho, asn, uns, mu, qcic, ncic, 
   real(r8) :: dum
   real(r8) :: eci ! collection efficiency for riming of snow by droplets
 
-  ! Fraction of cloud droplets accreted per second
-  real(r8) :: accrete_rate
-
   ! ignore collision of snow with droplets above freezing
 
   if (qsic >= qsmall .and. t <= tmelt .and. qcic >= qsmall) then
@@ -876,7 +813,7 @@ elemental subroutine accrete_cloud_water_snow(t, rho, asn, uns, mu, qcic, ncic, 
      ! collection efficiency is approximation based on stoke's law (Thompson et al. 2004)
 
      dc0 = (pgam+1._r8)/lamc
-     dum = dc0*dc0*uns*rhow*lams/(9._r8*mu)
+     dum = dc0*dc0*uns*rhow/(9._r8*mu*(1._r8/lams))
      eci = dum*dum/((dum+0.4_r8)*(dum+0.4_r8))
 
      eci = max(eci,0._r8)
@@ -884,9 +821,9 @@ elemental subroutine accrete_cloud_water_snow(t, rho, asn, uns, mu, qcic, ncic, 
 
      ! no impact of sub-grid distribution of qc since psacws
      ! is linear in qc
-     accrete_rate = pi/4._r8*asn*rho*n0s*eci*gamma_bs_plus3 / lams**(bs+3._r8)
-     psacws = accrete_rate*qcic
-     npsacws = accrete_rate*ncic
+
+     psacws = pi/4._r8*asn*qcic*rho*n0s*eci*gamma_bs_plus3 / lams**(bs+3._r8)
+     npsacws = pi/4._r8*asn*ncic*rho*n0s*eci*gamma_bs_plus3 / lams**(bs+3._r8)
   else
      psacws = 0._r8
      npsacws = 0._r8
@@ -910,14 +847,16 @@ elemental subroutine secondary_ice_production(t, psacws, msacwi, nsacwi)
 
   if((t < 270.16_r8) .and. (t >= 268.16_r8)) then
      nsacwi = 3.5e8_r8*(270.16_r8-t)/2.0_r8*psacws
+     msacwi = min(nsacwi*mi0, psacws)
   else if((t < 268.16_r8) .and. (t >= 265.16_r8)) then
      nsacwi = 3.5e8_r8*(t-265.16_r8)/3.0_r8*psacws
+     msacwi = min(nsacwi*mi0, psacws)
   else
      nsacwi = 0.0_r8
+     msacwi = 0.0_r8
   endif
 
-  msacwi = min(nsacwi*mi0, psacws)
-  psacws = psacws - msacwi
+  psacws = max(0.0_r8,psacws - nsacwi*mi0)
 
 end subroutine secondary_ice_production
 
@@ -958,24 +897,21 @@ elemental subroutine accrete_rain_snow(t, rho, umr, ums, unr, uns, qric, qsic, &
   ! Collection efficiency for accretion of rain by snow
   real(r8), parameter :: ecr = 1.0_r8
 
-  ! Ratio of average snow diameter to average rain diameter.
-  real(r8) :: d_rat
-  ! Common factor between mass and number expressions
-  real(r8) :: common_factor
-
   if (qric >= icsmall .and. qsic >= icsmall .and. t <= tmelt) then
 
-     common_factor = pi*ecr*rho*n0r*n0s/(lamr**3 * lams)
+     pracs = pi*pi*ecr*(((1.2_r8*umr-0.95_r8*ums)**2 + &
+          0.08_r8*ums*umr)**0.5_r8 *  &
+          rhow * rho * n0r * n0s * &
+          (5._r8/(lamr**6 * lams)+ &
+          2._r8/(lamr**5 * lams**2)+ &
+          0.5_r8/(lamr**4 * lams**3)))
 
-     d_rat = lamr/lams
-
-     pracs = common_factor*pi*rhow* &
-          sqrt((1.2_r8*umr-0.95_r8*ums)**2 + 0.08_r8*ums*umr) / lamr**3 * &
-          ((0.5_r8*d_rat + 2._r8)*d_rat + 5._r8)
-
-     npracs = common_factor*0.5_r8* &
-          sqrt(1.7_r8*(unr-uns)**2 + 0.3_r8*unr*uns) * &
-          ((d_rat + 1._r8)*d_rat + 1._r8)
+     npracs = pi/2._r8*rho*ecr* (1.7_r8*(unr-uns)**2 + &
+          0.3_r8*unr*uns)**0.5_r8 * &
+          n0r*n0s* &
+          (1._r8/(lamr**3 * lams)+ &
+          1._r8/(lamr**2 * lams**2)+ &
+          1._r8/(lamr * lams**3))
 
   else
      pracs = 0._r8
@@ -1003,11 +939,14 @@ elemental subroutine heterogeneous_rain_freezing(t, qric, nric, lamr, mnuccr, nn
 
   if (t < 269.15_r8 .and. qric >= qsmall) then
 
+     ! Division by lamr**3 twice is old workaround to avoid overflow.
+     ! Probably no longer necessary
+     mnuccr = 20._r8*pi*pi*rhow*nric*bimm* &
+          (exp(aimm*(tmelt - t))-1._r8)/lamr**3 &
+          /lamr**3
+
      nnuccr = pi*nric*bimm* &
           (exp(aimm*(tmelt - t))-1._r8)/lamr**3
-
-     mnuccr = nnuccr * 20._r8*pi*rhow/lamr**3
-
   else
      mnuccr = 0._r8
      nnuccr = 0._r8
@@ -1053,7 +992,7 @@ elemental subroutine accrete_cloud_water_rain(microp_uniform, qric, qcic, &
      ! include sub-grid distribution of cloud water
      pra = pra_coef * 67._r8*(qcic*qric)**1.15_r8
 
-     npra = pra*ncic/qcic
+     npra = pra/(qcic/ncic)
 
   else
      pra = 0._r8
@@ -1111,17 +1050,13 @@ elemental subroutine accrete_cloud_ice_snow(t, rho, asn, qiic, niic, qsic, &
   real(r8), intent(out) :: prai  ! MMR
   real(r8), intent(out) :: nprai ! Number
 
-  ! Fraction of cloud ice particles accreted per second
-  real(r8) :: accrete_rate
-
   if (qsic >= qsmall .and. qiic >= qsmall .and. t <= tmelt) then
 
-     accrete_rate = pi/4._r8 * eii * asn * rho * n0s * gamma_bs_plus3/ &
+     prai = pi/4._r8 * asn * qiic * rho * n0s * eii * gamma_bs_plus3/ &
           lams**(bs+3._r8)
 
-     prai = accrete_rate * qiic
-     nprai = accrete_rate * niic
-
+     nprai = pi/4._r8 * asn * niic * rho * n0s * eii * gamma_bs_plus3/ &
+          lams**(bs+3._r8)
   else
      prai = 0._r8
      nprai = 0._r8
@@ -1136,7 +1071,7 @@ end subroutine accrete_cloud_ice_snow
 ! except for transfer of cloud water to snow through bergeron process
 
 elemental subroutine evaporate_sublimate_precip(t, rho, dv, mu, sc, q, qvl, qvi, &
-     lcldm, precip_frac, arn, asn, qcic, qiic, qric, qsic, lamr, n0r, lams, n0s, &
+     lcldm, cldmax, arn, asn, qcic, qiic, qric, qsic, lamr, n0r, lams, n0s, &
      pre, prds)
 
   real(r8), intent(in) :: t    ! temperature
@@ -1148,7 +1083,7 @@ elemental subroutine evaporate_sublimate_precip(t, rho, dv, mu, sc, q, qvl, qvi,
   real(r8), intent(in) :: qvl  ! saturation humidity (water)
   real(r8), intent(in) :: qvi  ! saturation humidity (ice)
   real(r8), intent(in) :: lcldm  ! liquid cloud fraction
-  real(r8), intent(in) :: precip_frac ! precipitation fraction (maximum overlap)
+  real(r8), intent(in) :: cldmax ! precipitation fraction (maximum overlap)
 
   ! fallspeed parameters
   real(r8), intent(in) :: arn  ! rain
@@ -1189,7 +1124,7 @@ elemental subroutine evaporate_sublimate_precip(t, rho, dv, mu, sc, q, qvl, qvi,
 
   ! only calculate if there is some precip fraction > cloud fraction
 
-  if (precip_frac > dum) then
+  if (cldmax > dum) then
 
      ! calculate q for out-of-cloud region
      qclr=(q-dum*qvl)/(1._r8-dum)
@@ -1207,9 +1142,9 @@ elemental subroutine evaporate_sublimate_precip(t, rho, dv, mu, sc, q, qvl, qvi,
         pre = eps*(qclr-qvl)/ab
 
         ! only evaporate in out-of-cloud region
-        ! and distribute across precip_frac
-        pre=min(pre*(precip_frac-dum),0._r8)
-        pre=pre/precip_frac
+        ! and distribute across cldmax
+        pre=min(pre*(cldmax-dum),0._r8)
+        pre=pre/cldmax
      else
         pre = 0._r8
      end if
@@ -1224,9 +1159,9 @@ elemental subroutine evaporate_sublimate_precip(t, rho, dv, mu, sc, q, qvl, qvi,
              (lams**(5._r8/2._r8+bs/2._r8)))
         prds = eps*(qclr-qvi)/ab
 
-        ! only sublimate in out-of-cloud region and distribute over precip_frac
-        prds=min(prds*(precip_frac-dum),0._r8)
-        prds=prds/precip_frac
+        ! only sublimate in out-of-cloud region and distribute over cldmax
+        prds=min(prds*(cldmax-dum),0._r8)
+        prds=prds/cldmax
      else
         prds = 0._r8
      end if

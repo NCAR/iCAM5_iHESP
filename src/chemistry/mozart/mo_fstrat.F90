@@ -51,6 +51,7 @@ module mo_fstrat
   logical :: sim_has_nox
   integer :: dtime               ! model time step (s)
   logical :: has_fstrat(gas_pcnst)
+  real(r8), parameter :: mb2pa = 100._r8
 
 contains
 
@@ -83,7 +84,6 @@ contains
     !------------------------------------------------------------------
     !	... local variables
     !------------------------------------------------------------------
-    real(r8), parameter :: mb2pa = 100._r8
 
     integer :: i, j, nchar
     integer :: spcno, lev, month, ierr
@@ -108,7 +108,7 @@ contains
 
     !-----------------------------------------------------------------------
     !       ... get species indicies
-    !-----------------------------------------------------------------------    
+    !-----------------------------------------------------------------------
     no_ndx      = get_spc_ndx( 'NO' )
     no2_ndx     = get_spc_ndx( 'NO2' )
     sim_has_nox = no_ndx > 0 .or. no2_ndx > 0
@@ -274,9 +274,9 @@ contains
           table_synoz_ndx = i
        end if
        map(i) = 0
-       do j = 1,gas_pcnst 
+       do j = 1,gas_pcnst
           if( trim(ub_species_names(i)) == trim(solsym(j)) ) then
-             if( has_fstrat(j) ) then 
+             if( has_fstrat(j) ) then
                 map(i) = j
                 if( masterproc ) write(iulog,*) 'fstrat_inti: '//trim(solsym(j))//' is fixed in stratosphere'
                 exit
@@ -292,7 +292,7 @@ contains
              end if
              do j = 1,gas_pcnst
                 if( trim(wrk_name) == trim(solsym(j)) ) then
-                   if( has_fstrat(j) ) then 
+                   if( has_fstrat(j) ) then
                       if( masterproc ) write(iulog,*) 'fstrat_inti: '//trim(solsym(j))//' is fixed in stratosphere'
                       map(i) = j
                       exit
@@ -373,7 +373,7 @@ contains
                       write(iulog,*) 'mr_ub_in='
                       write(iulog,'(10f7.1)') mr_ub_in(:,spcno,month,lev)*1.e9_r8
                       write(iulog,*) 'mr_ub='
-                      write(iulog,'(10f7.1)') mr_ub(:,spcno,month,lev)*1.e9_r8
+                      write(iulog,'(10f7.1)') mr_ub(:,spcno,month,lev,c)*1.e9_r8
                    end if
 #endif
                    !                mr_ub(1,spcno,month,lev) = mr_ub(2,spcno,month,lev)
@@ -638,8 +638,8 @@ contains
        end do
 #ifdef DEBUG
        if( levrelax /= ltrop(i) ) then
-          write(iulog,*) 'warning -- raised ubc: ',lat,i,
-          ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/mb2pa),'mb -->',
+          write(iulog,*) 'warning -- raised ubc: ',lat,i, &
+          ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/mb2pa),'mb -->', &
           levrelax,nint(pmid(i,levrelax)/mb2pa),'mb'
        end if
 #endif
@@ -711,7 +711,7 @@ contains
                 endif
              enddo
           endif
- 
+
           !--------------------------------------------------------
           ! 	... special assignments if synoz is present
           !           update ox, o3s, o3inert in the stratosphere
@@ -920,8 +920,8 @@ contains
           end do
 #ifdef DEBUG
           if( levrelax /= ltrop(i) ) then
-             write(iulog,*) 'warning -- raised ubc: ',lat,i,
-             ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/100._r8),'mb -->',
+             write(iulog,*) 'warning -- raised ubc: ',lat,i, &
+             ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/100._r8),'mb -->', &
              levrelax,nint(pmid(i,levrelax)/100._r8),'mb'
           end if
 #endif

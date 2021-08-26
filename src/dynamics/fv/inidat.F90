@@ -674,4 +674,3 @@ contains
 
 
 end module inidat
-

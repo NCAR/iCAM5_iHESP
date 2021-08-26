@@ -70,6 +70,7 @@ module physpkg
   !  Physics buffer index
   integer ::  teout_idx          = 0  
 
+  integer ::  tini_idx           = 0
   integer ::  qini_idx           = 0 
   integer ::  cldliqini_idx      = 0 
   integer ::  cldiceini_idx      = 0 
@@ -185,6 +186,7 @@ subroutine phys_register
     end if
 
     ! Fields for physics package diagnostics
+    call pbuf_add_field('TINI',      'physpkg', dtype_r8, (/pcols,pver/), tini_idx)
     call pbuf_add_field('QINI',      'physpkg', dtype_r8, (/pcols,pver/), qini_idx)
     call pbuf_add_field('CLDLIQINI', 'physpkg', dtype_r8, (/pcols,pver/), cldliqini_idx)
     call pbuf_add_field('CLDICEINI', 'physpkg', dtype_r8, (/pcols,pver/), cldiceini_idx)
@@ -1346,14 +1348,16 @@ subroutine tphysac (ztodt,   cam_in,  &
     real(r8) :: tmp_q     (pcols,pver) ! tmp space
     real(r8) :: tmp_cldliq(pcols,pver) ! tmp space
     real(r8) :: tmp_cldice(pcols,pver) ! tmp space
+    real(r8) :: tmp_t     (pcols,pver) ! tmp space
 
-   !Water Tracers
+    !Water Tracers
     logical :: isOK                    ! Used to check that water tracer mass is being conserved.
 
     ! physics buffer fields for total energy and mass adjustment
     integer itim_old, ifld
 
     real(r8), pointer, dimension(:,:) :: cld
+    real(r8), pointer, dimension(:,:) :: tini
     real(r8), pointer, dimension(:,:) :: qini
     real(r8), pointer, dimension(:,:) :: cldliqini
     real(r8), pointer, dimension(:,:) :: cldiceini
@@ -1383,6 +1387,7 @@ subroutine tphysac (ztodt,   cam_in,  &
     ifld = pbuf_get_index('DTCORE')
     call pbuf_get_field(pbuf, ifld, dtcore, start=(/1,1,itim_old/), kount=(/pcols,pver,1/) )
 
+    call pbuf_get_field(pbuf, tini_idx, tini)
     call pbuf_get_field(pbuf, qini_idx, qini)
     call pbuf_get_field(pbuf, cldliqini_idx, cldliqini)
     call pbuf_get_field(pbuf, cldiceini_idx, cldiceini)
@@ -1621,6 +1626,17 @@ subroutine tphysac (ztodt,   cam_in,  &
        call unicon_cam_org_diags(state, pbuf)
 
     end if
+
+    !*** BAB's FV heating kludge *** apply the heating as temperature tendency.
+    !*** BAB's FV heating kludge *** modify the temperature in the state structure
+    tmp_t(:ncol,:pver) = state%t(:ncol,:pver)
+    state%t(:ncol,:pver) = tini(:ncol,:pver) + ztodt*tend%dtdt(:ncol,:pver)
+
+    ! store dse after tphysac in buffer
+    do k = 1,pver
+       dtcore(:ncol,k) = state%t(:ncol,k)
+    end do
+
     !
     ! FV: convert dry-type mixing ratios to moist here because physics_dme_adjust
     !     assumes moist. This is done in p_d_coupling for other dynamics. Bundy, Feb 2004.
@@ -1654,7 +1670,7 @@ subroutine tphysac (ztodt,   cam_in,  &
     endif
 
     call diag_phys_tend_writeout (state, pbuf,  tend, ztodt, tmp_q, tmp_cldliq, tmp_cldice, &
-         qini, cldliqini, cldiceini)
+         tmp_t, qini, cldliqini, cldiceini)
 
     call clybry_fam_set( ncol, lchnk, map2chm, state%q, pbuf )
 
@@ -1799,6 +1815,7 @@ subroutine tphysbc (ztodt,               &
 
     ! physics buffer fields for total energy and mass adjustment
     real(r8), pointer, dimension(:  ) :: teout
+    real(r8), pointer, dimension(:,:) :: tini
     real(r8), pointer, dimension(:,:) :: qini
     real(r8), pointer, dimension(:,:) :: cldliqini
     real(r8), pointer, dimension(:,:) :: cldiceini
@@ -1943,6 +1960,7 @@ subroutine tphysbc (ztodt,               &
 
     call pbuf_get_field(pbuf, teout_idx, teout, (/1,itim_old/), (/pcols,1/))
 
+    call pbuf_get_field(pbuf, tini_idx, tini)
     call pbuf_get_field(pbuf, qini_idx, qini)
     call pbuf_get_field(pbuf, cldliqini_idx, cldliqini)
     call pbuf_get_field(pbuf, cldiceini_idx, cldiceini)
@@ -1958,6 +1976,12 @@ subroutine tphysbc (ztodt,               &
     tend %dTdt(:ncol,:pver)  = 0._r8
     tend %dudt(:ncol,:pver)  = 0._r8
     tend %dvdt(:ncol,:pver)  = 0._r8
+
+    !
+    ! Make sure that input tracers are all positive (probably unnecessary)
+    !
+    call qneg3('TPHYSBCb',lchnk  ,ncol    ,pcols   ,pver    , &
+         1, pcnst, qmin  ,state%q )
 
     ! Verify state coming from the dynamics
     if (state_debug_checks) &
@@ -1990,6 +2014,8 @@ subroutine tphysbc (ztodt,               &
     !===================================================
     call t_startf('energy_fixer')
 
+    !*** BAB's FV heating kludge *** save the initial temperature
+    tini(:ncol,:pver) = state%t(:ncol,:pver)
     if (dycore_is('LR') .or. dycore_is('SE'))  then
        call check_energy_fix(state, ptend, nstep, flx_heat)
        call physics_update(state, ptend, ztodt, tend)
@@ -2011,7 +2037,9 @@ subroutine tphysbc (ztodt,               &
 
     ! T tendency due to dynamics
     if( nstep > dyn_time_lvls-1 ) then
-       dtcore(:ncol,:pver) = (state%t(:ncol,:pver) - dtcore(:ncol,:pver))/ztodt
+       do k = 1,pver
+          dtcore(:ncol,k) = (tini(:ncol,k) - dtcore(:ncol,k))/(ztodt) + tend%dTdt(:ncol,k)
+       end do
        call outfld( 'DTCORE', dtcore, pcols, lchnk )
     end if
 

@@ -47,7 +47,7 @@ Module dyn_comp
   ! \paragraph{Overview}
   !
   !   This module contains an ESMF wrapper for the SE
-  !   Dynamical Core used in the Community Atmospheric Model. 
+  !   Dynamical Core used in the Community Atmospheric Model.
   !
   ! !REVISION HISTORY:
   !
@@ -58,13 +58,10 @@ Module dyn_comp
   ! Enumeration of DYNAMICS_IN_COUPLINGS
 
 
-  logical, parameter         :: DEBUG = .true.
-
   real(r8), parameter        :: ONE    = 1.0_r8
 
   character(*), parameter, public :: MODULE_NAME = "dyn_comp"
-  character(*), parameter, public :: VERSION     = "$Id$" 
-  type (domain1d_t), pointer, public :: dom_mt(:) => null()
+  character(*), parameter, public :: VERSION     = "$Id$"
 
   ! Frontogenesis indices
   integer, public :: frontgf_idx = -1
@@ -94,8 +91,8 @@ CONTAINS
 
     use dimensions_mod,   only: globaluniquecols, nelem, nelemd, nelemdmax
     use prim_driver_mod,  only: prim_init1
-    use thread_mod,       only: nthreads
-    use parallel_mod,     only: par, initmp
+    use thread_mod,       only: horz_num_threads
+    use parallel_mod,     only: par, initmpi
     use namelist_mod,     only: readnl
     use control_mod,      only: runtype, qsplit, rsplit
     use time_mod,         only: tstep
@@ -109,13 +106,13 @@ CONTAINS
     type (dyn_import_t), intent(OUT) :: dyn_in
     type (dyn_export_t), intent(OUT) :: dyn_out
 
-#ifdef _OPENMP    
+#ifdef _OPENMP
     integer omp_get_num_threads
 #endif
     integer :: neltmp(3)
     logical :: nellogtmp(7)
     integer :: npes_se
-
+    integer :: nthreads
     !----------------------------------------------------------------------
 
     if (use_gw_front .or. use_gw_front_igw) then
@@ -131,7 +128,7 @@ CONTAINS
     ! Read in the number of tasks to be assigned to SE (needed by initmp)
     call spmd_readnl(NLFileName, npes_se)
     ! Initialize the SE structure that holds the MPI decomposition information
-    par=initmp(npes_se)
+    par=initmpi(npes_se)
 
     ! Read the SE specific part of the namelist
     call readnl(par, NLFileName)
@@ -148,12 +145,9 @@ CONTAINS
     ! legacy reduced grid code -- should be removed
     fullgrid=.true.
 
-#ifdef _OPENMP    
-!   Set by driver
-!$omp parallel
-    nthreads = omp_get_num_threads()
-!$omp end parallel
+#ifdef _OPENMP
     if(par%masterproc) then
+       nthreads = omp_get_num_threads()
        write(iulog,*) " "
        write(iulog,*) "dyn_init1: number of OpenMP threads = ", nthreads
        write(iulog,*) " "
@@ -166,7 +160,6 @@ CONTAINS
     endif
 #endif
 #else
-    nthreads = 1
     if(par%masterproc) then
        write(iulog,*) " "
        write(iulog,*) "dyn_init1: openmp not activated"
@@ -174,13 +167,13 @@ CONTAINS
     endif
 #endif
     if(iam < par%nprocs) then
-       call prim_init1(elem,fvm,par,dom_mt,TimeLevel)
+       call prim_init1(elem,fvm,par,TimeLevel)
 
        dyn_in%elem => elem
        dyn_out%elem => elem
        dyn_in%fvm => fvm
        dyn_out%fvm => fvm
-    
+
        call set_horiz_grid_cnt_d(GlobalUniqueCols)
 
 
@@ -226,7 +219,7 @@ CONTAINS
     !
     !  Note: dtime = progress made in one timestep.  value in namelist
     !        dtime = the frequency at which physics is called
-    !        tstep = the dynamics timestep:  
+    !        tstep = the dynamics timestep:
     !
 
     if (rsplit==0) then
@@ -249,16 +242,17 @@ CONTAINS
     use dimensions_mod,   only: nlev, nelemd
     use prim_driver_mod,  only: prim_init2, prim_run
     use prim_si_ref_mod,  only: prim_set_mass
-    use hybrid_mod,       only: hybrid_create
+    use hybrid_mod,       only: config_thread_region, get_loop_ranges, init_loop_ranges
     use hycoef,           only: hyam, hybm, hyai, hybi, ps0
     use parallel_mod,     only: par
     use time_mod,         only: time_at
     use control_mod,      only: moisture, runtype
-    use thread_mod,       only: nthreads, omp_get_thread_num
+    use hybrid_mod,       only: config_thread_region, get_loop_ranges, init_loop_ranges
     use cam_control_mod,  only: aqua_planet, ideal_phys, adiabatic
     use comsrf,           only: landm, sgh, sgh30
     use nctopo_util_mod,  only: nctopo_util_driver
     use cam_instance,     only: inst_index
+    use thread_mod,       only: horz_num_threads
 
     type (dyn_import_t), intent(inout) :: dyn_in
 
@@ -278,20 +272,23 @@ CONTAINS
     hvcoord%hyai=hyai
     hvcoord%hybm=hybm
     hvcoord%hybi=hybi
-    hvcoord%ps0=dyn_ps0  
+    hvcoord%ps0=dyn_ps0
     do k=1,nlev
        hvcoord%hybd(k) = hvcoord%hybi(k+1) - hvcoord%hybi(k)
     end do
+    call init_loop_ranges(nelemd)
     if(iam < par%nprocs) then
 
-#if (defined HORIZ_OPENMP)
-       !$OMP PARALLEL DEFAULT(SHARED), PRIVATE(ie,ithr,nets,nete,hybrid)
-#endif
-       ithr=omp_get_thread_num()
-       nets=dom_mt(ithr)%start
-       nete=dom_mt(ithr)%end
-       hybrid = hybrid_create(par,ithr,NThreads)
+       !$OMP PARALLEL NUM_THREADS(horz_num_threads), DEFAULT(SHARED), PRIVATE(hybrid,nets,nete,ie)
 
+       if ( horz_num_threads == 1) then
+         hybrid = config_thread_region(par,'serial')
+       else
+         hybrid = config_thread_region(par,'horizontal')
+       endif
+       call get_loop_ranges(hybrid,ibeg=nets,iend=nete)
+!       write(*,200) nets, nete
+!200 format(2x, 2i4, ' nets, nete - used init')
        moisture='moist'
 
        if(adiabatic) then
@@ -345,11 +342,9 @@ CONTAINS
        call prim_init2(elem,fvm,hybrid,nets,nete, TimeLevel, hvcoord)
        !
        ! This subroutine is used to create nc_topo files, if requested
-       ! 
+       !
        call nctopo_util_driver(elem,hybrid,nets,nete)
-#if (defined HORIZ_OPENMP)
-       !$OMP END PARALLEL 
-#endif
+       !$OMP END PARALLEL
     end if
 
     if (inst_index == 1) then
@@ -360,7 +355,7 @@ CONTAINS
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   !-----------------------------------------------------------------------
   !BOP
-  ! !ROUTINE:  RUN --- Driver for the 
+  ! !ROUTINE:  RUN --- Driver for the
   !
   ! !INTERFACE:
   subroutine dyn_run( dyn_state, rc )
@@ -368,10 +363,10 @@ CONTAINS
     ! !USES:
     use parallel_mod,     only : par
     use prim_driver_mod,  only: prim_run, prim_run_subcycle
-    use dimensions_mod,   only : nlev
-    use thread_mod,       only: omp_get_thread_num, nthreads
+    use dimensions_mod,   only : nlev, nelemd
+    use thread_mod,       only: horz_num_threads
     use time_mod,         only: tstep
-    use hybrid_mod,       only: hybrid_create
+    use hybrid_mod,       only: init_loop_ranges, get_loop_ranges, config_thread_region
 !    use perf_mod, only : t_startf, t_stopf
     implicit none
 
@@ -386,25 +381,24 @@ CONTAINS
 
     ! !DESCRIPTION:
     !
+    call init_loop_ranges(nelemd)
     if(iam < par%nprocs) then
-#if (defined HORIZ_OPENMP)
-       !$OMP PARALLEL DEFAULT(SHARED), PRIVATE(ithr,nets,nete,hybrid,n)
-#endif
-       ithr=omp_get_thread_num()
-       nets=dom_mt(ithr)%start
-       nete=dom_mt(ithr)%end
-       hybrid = hybrid_create(par,ithr,NThreads)
+       !$OMP PARALLEL NUM_THREADS(horz_num_threads), DEFAULT(SHARED), PRIVATE(hybrid,nets,nete,n,ie)
+       if (horz_num_threads == 1) then
+         hybrid = config_thread_region(par,'serial')
+       else
+         hybrid = config_thread_region(par,'horizontal')
+       endif
+       call get_loop_ranges(hybrid,ibeg=nets,iend=nete)
+!       write(*,200) nets, nete
+!200 format(2x, 2i4, ' nets, nete - dyn_run')
 
        do n=1,se_nsplit
           ! forward-in-time RK, with subcycling
           call prim_run_subcycle(dyn_state%elem,dyn_state%fvm,hybrid,nets,nete,&
                tstep, TimeLevel, hvcoord, n)
        end do
-
-
-#if (defined HORIZ_OPENMP)
        !$OMP END PARALLEL
-#endif
     end if
     rc = DYN_RUN_SUCCESS
 
@@ -449,11 +443,11 @@ CONTAINS
 
        ! write meta data for physics on GLL nodes
        call cam_pio_createfile(nc, 'SEMapping.nc', 0)
-   
+
        ierr = pio_def_dim(nc, 'ncenters', npm12*nelem, dim1)
        ierr = pio_def_dim(nc, 'ncorners', 4, dim2)
        ierr = pio_def_var(nc, 'element_corners', PIO_INT, (/dim1,dim2/),vid)
-    
+
        ierr = pio_enddef(nc)
        call createmetadata(par, elem, subelement_corners)
 
@@ -475,14 +469,11 @@ CONTAINS
        call pio_initdecomp(pio_subsystem, pio_int, (/nelem*npm12,4/), dof, iodesc)
 
        call pio_write_darray(nc, vid, iodesc, reshape(subelement_corners,(/nelemd*npm12*4/)), ierr)
-       
-       call pio_freedecomp(nc, iodesc)
-       
+
        call pio_closefile(nc)
+
+       call pio_freedecomp(pio_subsystem, iodesc)
 
   end subroutine write_grid_mapping
 
 end module dyn_comp
-
-
-

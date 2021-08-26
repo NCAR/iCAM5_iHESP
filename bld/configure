@@ -112,20 +112,20 @@ OPTIONS
 
      -[no]age_of_air_trcs Switch on [off] age of air tracers. Default: on for waccm_phys, otherwise off
      -carma <name>      Build CAM with specified CARMA microphysics model
-                        [ none | bc_strat | cirrus | cirrus_dust | dust | meteor_impact | 
+                        [ none | bc_strat | cirrus | cirrus_dust | dust | meteor_impact |
                           meteor_smoke | mixed_sulfate | pmc | pmc_sulfate | sea_salt | sulfate | tholin |
                           test_detrain | test_growth | test_passive | test_radiative | test_swelling |
                           test_tracers, test_tracers2].
                         Default: none.
-     -chem <name>       Build CAM with specified prognostic chemistry package 
-                        [ waccm_mozart | waccmx_mozart | waccm_mozart_sulfur | waccm_mozart_mam3 | waccm_sc | 
+     -chem <name>       Build CAM with specified prognostic chemistry package
+                        [ waccm_mozart | waccmx_mozart | waccm_mozart_sulfur | waccm_mozart_mam3 | waccm_sc |
 			  waccm_sc_mam3 | waccm_tsmlt | waccm_tsmlt_mam3 | waccm_tsmlt_sulfur |
                           trop_mozart | trop_mozart_mam3 | trop_mozart_soa | trop_strat_soa | trop_ghg | trop_bam |
                           trop_mam3 | trop_mam4 | trop_mam7 | super_fast_llnl | super_fast_llnl_mam3 |
                           trop_strat_soa | trop_strat_mam3 | trop_strat_mam7 | none ].  Default: trop_mam3.
      -clubb_sgs         Turns on CLUBB_SGS
      -clubb_opts <list> Comma separated list of CLUBB options to turn on/off.  By default they are all off.  Current
-                        options are: clubb_do_adv(Advect CLUBB moments), clubb_do_deep(CLUBB does the deep convection) 
+                        options are: clubb_do_adv(Advect CLUBB moments), clubb_do_deep(CLUBB does the deep convection)
      -co2_cycle         This option is meant to be used with the -ccsm_seq option.  It modifies the
                         CAM configuration by increasing the number of advected constituents by 4.
      -comp_intf         Specify the component interfaces [mct | esmf] (default: mct).
@@ -138,7 +138,7 @@ OPTIONS
 			in degrees for latitude and longitude respectively); nexnp for
                         se grids.
      -max_n_rad_cnst <n> Maximum number of constituents that are either radiatively
-                        active, or in any single diagnostic list for the radiation.    
+                        active, or in any single diagnostic list for the radiation.
      -microphys <name>  Specify the microphysics option [mg1 | mg1.5 | mg2 | rk].
      -nadv <n>          Set total number of advected species to <n>.
      -nadv_tt <n>       Set number of advected test tracers <n>.
@@ -161,7 +161,7 @@ OPTIONS
      -waccmx            Build CAM/WACCM with WACCM upper Thermosphere/Ionosphere extended package
      -water_tracer <name> Build CAM with specified water tracer (isotope or tag) package
                         [ none | h2o | h2o_hdo | h2o_h218o | h2o_hdo_h218o | h2o_h216o_hdo_h218o ].  Default: none
-     -zmconv_org        Include parameterization for sub-grid scale convective organization for the ZM deep convective scheme based 
+     -zmconv_org        Include parameterization for sub-grid scale convective organization for the ZM deep convective scheme based
                         on Mapes and Neale (2011)
 
 
@@ -239,11 +239,11 @@ OPTIONS
                         by the wrapper script.  Default: pgi
      -fflags <string>   A string of user specified Fortran compiler flags.  Appended to
                         Makefile defaults.  See -fopt to override optimization flags.
-     -fopt <string>     A string of user specified Fortran compiler optimization flags.  
+     -fopt <string>     A string of user specified Fortran compiler optimization flags.
                         Overrides Makefile defaults.
      -gmake <name>      Name of the GNU make program on your system.  Supply the absolute
                         pathname if the program is not in your path (or fix your path).
-     -lapack_libdir <dir>  
+     -lapack_libdir <dir>
                         Directory containing LAPACK library.
      -ldflags <string>  A string of user specified load options.  Appended to
                         Makefile defaults.
@@ -271,7 +271,7 @@ EOF
 # Setting autoflush (an IO::Handle method) on STDOUT helps in debugging.  It forces the test
 # descriptions to be printed to STDOUT before the error messages start.
 
-*STDOUT->autoflush();                  
+*STDOUT->autoflush();
 
 #-----------------------------------------------------------------------------------------------
 # Set the directory that contains the CAM configuration scripts.  If the configure command was
@@ -284,7 +284,7 @@ my $ProgDir = $1;                      # name of directory containing this scrip
                                        # the user's PATH
 my $cwd = getcwd();                    # current working directory
 my $cfgdir;                            # absolute pathname of directory that contains this script
-if ($ProgDir) { 
+if ($ProgDir) {
     $cfgdir = absolute_path($ProgDir);
 } else {
     $cfgdir = $cwd;
@@ -388,7 +388,7 @@ GetOptions(
 usage() if $opts{'help'};
 
 # Echo version info.
-version($cfgdir) if $opts{'version'};    
+version($cfgdir) if $opts{'version'};
 
 # Check for unparsed argumentss
 if (@ARGV) {
@@ -545,16 +545,16 @@ if (($ccsm_seq)) {
 }
 
 #-----------------------------------------------------------------------------------------------
-# CAM root directory.  
-my $cam_root = absolute_path("$cfgdir/../../../..");
+# CAM root directory.
+my $cam_root = absolute_path("$cfgdir/../../");
 
-if (-d "$cam_root/models/atm/cam/src") {
+if (-d "$cam_root/cam/src") {
     $cfg_ref->set('cam_root', $cam_root);
 } else {
     die <<"EOF";
 ** Invalid CAM root directory: $cam_root
-** 
-** The CAM root directory must contain the subdirectory models/atm/cam/src/.
+**
+** The CAM root directory must contain the subdirectory cam/src/.
 ** It is derived from "config_dir/../../../.." where config_dir is the
 ** directory in the CAM distribution that contains the configuration
 ** scripts.
@@ -923,7 +923,7 @@ my  $carma_pkg = 'none';
 # Allow the user to override the default via the commandline.
 if (defined $opts{'carma'}) {
     $carma_pkg = lc($opts{'carma'});
-  
+
     if ($print>=2 and ($carma_pkg ne 'none')) { print "Using CARMA for the microphysical model $carma_pkg.$eol"; }
 }
 
@@ -961,7 +961,7 @@ EOF
 
 if (defined $opts{'clubb_opts'}) {
      my @clubb_temp_opts = split /,/, $opts{'clubb_opts'};
-     foreach (@clubb_temp_opts) {     
+     foreach (@clubb_temp_opts) {
         $cfg_ref->set("$_", '1');
      }
 }
@@ -1120,7 +1120,7 @@ my $ocn_pkg = 'docn';
 # If the physics package is adiabatic, or ideal, change the default
 if ($phys_pkg =~ m/ideal|adiabatic/) {
     $ocn_pkg = 'socn';
-} 
+}
 elsif (defined $opts{'offline_drv'}) {
     $ocn_pkg = 'socn';
 }
@@ -1135,7 +1135,7 @@ $cfg_ref->set('ocn', $ocn_pkg);
 if ($print>=2) { print "Ocean package: $ocn_pkg$eol"; }
 
 #-----------------------------------------------------------------------------------------------
-# Land model 
+# Land model
 my $lnd_pkg = 'clm';
 # If the physics package is adiabatic, or ideal, change the default
 if ($phys_pkg =~ m/ideal|adiabatic/) {
@@ -1143,7 +1143,7 @@ if ($phys_pkg =~ m/ideal|adiabatic/) {
 }
 elsif ($ocn_pkg eq 'aquaplanet') {
     $lnd_pkg = 'slnd';
-} 
+}
 elsif (defined $opts{'offline_drv'}) {
     $lnd_pkg = 'slnd';
 }
@@ -1355,7 +1355,7 @@ EOF
 if ($print>=2) { print "Number of vertical levels: $nlev$eol"; }
 
 #------------------------------------------------------------------------------------------------
-# chemistry preprocessor.... 
+# chemistry preprocessor....
 #  -- avoid using the chem_preprocessor unless it's required
 #------------------------------------------------------------------------------------------------
 my $chem_nadv = 0;
@@ -1363,7 +1363,7 @@ my $chem_cppdefs = '';
 my $chem_src_dir = '';
 
 if (!$prog_species) {
-  $chem_src_dir = "$cam_root/models/atm/cam/src/chemistry/pp_$chem_pkg";
+  $chem_src_dir = "$cam_root/cam/src/chemistry/pp_$chem_pkg";
   $cfg_ref->set('chem_src_dir', $chem_src_dir);
 }
 
@@ -1373,7 +1373,7 @@ if (($chem_pkg ne 'none') || ($prog_species)) {
     my $edit_chem_mech = $cfg_ref->get('edit_chem_mech');
     my $usr_mech_infile = $cfg_ref->get('usr_mech_infile');
     my $prog_species = $cfg_ref->get('prog_species');
-    
+
     my $customize = $prog_species || $edit_chem_mech || $usr_mech_infile;
 
     if ($customize) {
@@ -1383,16 +1383,16 @@ if (($chem_pkg ne 'none') || ($prog_species)) {
 	my $fc_type;
         if (defined $ENV{COMPILER}) {
 	    $fc_type = $ENV{COMPILER};
-	} elsif (defined $opts{'fc_type'}) { 
+	} elsif (defined $opts{'fc_type'}) {
 	    $fc_type = $opts{'fc_type'};
 	}
 	($chem_nadv) = chem_preprocess($cfg_ref,$print,$fc_type);
     } else {
        # copy over chem docs
-	copy("$chem_src_dir/chem_mech.doc",$cam_bld) or die "copy failed $! \n";
-	copy("$chem_src_dir/chem_mech.in" ,$cam_bld) or die "copy failed $! \n";
+	copy("$chem_src_dir/chem_mech.doc",$cam_bld) or die "copy failed $! for chem_src_dir = $chem_src_dir\n";
+	copy("$chem_src_dir/chem_mech.in" ,$cam_bld) or die "copy failed $! for chem_src_dir = $chem_src_dir\n";
         ($chem_nadv) = chem_number_adv($chem_src_dir);
-    } 
+    }
 
 }
 if ($chem_pkg =~ '_mam3') {
@@ -1531,12 +1531,12 @@ else {
             $nadv += 8;
             if ($print>=2) { print "Advected constituents added by $microphys_pkg microphysics: 8$eol"; }
         }
-	
+
 	if ($zmconv_org == 1 ) {
           $nadv += 1;
             if ($print>=2) { print "Advected constituents added by $microphys_pkg microphysics: 8$eol"; }
         }
-	
+
 	if ($clubb_do_adv) {
 	    $nadv += 9;
             if ($print>=2) { print "Advected constituents added by $microphys_pkg microphysics: 8$eol"; }
@@ -1556,7 +1556,7 @@ else {
         # Chemistry package:
         $nadv += $chem_nadv;
         if ($print>=2) { print "Advected constituents added by chemistry $chem_pkg: $chem_nadv$eol"; }
-  
+
         # CARMA package:
         if ($carma_nadv > 0) {
             $nadv += $carma_nadv;
@@ -1575,7 +1575,7 @@ else {
     $nadv += $ttrac_nadv;
     if ($print>=2 and $ttrac_nadv) { print "Advected constituents added by test tracer package: $ttrac_nadv$eol"; }
 
-    if ($age_of_air_trcs eq "ON") { 
+    if ($age_of_air_trcs eq "ON") {
 	$nadv += 4;
         if ($print>=2) { print "Advected constituents added by the age of air tracer package: 4$eol"; }
     }
@@ -1707,12 +1707,12 @@ EOF
 	}
 
 	# Workaround for bug in cice configure.  In tag cice4_0_20130320 calling the
-        # configure script with -ntasks and -nthreads arguments is not giving the same 
+        # configure script with -ntasks and -nthreads arguments is not giving the same
         # decomp as when generate_cice_decomp.pl is called with those same args.  So
 	# for now we need to call generate_cice_decomp.pl directly.
         #$cice_decomp = "-nx $nx -ny $ny -ntasks $cice_ntasks -nthreads $cice_nthreads";
 
-	my $cice_gen_decomp = 
+	my $cice_gen_decomp =
 	    "$cam_root/models/ice/cice/bld/generate_cice_decomp.pl ".
 	    "-res $hgrid -nproc $cice_ntasks -thrds $cice_nthreads -nx $nx -ny $ny";
 
@@ -2085,13 +2085,6 @@ if ($clubb_do_deep == 1) {
 # UNICON
 if ($unicon) { $cfg_cppdefs .= ' -DUSE_UNICON'; }
 
-# GPTL Timing library
-# The GPTL configure script in timing/gptl/suggestions may help
-# if modifications are needed here.
-$cfg_cppdefs .= ' -DHAVE_VPRINTF -DHAVE_TIMES -DHAVE_GETTIMEOFDAY -DHAVE_COMM_F2C';
-unless ($target_os eq 'aix' or $target_os =~ 'bg' or $target_os eq 'darwin') { 
-    $cfg_cppdefs .= ' -DHAVE_NANOTIME -DBIT64 -DHAVE_SLASHPROC';
-}
 #-----------------------------------------------------------------------------------------------
 # External libraries ###########################################################################
 #-----------------------------------------------------------------------------------------------
@@ -2138,7 +2131,7 @@ if ($cam_build) {
 	if (-f "$nc_lib/../bin/nf-config") {
 	    $nc_ldflags = `$nc_lib/../bin/nf-config --flibs`;
 	    chomp $nc_ldflags;
-	    if ($?) { 
+	    if ($?) {
 		print "Encountered error in nf-config --flibs call.\n";
 		$nc_ldflags = '';
 	    }
@@ -2194,12 +2187,12 @@ if ($cam_build) {
     }
     # if not there check in the netcdf lib directory
     elsif ($nc_lib and (-f "$nc_lib/netcdf.mod"    or -f "$nc_lib/NETCDF.mod")
-                   and (-f "$nc_lib/typesizes.mod" or -f "$nc_lib/TYPESIZES.mod") ) { 
+                   and (-f "$nc_lib/typesizes.mod" or -f "$nc_lib/TYPESIZES.mod") ) {
 	$nc_mod = $nc_lib;
-    } 
+    }
     # then check in the netcdf include directory
     elsif ($nc_inc and (-f "$nc_inc/netcdf.mod"    or -f "$nc_inc/NETCDF.mod")
-                   and (-f "$nc_inc/typesizes.mod" or -f "$nc_inc/TYPESIZES.mod") ) { 
+                   and (-f "$nc_inc/typesizes.mod" or -f "$nc_inc/TYPESIZES.mod") ) {
 	$nc_mod = $nc_inc;
     }
     else {
@@ -2278,7 +2271,7 @@ if ($cam_build) {
 	else {
 	    die <<"EOF";
 ** Cannot find liblapack.a in specified directory: $lapack_libdir
-** 
+**
 ** The LAPACK library directory is determined from the following set of options listed
 ** from highest to lowest precedence:
 ** * by the command-line option -lapack_libdir
@@ -2325,7 +2318,7 @@ if ($cam_build and $spmd eq 'ON') {
     else {
 	die <<"EOF";
 ** Cannot find mpif.h in specified directory: $mpi_inc
-** 
+**
 ** The MPI include directory is determined from the following set of options listed
 ** from highest to lowest precedence:
 ** * by the command-line option -mpi_inc
@@ -2363,7 +2356,7 @@ EOF
     else {
 	die <<"EOF";
 ** Cannot find libmpi.a, libmpi.so or libmpich.a in specified directory: $mpi_lib
-** 
+**
 ** The MPI library directory is determined from the following set of options listed
 ** from highest to lowest precedence:
 ** * by the command-line option -mpi_lib
@@ -2397,7 +2390,7 @@ if ($cam_build and $esmf_libdir) {
     else {
 	die <<"EOF";
 ** Cannot find libesmf.a, libesmf.so, or esmf.mk in specified directory: $esmf_libdir
-** 
+**
 ** The ESMF library directory is determined from the following set of options listed
 ** from highest to lowest precedence:
 ** * by the command-line option -esmf_libdir
@@ -2427,7 +2420,7 @@ if ($cosp) {
     } else
     {
 	$cosp_libdir = "$cam_bld/cosp";
-    } 
+    }
 
     $cfg_ref->set('cosp_libdir', "$cosp_libdir");
 
@@ -2476,19 +2469,19 @@ if ($cam_build) {
 
     my $ldflags = $cfg_ref->get('ldflags');
     $ldflags .= " -L$mct_libdir/mct -lmct -L$mct_libdir/mpeu -lmpeu ";
-    if ($spmd eq 'OFF') { 
+    if ($spmd eq 'OFF') {
       $ldflags .= " -L$mct_libdir/mpi-serial -lmpi-serial ";
     }
     $cfg_ref->set('ldflags', $ldflags);
-   
-    # Check whether the MCT libs already exist.  The MCT configuration here is 
+
+    # Check whether the MCT libs already exist.  The MCT configuration here is
     # set up to build mct, mpeu, and mpi-serial libs.  So either they all should
     # exist, or non of them should exist.  Otherwise it's an error.
     my $libs_exist = 0;
     my $libs_expected = 2;
-    if (-f "$mct_libdir/mct/libmct.a" or 
+    if (-f "$mct_libdir/mct/libmct.a" or
 	-f "$mct_libdir/mct/libmct.so") {++$libs_exist;}
-    if (-f "$mct_libdir/mpeu/libmpeu.a" or 
+    if (-f "$mct_libdir/mpeu/libmpeu.a" or
 	-f "$mct_libdir/mpeu/libmpeu.so") {++$libs_exist;}
     if ($spmd eq 'OFF') {
 	$libs_expected = 3;
@@ -2599,7 +2592,7 @@ EOF
 	chdir $mct_libdir      or die "FAILURE: cd to $mct_libdir\n";
 	system($cfg_cmnd) == 0 or die "FAILURE: MCT configure\n";
 	chdir $cam_bld         or die "FAILURE: cd to $cam_bld\n";
-       
+
 	if ($print) {print "MCT configure is done.\n";}
     }
     else {
@@ -2613,7 +2606,7 @@ EOF
 #-----------------------------------------------------------------------------------------------
 
 my $fp_filename      = 'Filepath';             # name of output filepath file
-my $cpp_filename     = 'CCSM_cppdefs';         # name of output file for cam's cppdefs in ccsm
+my $cpp_filename     = 'CESM_cppdefs';         # name of output file for cam's cppdefs in ccsm
 
 # Write the filepath file.
 write_filepath("$cam_bld/$fp_filename", $cfg_ref);
@@ -2747,7 +2740,7 @@ sub write_filepath
     my $offline_drv   = $cfg_ref->get('offline_drv');
 
     # Root directory
-    my $srcdir = "$cam_root/models";
+    my $srcdir = "$cam_root/";
 
     # Component interface specifier
     my $comp_intf = $cfg_ref->get('comp_intf');
@@ -2771,16 +2764,16 @@ sub write_filepath
     }
 
     # offline unit driver (defaults to stub)
-    print $fh "$srcdir/atm/cam/src/unit_drivers\n";
-    print $fh "$srcdir/atm/cam/src/unit_drivers/${offline_drv}\n";
+    print $fh "$srcdir/cam/src/unit_drivers\n";
+    print $fh "$srcdir/cam/src/unit_drivers/${offline_drv}\n";
 
     if ($carma ne 'none') {
 	# This directory needs to precede physics/cam/ to replace
 	# the CARMA stub package with CARMA. Putting it first allows
 	# any CAM file to be overridden by a particular CARMA model.
-	print $fh "$srcdir/atm/cam/src/physics/carma/models/$carma\n";
-	print $fh "$srcdir/atm/cam/src/physics/carma/cam\n";
-	print $fh "$srcdir/atm/cam/src/physics/carma/base\n";
+	print $fh "$srcdir/cam/src/physics/carma/models/$carma\n";
+	print $fh "$srcdir/cam/src/physics/carma/cam\n";
+	print $fh "$srcdir/cam/src/physics/carma/base\n";
     }
 
     # CAM chemistry, dynamics, physics, control and shared utilities.
@@ -2791,63 +2784,64 @@ sub write_filepath
         print $fh "$chem_src_dir\n";
     }
     if ($chem =~ /_mam/) {
-	print $fh "$srcdir/atm/cam/src/chemistry/modal_aero\n";
+	print $fh "$srcdir/cam/src/chemistry/modal_aero\n";
     } else {
-	print $fh "$srcdir/atm/cam/src/chemistry/bulk_aero\n";
+	print $fh "$srcdir/cam/src/chemistry/bulk_aero\n";
     }
-    print $fh "$srcdir/atm/cam/src/chemistry/aerosol\n";
-    print $fh "$srcdir/atm/cam/src/chemistry/mozart\n";
+    print $fh "$srcdir/cam/src/chemistry/aerosol\n";
+    print $fh "$srcdir/cam/src/chemistry/mozart\n";
     if ($waccm_phys) {
-	print $fh "$srcdir/atm/cam/src/physics/waccm\n";
+	print $fh "$srcdir/cam/src/physics/waccm\n";
     }
 
     if ($waccmx) {
-        print $fh "$srcdir/atm/cam/src/physics/waccmx\n";
+        print $fh "$srcdir/cam/src/physics/waccmx\n";
     }
 
-    print $fh "$srcdir/atm/cam/src/chemistry/utils\n";
+    print $fh "$srcdir/cam/src/chemistry/utils\n";
 
     if ($rad eq 'rrtmg') {
 	# These directories need to precede physics/cam/ to replace
 	# the CAM3 radiation package with RRTMG
-	print $fh "$srcdir/atm/cam/src/physics/rrtmg\n";
-	print $fh "$srcdir/atm/cam/src/physics/rrtmg/ext/rrtmg_mcica\n";
-	print $fh "$srcdir/atm/cam/src/physics/rrtmg/ext/rrtmg_lw\n";
-	print $fh "$srcdir/atm/cam/src/physics/rrtmg/ext/rrtmg_sw\n";
+	print $fh "$srcdir/cam/src/physics/rrtmg\n";
+	print $fh "$srcdir/cam/src/physics/rrtmg/ext/rrtmg_mcica\n";
+	print $fh "$srcdir/cam/src/physics/rrtmg/ext/rrtmg_lw\n";
+	print $fh "$srcdir/cam/src/physics/rrtmg/ext/rrtmg_sw\n";
     }
 
-    print $fh "$srcdir/atm/cam/src/physics/cam\n";
+    print $fh "$srcdir/cam/src/physics/cam\n";
     if ($clubb_sgs eq '1') {
-       print $fh "$srcdir/atm/cam/src/physics/clubb\n";
-       print $fh "$srcdir/atm/cam/src/physics/silhs\n";
+       print $fh "$srcdir/cam/src/physics/clubb\n";
+       print $fh "$srcdir/cam/src/physics/silhs\n";
     }
 
-    print $fh "$srcdir/atm/cam/src/dynamics/$dyn\n";
+    print $fh "$srcdir/cam/src/dynamics/$dyn\n";
     if($dyn eq 'se') {
-	print $fh "$srcdir/atm/cam/src/dynamics/se/share\n";
+	print $fh "$srcdir/cam/src/dynamics/se/share\n";
     }
 
     # Parallelization utilies
     if ($dyn eq 'fv' or $cppdefs =~ /MODCM_DP_TRANSPOSE/) {
-	print $fh "$srcdir/atm/cam/src/utils/pilgrim\n";
+	print $fh "$srcdir/cam/src/utils/pilgrim\n";
     }
 
     # Advective transport
     if ($dyn eq 'eul' or $dyn eq 'sld') {
-	print $fh "$srcdir/atm/cam/src/advection/slt\n";
+	print $fh "$srcdir/cam/src/advection/slt\n";
     }
 
-    print $fh "$srcdir/atm/cam/src/cpl\n";
-    print $fh "$srcdir/atm/cam/src/control\n";
-    print $fh "$srcdir/atm/cam/src/utils\n";
+    print $fh "$srcdir/cam/src/cpl\n";
+    print $fh "$srcdir/cam/src/control\n";
+    print $fh "$srcdir/cam/src/utils\n";
 
     if ($cam_build) {
 
 	# These paths are only needed for CAM standalone builds
 
+	print $fh "$srcdir/utils/timing\n";
 	print $fh "$srcdir/utils/pio\n";
 
-	unless ($esmf_libdir) { 
+	unless ($esmf_libdir) {
 	    print $fh "$srcdir/utils/esmf_wrf_timemgr\n";
 	}
 
@@ -2860,14 +2854,14 @@ sub write_filepath
 
 	# Ocean package.
 	if ($ocn eq 'dom') {
-	    print $fh "$srcdir/atm/cam/src/utils/cam_dom\n";
+	    print $fh "$srcdir/cam/src/utils/cam_dom\n";
 	}
 	elsif ($ocn eq 'docn') {
 	    print $fh "$srcdir/ocn/docn\n";
 	}
 	elsif ($ocn eq 'aquaplanet') {
-	    print $fh "$srcdir/atm/cam/src/utils/cam_aqua\n";
-	    print $fh "$srcdir/atm/cam/src/utils/cam_aqua/cpl\n";
+	    print $fh "$srcdir/cam/src/utils/cam_aqua\n";
+	    print $fh "$srcdir/cam/src/utils/cam_aqua/cpl\n";
 	}
 	elsif ($ocn eq 'socn') {
 	    print $fh "$srcdir/ocn/socn/cpl\n";
@@ -2876,9 +2870,9 @@ sub write_filepath
 	# Land package
 	if ($lnd eq 'clm') {
 #	    print $fh "$srcdir/lnd/clm/src/cpl\n";
-	    print $fh "$srcdir/lnd/clm/src_clm40/main\n";
-	    print $fh "$srcdir/lnd/clm/src_clm40/biogeochem\n";
-	    print $fh "$srcdir/lnd/clm/src_clm40/biogeophys\n";
+	    print $fh "$srcdir/clm/src_clm40/main\n";
+	    print $fh "$srcdir/clm/src_clm40/biogeochem\n";
+	    print $fh "$srcdir/clm/src_clm40/biogeophys\n";
 	}
 	elsif ($lnd eq 'slnd') {
 	    print $fh "$srcdir/lnd/slnd/cpl\n";
@@ -2889,9 +2883,9 @@ sub write_filepath
 	    print $fh "$srcdir/ice/sice/cpl\n";
 	}
 	elsif ($ice eq 'cice') {
-	    print $fh "$srcdir/ice/cice/src/drivers/cpl\n";
-	    print $fh "$srcdir/ice/cice/src/mpi\n";
-	    print $fh "$srcdir/ice/cice/src/source\n";
+	    print $fh "$srcdir/cice/src/drivers/cpl\n";
+	    print $fh "$srcdir/cice/src/mpi\n";
+	    print $fh "$srcdir/cice/src/source\n";
 	}
 
 	# Land ice package
@@ -2899,8 +2893,8 @@ sub write_filepath
 
         # Runoff package
         if ($rof eq 'rtm') {
-	    print $fh "$srcdir/rof/rtm/src/cpl\n";
-            print $fh "$srcdir/rof/rtm/src/riverroute\n";
+	    print $fh "$srcdir/rtm/src/cpl\n";
+            print $fh "$srcdir/rtm/src/riverroute\n";
         }
         elsif ($rof eq 'srof') {
             print $fh "$srcdir/rof/srof/cpl\n";
@@ -2967,6 +2961,8 @@ sub write_makefile
     my $cosp_libdir  = $cfg_ref->get('cosp_libdir');
     my $mct_libdir   = $cfg_ref->get('mct_libdir');
 
+
+
     # map between local os names ($OSNAME) and names which are
     # used in the Makefile (return value from "uname -s" command).
     my %uname_map = ( 'aix'      => 'AIX',
@@ -3015,7 +3011,7 @@ F_OPTIMIZATION_OVERRIDE := $fopt
 USER_LDFLAGS := $ldflags
 COSP_LIBDIR  := $cosp_libdir
 MCT_LIBDIR   := $mct_libdir
-GPTL_SRCDIR  := $cam_root/models/utils/timing
+
 
 EOF
 
@@ -3044,13 +3040,13 @@ sub write_cosp_makefile
 
 
 CAM_BLD    := $cam_bld
-COSP_PATH  := $cam_root/models/atm/cam/src/physics/cosp
-ISCCP_PATH := $cam_root/models/atm/cam/src/physics/icarus-scops
-RS_PATH    := $cam_root/models/atm/cam/src/physics/cosp/quickbeam
-CS_PATH    := $cam_root/models/atm/cam/src/physics/cosp/actsim
-LLNL_PATH  := $cam_root/models/atm/cam/src/physics/cosp/llnl
-MISR_PATH  := $cam_root/models/atm/cam/src/physics/cosp/MISR_simulator
-MODIS_PATH := $cam_root/models/atm/cam/src/physics/cosp/MODIS_simulator
+COSP_PATH  := $cam_root/cam/src/physics/cosp
+ISCCP_PATH := $cam_root/cam/src/physics/icarus-scops
+RS_PATH    := $cam_root/cam/src/physics/cosp/quickbeam
+CS_PATH    := $cam_root/cam/src/physics/cosp/actsim
+LLNL_PATH  := $cam_root/cam/src/physics/cosp/llnl
+MISR_PATH  := $cam_root/cam/src/physics/cosp/MISR_simulator
+MODIS_PATH := $cam_root/cam/src/physics/cosp/MODIS_simulator
 
 EOF
 
@@ -3300,7 +3296,7 @@ sub mkdirp {
     my (@subdirs, $path);
 
     # if $dir is absolute pathname then @dirs will start with ""
-    if ($dirs[0] eq "") { push @subdirs, shift @dirs; }  
+    if ($dirs[0] eq "") { push @subdirs, shift @dirs; }
 
     while ( @dirs ) { # check that each subdir exists and mkdir if it doesn't
 	push @subdirs, shift @dirs;
@@ -3396,7 +3392,7 @@ EOF
     my $cmd_error = $CHILD_ERROR;
     my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-    if ($cmd_error) { 
+    if ($cmd_error) {
 	die "**** FAILED ****\n$test_output";
     } elsif ($print>=2) {
 	print "**** PASS ****\n$test_output";
@@ -3408,7 +3404,7 @@ EOF
 	       (\w+)     # 1st word (name of compiler)
 	       \s+       # followed by one or more spaces
 	       -c        # and the -c option
-	       \s   
+	       \s
 	     }xm;
 
     my $fc_compiler_name = $1;
@@ -3420,7 +3416,7 @@ EOF
 	my $cmd_error = $CHILD_ERROR;
 	my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-	if ($cmd_error) { 
+	if ($cmd_error) {
 	    die "**** FAILED ****\n$test_output";
 	} elsif ($print>=2) {
 	    print "**** PASS ****\n$test_output";
@@ -3467,7 +3463,7 @@ EOF
     my $cmd_error = $CHILD_ERROR;
     my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-    if ($cmd_error) { 
+    if ($cmd_error) {
 	die "**** FAILED ****\n$test_output";
     } elsif ($print>=2) {
 	print "**** PASS ****\n$test_output";
@@ -3480,7 +3476,7 @@ EOF
 	my $cmd_error = $CHILD_ERROR;
 	my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-	if ($cmd_error) { 
+	if ($cmd_error) {
 	    die "**** FAILED ****\n$test_output";
 	} elsif ($print>=2) {
 	    print "**** PASS ****\n$test_output";
@@ -3527,7 +3523,7 @@ EOF
     my $cmd_error = $CHILD_ERROR;
     my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-    if ($cmd_error) { 
+    if ($cmd_error) {
 	die "**** FAILED ****\n$test_output";
     } elsif ($print>=2) {
 	print "**** PASS ****\n$test_output";
@@ -3540,7 +3536,7 @@ EOF
 	my $cmd_error = $CHILD_ERROR;
 	my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-	if ($cmd_error) { 
+	if ($cmd_error) {
 	    die "**** FAILED ****\n$test_output";
 	} elsif ($print>=2) {
 	    print "**** PASS ****\n$test_output";
@@ -3594,7 +3590,7 @@ EOF
     my $cmd_error = $CHILD_ERROR;
     my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
-    if ($cmd_error) { 
+    if ($cmd_error) {
 	die "**** FAILED ****\n$test_output";
     } elsif ($print>=2) {
 	print "**** PASS ****\n$test_output";
@@ -3608,7 +3604,7 @@ EOF
 	my $test_output = "Issued the command:\n$cmd\n\nThe output was:\n$out\n";
 
 
-	if ($cmd_error) { 
+	if ($cmd_error) {
 	    die "**** FAILED ****\n$test_output";
 	} elsif ($print>=2) {
 	    print "**** PASS ****\n$test_output";
@@ -3652,4 +3648,3 @@ sub print_hash {
     my ($k, $v);
     while ( ($k,$v) = each %h ) { print "$k => $v\n"; }
 }
-

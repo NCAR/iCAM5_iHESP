@@ -6,7 +6,7 @@ module physics_types
   use shr_kind_mod,     only: r8 => shr_kind_r8
   use ppgrid,           only: pcols, pver, psubcols
   use constituents,     only: pcnst, qmin, cnst_name
-  use geopotential,     only: geopotential_dse, geopotential_t
+  use geopotential,     only: geopotential_dse
   use physconst,        only: zvir, gravit, cpair, rair, cpairv, rairv
   use dycore,           only: dycore_is
   use phys_grid,        only: get_ncols_p, get_rlon_all_p, get_rlat_all_p, get_gcol_all_p
@@ -204,7 +204,8 @@ contains
 ! Update the state and or tendency structure with the parameterization tendencies
 !-----------------------------------------------------------------------
     use shr_sys_mod,  only: shr_sys_flush
-    use constituents, only: cnst_get_ind, cnst_mw, pcnst
+    use geopotential, only: geopotential_dse
+    use constituents, only: cnst_get_ind, cnst_mw
     use scamMod,      only: scm_crm_mode, single_column
     use phys_control, only: phys_getopts
     use physconst,    only: physconst_update ! Routine which updates physconst variables (WACCM-X)
@@ -396,47 +397,47 @@ contains
        end if
     end if
 
-   !**************************************************************
-   !special tests for water tracers (to match cloud water and ice)
-   !**************************************************************
-   if(trace_water) then !are water tracers on?
+    !**************************************************************
+    !special tests for water tracers (to match cloud water and ice)
+    !**************************************************************
+    if(trace_water) then !are water tracers on?
 
-     !NOTE:  This code might not work for water isotopes, as the values
-     !will be significantly smaller.  If a problem occurs when doing
-     !ratio or similar tests, this could likely be the culprit. - JN
+      !NOTE:  This code might not work for water isotopes, as the values
+      !will be significantly smaller.  If a problem occurs when doing
+      !ratio or similar tests, this could likely be the culprit. - JN
 
-     !NOTE:  Make sure to zero out the water tracer only where the actual
-     !bulk water satisfies the logical condition, not where the water tracer 
-     !itself passes. -JN 
+      !NOTE:  Make sure to zero out the water tracer only where the actual
+      !bulk water satisfies the logical condition, not where the water tracer
+      !itself passes. -JN
 
-     do m=1,wtrc_nwset !loop over water tracers
-       !-------------
-       !Cloud liquid:
-       !-------------
-       if(ptend%lq(wtrc_iatype(m,iwtliq))) then
+      do m=1,wtrc_nwset !loop over water tracers
+        !-------------
+        !Cloud liquid:
+        !-------------
+        if(ptend%lq(wtrc_iatype(m,iwtliq))) then
 #ifdef PERGRO
-         if ( any(ptend%name == pergro_cldlim_names) ) &
-           call state_cnst_min_nz(1.e-12_r8, ixcldliq, wtrc_iatype(m,iwtliq))
+          if ( any(ptend%name == pergro_cldlim_names) ) &
+            call state_cnst_min_nz(1.e-12_r8, ixcldliq, wtrc_iatype(m,iwtliq))
 #endif
-         if ( any(ptend%name == cldlim_names) ) &
-           call state_cnst_min_nz(1.e-36_r8, ixcldliq, wtrc_iatype(m,iwtliq))
-       end if
-       !---------
-       !Cloud Ice:
-       !---------
-       if(ptend%lq(wtrc_iatype(m,iwtice))) then
+          if ( any(ptend%name == cldlim_names) ) &
+            call state_cnst_min_nz(1.e-36_r8, ixcldliq, wtrc_iatype(m,iwtliq))
+        end if
+        !---------
+        !Cloud Ice:
+        !---------
+        if(ptend%lq(wtrc_iatype(m,iwtice))) then
 #ifdef PERGRO
-         if ( any(ptend%name == pergro_cldlim_names) ) &
-           call state_cnst_min_nz(1.e-12_r8, ixcldice, wtrc_iatype(m,iwtice))
+          if ( any(ptend%name == pergro_cldlim_names) ) &
+            call state_cnst_min_nz(1.e-12_r8, ixcldice, wtrc_iatype(m,iwtice))
 #endif
-         if ( any(ptend%name == cldlim_names) ) &
-           call state_cnst_min_nz(1.e-36_r8, ixcldice, wtrc_iatype(m,iwtice))
-       end if
-       !---------
-     end do !water tracers
-   end if
-   !**************************************************************
-  
+          if ( any(ptend%name == cldlim_names) ) &
+            call state_cnst_min_nz(1.e-36_r8, ixcldice, wtrc_iatype(m,iwtice))
+        end if
+        !---------
+      end do !water tracers
+    end if
+    !**************************************************************
+
     !------------------------------------------------------------------------
     ! Get indices for molecular weights and call WACCM-X physconst_update
     !------------------------------------------------------------------------
@@ -456,30 +457,23 @@ contains
       zvirv(:,:) = zvir    
     endif
 
-    !-------------------------------------------------------------------------------------------------------------
-    ! Update temperature from dry static energy (moved from above for WACCM-X so updating after cpairv_loc update)
-    !-------------------------------------------------------------------------------------------------------------
-
+    !-------------------------------------------------------------------------------------------
+    ! Update dry static energy(moved from above for WACCM-X so updating after cpairv_loc update)
+    !-------------------------------------------------------------------------------------------
     if(ptend%ls) then
        do k = ptend%top_level, ptend%bot_level
-          state%t(:ncol,k) = state%t(:ncol,k) + ptend%s(:ncol,k)*dt/cpairv_loc(:ncol,k,state%lchnk)
+          state%s(:ncol,k)   = state%s(:ncol,k)   + ptend%s(:ncol,k) * dt
           if (present(tend)) &
                tend%dtdt(:ncol,k) = tend%dtdt(:ncol,k) + ptend%s(:ncol,k)/cpairv_loc(:ncol,k,state%lchnk)
        end do
     end if
 
-    ! Derive new geopotential fields if heating or water tendency not 0.
-
+    ! Derive new temperature and geopotential fields if heating or water tendency not 0.
     if (ptend%ls .or. ptend%lq(1)) then
-       call geopotential_t  (                                                                    &
+       call geopotential_dse(  &
             state%lnpint, state%lnpmid, state%pint  , state%pmid  , state%pdel  , state%rpdel  , &
-            state%t     , state%q(:,:,1), rairv_loc(:,:,state%lchnk), gravit  , zvirv              , &
-            state%zi    , state%zm      , ncol         )
-       ! update dry static energy for use in next process
-       do k = ptend%top_level, ptend%bot_level
-          state%s(:ncol,k) = state%t(:ncol,k  )*cpairv_loc(:ncol,k,state%lchnk) &
-                           + gravit*state%zm(:ncol,k) + state%phis(:ncol)
-       end do
+            state%s     , state%q(:,:,1),state%phis , rairv_loc(:,:,state%lchnk), gravit  , cpairv_loc(:,:,state%lchnk), &
+            zvirv    , state%t     , state%zi    , state%zm    , ncol         )
     end if
 
     ! Good idea to do this regularly.
@@ -1210,7 +1204,6 @@ end subroutine physics_ptend_copy
     !-----------------------------------------------------------------------
 
     use constituents, only : cnst_get_type_byind
-    use ppgrid,       only : begchunk, endchunk
 
     implicit none
     !
@@ -1232,8 +1225,6 @@ end subroutine physics_ptend_copy
     real(r8) :: vtmp(pcols)   ! temp variable for recalculating the initial v values
 
     real(r8) :: zvirv(pcols,pver)    ! Local zvir array pointer
-
-    real(r8),allocatable :: cpairv_loc(:,:,:)
     !
     !-----------------------------------------------------------------------
     ! verify that the dycore is FV
@@ -1241,9 +1232,6 @@ end subroutine physics_ptend_copy
 
     if (state%psetcols .ne. pcols) then
        call endrun('physics_dme_adjust: cannot pass in a state which has sub-columns')
-    end if
-    if (adjust_te) then
-       call endrun('physics_dme_adjust: must update code based on the "correct" energy before turning on "adjust_te"')
     end if
 
     lchnk = state%lchnk
@@ -1295,29 +1283,11 @@ end subroutine physics_ptend_copy
 
 ! compute new T,z from new s,q,dp
     if (adjust_te) then
-
-! cpairv_loc needs to be allocated to a size which matches state and ptend
-! If psetcols == pcols, cpairv is the correct size and just copy into cpairv_loc
-! If psetcols > pcols and all cpairv match cpair, then assign the constant cpair
-
-       if (state%psetcols == pcols) then
-          allocate (cpairv_loc(state%psetcols,pver,begchunk:endchunk))
-          cpairv_loc(:,:,:) = cpairv(:,:,:)
-       else if (state%psetcols > pcols .and. all(cpairv(:,:,:) == cpair)) then
-          allocate(cpairv_loc(state%psetcols,pver,begchunk:endchunk))
-          cpairv_loc(:,:,:) = cpair
-       else
-          call endrun('physics_dme_adjust: cpairv is not allowed to vary when subcolumns are turned on')
-       end if
-
        call geopotential_dse(state%lnpint, state%lnpmid, state%pint,  &
             state%pmid  , state%pdel    , state%rpdel,  &
             state%s     , state%q(:,:,1), state%phis , rairv(:,:,state%lchnk), &
-            gravit, cpairv_loc(:,:,state%lchnk), zvirv, &
+            gravit, cpairv(:,:,state%lchnk), zvirv, &
             state%t     , state%zi      , state%zm   , ncol)
-
-       deallocate(cpairv_loc)
-
     end if
 
   end subroutine physics_dme_adjust

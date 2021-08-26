@@ -15,7 +15,7 @@ module interpolate_data
 ! Public Methods:
 !
 
-  public :: interp_type, lininterp, vertinterp, bilin, get_timeinterp_factors
+  public :: interp_type, lininterp, vertinterp, vertinterpZT, bilin, get_timeinterp_factors
   public :: lininterp_init, lininterp_finish
   type interp_type
      real(r8), pointer :: wgts(:)
@@ -894,6 +894,8 @@ contains
     return
   end subroutine bilin
 
+!=========================================================================================
+
   subroutine vertinterp(ncol, ncold, nlev, pmid, pout, arrin, arrout)
 
     !-----------------------------------------------------------------------
@@ -909,7 +911,6 @@ contains
     !-----------------------------------------------------------------------
 
     implicit none
-
     !------------------------------Arguments--------------------------------
     integer , intent(in)  :: ncol              ! column dimension
     integer , intent(in)  :: ncold             ! declared column dimension
@@ -927,6 +928,7 @@ contains
     real(r8) dpl              ! lower level pressure difference
     logical found(ncold)      ! true if input levels found
     logical error             ! error flag
+    !-----------------------------------------------------------------
     !-----------------------------------------------------------------
     !
     ! Initialize index array and logical flags
@@ -976,6 +978,224 @@ contains
 
     return
   end subroutine vertinterp
+
+
+!=========================================================================================
+
+subroutine vertinterpZT(ncol, ncold, nlev, pin, pout, arrin, arrout, &
+                      extrapolate, ln_interp, ps, phis, tbot)
+
+   ! Vertically interpolate input array to output pressure level.  The
+   ! interpolation is linear in either pressure (the default) or ln pressure.
+   !
+   ! If above the top boundary then return top boundary value.
+   !
+   ! If below bottom boundary then use bottom boundary value, or optionally
+   ! for T or Z use the extrapolation algorithm from ECMWF (which was taken
+   ! from the NCL code base).
+
+   use physconst, only: rair, rga
+
+   !------------------------------Arguments--------------------------------
+   integer,  intent(in)  :: ncol              ! number active columns
+   integer,  intent(in)  :: ncold             ! column dimension
+   integer,  intent(in)  :: nlev              ! vertical dimension
+   real(r8), intent(in)  :: pin(ncold,nlev)   ! input pressure levels
+   real(r8), intent(in)  :: pout              ! output pressure level
+   real(r8), intent(in)  :: arrin(ncold,nlev) ! input  array
+   real(r8), intent(out) :: arrout(ncold)     ! output array (interpolated)
+
+   character(len=1), intent(in) :: extrapolate ! either 'T' or 'Z'
+   logical,          intent(in) :: ln_interp   ! set true to interolate
+                                                         ! in ln(pressure)
+   real(r8),         intent(in) :: ps(ncold)   ! surface pressure
+   real(r8),         intent(in) :: phis(ncold) ! surface geopotential
+   real(r8),         intent(in) :: tbot(ncold) ! temperature at bottom level
+   
+   !---------------------------Local variables-----------------------------
+   real(r8) :: alpha
+   logical  :: linear_interp
+
+   integer  :: i,k              ! indices
+   integer  :: kupper(ncold)    ! Level indices for interpolation
+   real(r8) :: dpu              ! upper level pressure difference
+   real(r8) :: dpl              ! lower level pressure difference
+   logical  :: found(ncold)     ! true if input levels found
+   logical  :: error            ! error flag
+   !----------------------------------------------------------------------------
+
+   alpha = 0.0065_r8*rair*rga
+
+!   if (present(extrapolate)) then
+!      if (extrapolate /= 'T' .and. extrapolate /= 'Z') then
+!         call endrun ('VERTINTERP: extrapolate must be T or Z')
+!      end if
+!      if (.not. present(ps)) then
+!         call endrun ('VERTINTERP: ps required for extrapolation')
+!      end if
+!      if (.not. present(phis)) then
+!         call endrun ('VERTINTERP: phis required for extrapolation')
+!      end if
+!      if (extrapolate == 'Z') then
+!         if (.not. present(tbot)) then
+!            call endrun ('VERTINTERP: extrapolate must be T or Z')
+!         end if
+!      end if
+!   end if
+
+   linear_interp = .true.
+!   if (present(ln_interp)) then
+      if (ln_interp) linear_interp = .false.
+!   end if
+
+   do i = 1, ncol
+      found(i)  = .false.
+      kupper(i) = 1
+   end do
+   error = .false.
+
+   ! Find indices of upper pressure bound
+   do k = 1, nlev - 1
+      do i = 1, ncol
+         if ((.not. found(i)) .and. pin(i,k)<pout .and. pout<=pin(i,k+1)) then
+            found(i)  = .true.
+            kupper(i) = k
+         end if
+      end do
+   end do
+
+   do i = 1, ncol
+
+      if (pout <= pin(i,1)) then
+
+         ! if above top pressure level then use value at top (no interpolation)
+         arrout(i) = arrin(i,1)
+
+      else if (pout >= pin(i,nlev)) then
+
+         if (extrapolate == 'T') then
+            ! use ECMWF algorithm to extrapolate T
+            arrout(i) = extrapolate_T()
+
+         else if (extrapolate == 'Z') then
+            ! use ECMWF algorithm to extrapolate Z
+            arrout(i) = extrapolate_Z()
+
+         else
+            ! use bottom value
+            arrout(i) = arrin(i,nlev)
+         end if
+
+      else if (found(i)) then
+         if (linear_interp) then
+            ! linear interpolation in p
+            dpu = pout - pin(i,kupper(i))
+            dpl = pin(i,kupper(i)+1) - pout
+            arrout(i) = (arrin(i,kupper(i))*dpl + arrin(i,kupper(i)+1)*dpu)/(dpl + dpu)
+         else
+            ! linear interpolation in ln(p)
+            arrout(i) = arrin(i,kupper(i)) + (arrin(i,kupper(i)+1) - arrin(i,kupper(i)))* &
+                                             log(pout/pin(i,kupper(i))) /                 &
+                                             log(pin(i,kupper(i)+1)/pin(i,kupper(i)))
+         end if
+      else
+         error = .true.
+      end if
+   end do
+
+   ! Error check
+   if (error) then
+      call endrun ('VERTINTERP: ERROR FLAG')
+   end if
+
+contains
+
+   !======================================================================================
+
+   real(r8) function extrapolate_T()
+
+      ! local variables
+      real(r8) :: sixth
+      real(r8) :: tstar
+      real(r8) :: hgt
+      real(r8) :: alnp
+      real(r8) :: t0
+      real(r8) :: tplat
+      real(r8) :: tprime0
+      !-------------------------------------------------------------------------
+
+      sixth  = 1._r8 / 6._r8
+      tstar = arrin(i,nlev)*(1._r8 + alpha*(ps(i)/pin(i,nlev) - 1._r8))
+      hgt   = phis(i)*rga
+
+      if (hgt < 2000._r8) then
+         alnp = alpha*log(pout/ps(i))
+      else
+         t0 = tstar + 0.0065_r8*hgt
+         tplat = min(t0, 298._r8)
+
+         if (hgt <= 2500._r8) then
+            tprime0 = 0.002_r8*((2500._r8 - hgt)*t0 + &
+                                (hgt - 2000._r8)*tplat)
+         else
+            tprime0 = tplat
+         end if
+
+         if (tprime0 < tstar) then
+            alnp = 0._r8
+         else
+            alnp = rair*(tprime0 - tstar)/phis(i) * log(pout/ps(i))
+         end if
+
+      end if
+
+      extrapolate_T = tstar*(1._r8 + alnp + 0.5_r8*alnp**2 + sixth*alnp**3)
+
+   end function extrapolate_T
+
+   !======================================================================================
+
+   real(r8) function extrapolate_Z()
+
+      ! local variables
+      real(r8) :: sixth
+      real(r8) :: hgt
+      real(r8) :: tstar
+      real(r8) :: t0
+      real(r8) :: alph
+      real(r8) :: alnp
+      !-------------------------------------------------------------------------
+
+      sixth  = 1._r8 / 6._r8
+      hgt   = phis(i)*rga
+      tstar = tbot(i)*(1._r8 + alpha*(ps(i)/pin(i,nlev) - 1._r8))
+      t0 = tstar + 0.0065_r8*hgt
+
+      if (tstar <= 290.5_r8 .and. t0 > 290.5_r8) then
+         alph = rair/phis(i) * (290.5_r8 - tstar)
+
+      else if (tstar > 290.5_r8 .and. t0 > 290.5_r8) then
+         alph  = 0._r8
+         tstar = 0.5_r8*(290.5_r8 + tstar)
+
+      else
+         alph = alpha
+
+      end if
+
+      if (tstar < 255._r8) then
+         tstar = 0.5_r8*(tstar + 255._r8)
+      end if
+      alnp = alph*log(pout/ps(i))
+
+      extrapolate_Z = hgt - rair*tstar*rga*log(pout/ps(i))* &
+                      (1._r8 + 0.5_r8*alnp + sixth*alnp**2)
+
+   end function extrapolate_Z
+
+end subroutine vertinterpZT
+
+!=========================================================================================
 
   subroutine get_timeinterp_factors (cycflag, np1, cdayminus, cdayplus, cday, &
        fact1, fact2, str)

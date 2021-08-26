@@ -325,7 +325,7 @@ CONTAINS
     ! for restart and initial condition, timelevel == timelevel_dyn
     ! so we wont update this routine to use both  
     use dyn_comp, only : timelevel
-    use parallel_mod, only : initmp, par
+    use parallel_mod, only : initmpi, par
     use element_mod, only : element_t
     use pio, only : file_desc_t, pio_global, pio_double, pio_offset_kind, &
          pio_get_att, pio_inq_dimid, pio_inq_dimlen, pio_initdecomp, pio_inq_varid, &
@@ -336,7 +336,8 @@ CONTAINS
     use namelist_mod, only: readnl
     use constituents, only : cnst_name
     use bndry_mod,   only: bndry_exchangeV
-    use edge_mod,       only: EdgeBuffer_t, initEdgeBuffer, FreeEdgeBuffer, &
+    use edgetype_mod,   only: EdgeBuffer_t
+    use edge_mod,       only: initEdgeBuffer, FreeEdgeBuffer, &
          edgeVpack, edgeVunpack
     use cam_pio_utils, only : pio_subsystem
     use spmd_dyn, only: spmd_readnl
