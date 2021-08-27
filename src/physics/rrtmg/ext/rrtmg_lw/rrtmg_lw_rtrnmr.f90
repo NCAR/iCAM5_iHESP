@@ -245,10 +245,14 @@
            secdiff(ibnd) = 1.66_r8
          else
            secdiff(ibnd) = a0(ibnd) + a1(ibnd)*exp(a2(ibnd)*pwvcm)
+! bug fix - 30jun2016 - nanr, Mike Iacono and Andrew Conley
+           if (secdiff(ibnd) .gt. 1.80_r8) secdiff(ibnd) = 1.80_r8
+           if (secdiff(ibnd) .lt. 1.50_r8) secdiff(ibnd) = 1.50_r8
          endif
       enddo
-      if (pwvcm.lt.1.0) secdiff(6) = 1.80_r8
-      if (pwvcm.gt.7.1) secdiff(7) = 1.50_r8
+! bug fix - 30jun2016 - nanr, Mike Iacono and Andrew Conley
+!      if (pwvcm.lt.1.0) secdiff(6) = 1.80_r8
+!      if (pwvcm.gt.7.1) secdiff(7) = 1.50_r8
 
       hvrrtx = '$Revision: 1.3 $'
 

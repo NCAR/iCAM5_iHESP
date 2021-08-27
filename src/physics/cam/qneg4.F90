@@ -100,7 +100,7 @@ subroutine qneg4 (subnam  ,lchnk   ,ncol    ,ztodt   ,        &
 !
 ! Write out worst value if excess
 !
-   if (nptsexc.gt.0) then
+   if (nptsexc.gt.10) then
       worst = 0._r8
       do ii=1,nptsexc
          i = indxexc(ii)

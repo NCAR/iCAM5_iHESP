@@ -3373,7 +3373,7 @@ logical function phys_grid_initialized ()
   integer, parameter :: msgtag  = 7000
 !------------------------------Arguments--------------------------------
    integer, intent(in) :: record_size  ! per column amount of data 
-   real(r8), intent(in):: chunk_buffer(record_size*chunk_buf_nrecs)
+   real(r8), intent(inout):: chunk_buffer(record_size*chunk_buf_nrecs)
                                        ! buffer of chunk data to be
                                        ! transposed
    real(r8), intent(out) :: block_buffer(record_size*block_buf_nrecs)

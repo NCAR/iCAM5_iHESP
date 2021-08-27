@@ -677,6 +677,15 @@ add_default($nl, 'cpl_seq_option');
 add_default($nl, 'dtime');
 add_default($nl, 'atm_cpl_dt', 'val'=>$nl->get_value('dtime'));
 
+###############################
+# namelist group: prof_inparm #
+###############################
+
+# The default for timing output is to use separate files for each MPI task.
+# Change default to using a single file.
+add_default($nl, 'profile_single_file', 'val'=>'.true.');
+
+
 #-----------------------------------------------------------------------------------------------
 # Add defaults for the CAM component 
 
@@ -2943,6 +2952,10 @@ if ($clubb_sgs  =~ /$TRUE/io) {
    }
    add_default($nl, 'clubb_history');
    add_default($nl, 'clubb_rad_history');
+
+   if ($nl->get_value('clubb_history') =~ "true" &&  $nl->get_value('atm_nthreads') != 1) {
+     die "$ProgName - ERROR: clubb_history = .true. with multiple threads is not supported. \n";
+   }
 
    # Check compatibility of clubb_do_deep (if set) with deep_scheme
    my $clubb_do_deep = $nl->get_value('clubb_do_deep');

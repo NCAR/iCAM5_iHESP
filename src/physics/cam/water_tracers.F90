@@ -321,7 +321,7 @@ end subroutine wtrc_init
 ! Purpose: register advected water tracer constituents
 !
 ! Method:
-!  Calls CAM constituent registration routines based on 
+!  Calls CAM constituent registration routines based on
 !  water tracer species and phase indexing. Create a number of tracer
 !  lists, and do some consistency checking of the tracers variables
 !
@@ -337,15 +337,25 @@ end subroutine wtrc_init
     use constituents,   only: cnst_name
     use physics_buffer, only: pbuf_add_field, dtype_r8
     use spmd_utils,     only: masterproc
+    use pio,            only: file_desc_t, pio_inq_varid, PIO_BCAST_ERROR, PIO_NOERR
+    use pio,            only: pio_seterrorhandling
+    use cam_initfiles,  only: initial_file_get_id
 
     real(r8)             :: mw  ! molecular weight for the constituent
     real(r8)             :: cp  ! specific heat for the constituent
 
     integer              :: itmpndx, icnst, itag, iwset, pidx
 
-    character(len=128)     :: longname
+    character(len=128)   :: longname
 
-   !For wtrc_out_names -JN:
+    !For determining whether or not tracer is read from file:
+    type(file_desc_t), pointer :: fh_ini
+    integer                    :: err_handle
+    integer                    :: ierr
+    integer                    :: wtrc_fil_id
+    logical                    :: readiv_val
+
+    !For wtrc_out_names -JN:
     character(len=8) :: wtstrng = "" !variable name
     integer          :: wtstsz       !name length
 
@@ -358,10 +368,16 @@ end subroutine wtrc_init
     iwspec(:)  = ispundef
     iwistag(:) = .false.
 
-  ! Set the species of the total water as H2O, but DONT set them 
-  ! as water tracers, as they are prognostic (not "tracers")
-  !
-  ! Set names of variable tendencies and declare them as history variables
+    ! Set initial conditions file pointer:
+    fh_ini  => initial_file_get_id()
+
+    ! Set PIO error-handling so that a PIO erro doesn't end the model simulation:
+    call pio_seterrorhandling(fh_ini, PIO_BCAST_ERROR, err_handle)
+
+    ! Set the species of the total water as H2O, but DONT set them
+    ! as water tracers, as they are prognostic (not "tracers")
+    !
+    ! Set names of variable tendencies and declare them as history variables
     if (water_tracer_model /= "none") then
 
       if ( masterproc ) then
@@ -475,9 +491,17 @@ end subroutine wtrc_init
           longname = trim(longname) // ' (tagged)'
         end if
 
-        ! Register the water isotope tracer.          
+        ! Check if tracer is present on initial conditions file:
+        ierr = pio_inq_varid(fh_ini, wtrc_names(icnst), wtrc_fil_id)
+        if (ierr == PIO_NOERR) then
+            readiv_val = .true.
+        else
+            readiv_val = .false.
+        end if
+
+        ! Register the water isotope tracer.
         call wtrc_cnst_add(wtrc_names(icnst), wtrc_types(icnst), wtrc_species(icnst), &
-          wtrc_is_tag(icnst), mw, cp, 0._r8, wtrc_indices(icnst), longname, readiv=.false.)
+          wtrc_is_tag(icnst), mw, cp, 0._r8, wtrc_indices(icnst), longname, readiv=readiv_val)
 
         ! Make some indices and counts to make it easier to loop over the isotopes.
         wtrc_ntype(wtrc_types(icnst)) = wtrc_ntype(wtrc_types(icnst)) + 1
@@ -498,7 +522,10 @@ end subroutine wtrc_init
         end if
       end do
 
-      ! Determine which specifies are coupled to the surface.      
+      ! Set PIO error-handling back to its original value:
+      call pio_seterrorhandling(fh_ini, err_handle)
+
+      ! Determine which specifies are coupled to the surface.
       icnst = 1
       do while(wtrc_srfvap_names(icnst) /= "")
         wtrc_iasrfvap(icnst) = wtrc_get_icnst(wtrc_srfvap_names(icnst))
@@ -526,7 +553,7 @@ end subroutine wtrc_init
       end do
       wtrc_nsrfpcp = icnst-1
 
-      ! Add 2D surface precipitation variables in the physics buffer for each of the 
+      ! Add 2D surface precipitation variables in the physics buffer for each of the
       ! precipitation types and wsets.
       wtrc_srfpcp_indices(:,:) = -1
 
@@ -3733,7 +3760,7 @@ use wv_saturation,         only: qsat
 use water_types,           only: iwtvap
 
 !*****************
-!Declare variables 
+!Declare variables
 !*****************
 
 implicit none
@@ -3815,9 +3842,9 @@ integer :: ncol               !Number of atmospheric columns
 integer :: i,k,m              !loop variables
 
 !For precip mass fixer:
-real(r8) :: rdiff 
-real(r8) :: sdiff 
-real(r8) :: rmass0
+real(r8) :: pdiff
+real(r8) :: sdiff
+real(r8) :: pmass0
 real(r8) :: smass0
 real(r8) :: Rd
 
@@ -4114,18 +4141,18 @@ end do
 !-----------------------
 do i=1,ncol
  !Calculate differences:
-  rmass0 = (prec(i,wtrc_iatype(2,iwtvap))-snow(i,wtrc_iatype(2,iwtvap)))
+  pmass0 = prec(i,wtrc_iatype(2,iwtvap))
   smass0 = snow(i,wtrc_iatype(2,iwtvap))
-  rdiff  = rmass0 - (prec(i,wtrc_iatype(1,iwtvap))-snow(i,wtrc_iatype(1,iwtvap)))
-  sdiff  = smass0-snow(i,wtrc_iatype(1,iwtvap))
+  pdiff  = pmass0 - prec(i,wtrc_iatype(1,iwtvap))
+  sdiff  = smass0 - snow(i,wtrc_iatype(1,iwtvap))
   do m=2,wtrc_nwset
-   !Rain errors:
-    Rd = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),(prec(i,wtrc_iatype(m,iwtvap))-snow(i,wtrc_iatype(m,iwtvap))),rmass0)
-    prec(i,wtrc_iatype(m,iwtvap)) = prec(i,wtrc_iatype(m,iwtvap))-Rd*rdiff    
+   !Total precip errors:
+    Rd = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),(prec(i,wtrc_iatype(m,iwtvap))-snow(i,wtrc_iatype(m,iwtvap))),pmass0)
+    prec(i,wtrc_iatype(m,iwtvap)) = max(0._r8, prec(i,wtrc_iatype(m,iwtvap))-Rd*pdiff)
    !Snow errors:
     Rd = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),snow(i,wtrc_iatype(m,iwtvap)),smass0)
-    snow(i,wtrc_iatype(m,iwtvap)) = snow(i,wtrc_iatype(m,iwtvap))-Rd*sdiff           
-   !Giant error check: 
+    snow(i,wtrc_iatype(m,iwtvap)) = max(0._r8, snow(i,wtrc_iatype(m,iwtvap))-Rd*sdiff)
+   !Giant error check:
    !NOTE:  !Seems to occur baout once every seven years. -JN
     if(prec(i,wtrc_iatype(m,iwtvap)) .gt. 10._r8*prec(i,wtrc_iatype(1,iwtvap))) then
       if(prec(i,wtrc_iatype(1,iwtvap)) .gt. wtrc_qmin) &

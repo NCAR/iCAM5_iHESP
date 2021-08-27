@@ -52,6 +52,7 @@ subroutine qneg3 (subnam  ,idx     ,ncol    ,ncold   ,lver    ,lconst_beg  , &
    logical found            ! true => at least 1 minimum violator found
 
    real(r8) worst           ! biggest violator
+
 !
 !-----------------------------------------------------------------------
 !
@@ -101,7 +102,8 @@ subroutine qneg3 (subnam  ,idx     ,ncol    ,ncold   ,lver    ,lconst_beg  , &
             end do
          end if
       end do
-      if (found .and. abs(worst)>max(qmin(m),1.e-12_r8)) then
+
+      if (found .and. nvals>100 .and.  abs(worst)>max(qmin(m),1.e-12_r8)) then
          write(iulog,9000)subnam,m,idx,nvals,qmin(m),worst,iw,kw
       end if
    end do

@@ -1,12 +1,13 @@
 module gravity_waves_sources
   use derivative_mod, only : derivative_t
   use dimensions_mod, only : np,nlev
-  use edge_mod, only       : EdgeBuffer_t
+  use edgetype_mod, only       : EdgeBuffer_t
   use element_mod, only    : element_t
   use hybrid_mod, only     : hybrid_t
   use kinds, only          : real_kind
   use shr_kind_mod, only   : r8 => shr_kind_r8
-  use thread_mod, only   : nthreads
+  use thread_mod, only     : horz_num_threads
+  use dyn_comp, only       : dyn_import_t
 
   implicit none
   private
@@ -29,16 +30,19 @@ module gravity_waves_sources
 CONTAINS
 !----------------------------------------------------------------------
 
-  subroutine gws_init
+  subroutine gws_init(dyn_in)
     use parallel_mod, only   : par
     use edge_mod, only       : initEdgeBuffer
     use hycoef, only         : hypi
     use pmgrid, only         : plev
     implicit none
+
+    type (dyn_import_t), intent(inout) :: dyn_in
     
     ! Set up variables similar to dyn_comp and prim_driver_mod initializations
-    call initEdgeBuffer(par, edge3,3*nlev)
-    allocate(deriv(0:Nthreads-1))
+    call initEdgeBuffer(par, edge3,dyn_in%elem, 3*nlev)
+!JMD Not quite sure this is needed
+    allocate(deriv(0:horz_num_threads-1))
     
     psurf_ref = hypi(plev+1)
 
@@ -48,8 +52,7 @@ CONTAINS
     use derivative_mod, only  : derivinit
     use dimensions_mod, only  : npsq, nelemd
     use dof_mod, only         : UniquePoints
-    use dyn_comp, only        : dom_mt
-    use hybrid_mod, only      : hybrid_create
+    use hybrid_mod, only      : config_thread_region, init_loop_ranges, get_loop_ranges
     use parallel_mod, only    : par
     use ppgrid, only          : pver
     use thread_mod, only      : omp_get_thread_num
@@ -65,11 +68,20 @@ CONTAINS
     real(kind=real_kind), allocatable  ::  frontgf_thr(:,:,:,:)
     real(kind=real_kind), allocatable  ::  frontga_thr(:,:,:,:)
     
-    !$OMP PARALLEL DEFAULT(SHARED), PRIVATE(ithr,nets,nete,hybrid,ie,ncols,frontgf_thr,frontga_thr)
-    ithr=omp_get_thread_num()
-    nets=dom_mt(ithr)%start
-    nete=dom_mt(ithr)%end
-    hybrid = hybrid_create(par,ithr,NThreads)
+    call init_loop_ranges(nelemd)
+
+
+    !$OMP PARALLEL NUM_THREADS(horz_num_threads),  DEFAULT(SHARED), PRIVATE(nets,nete,hybrid,ie,ncols,frontgf_thr,frontga_thr) 
+    if (horz_num_threads == 1) then
+      hybrid = config_thread_region(par,'serial')
+    else
+      hybrid = config_thread_region(par,'horizontal')
+    endif
+    call get_loop_ranges(hybrid,ibeg=nets,iend=nete)
+    write(*,200) nets, nete
+    200 format(2x, 2i4, ' nets, nete - gravity')
+
+!JMD call to derivinit... don't know what it needs to be a thread private call
     call derivinit(deriv(hybrid%ithr))
     allocate(frontgf_thr(np,np,nlev,nets:nete))
     allocate(frontga_thr(np,np,nlev,nets:nete))
@@ -130,10 +142,12 @@ CONTAINS
           ! pressure at mid points
           p(:,:)   = hvcoord%hyam(k)*hvcoord%ps0 + hvcoord%hybm(k)*elem(ie)%state%ps_v(:,:,tl)
           theta(:,:) = elem(ie)%state%T(:,:,k,tl)*(psurf_ref / p(:,:))**kappa
-          gradth(:,:,:,k,ie) = gradient_sphere(theta,ederiv,elem(ie)%Dinv)
+          ! gradth(:,:,:,k,ie) = gradient_sphere(theta,ederiv,elem(ie)%Dinv)
+          call gradient_sphere(theta,ederiv,elem(ie)%Dinv,gradth(:,:,:,k,ie))
           
           ! compute C = (grad(theta) dot grad ) u
-          C(:,:,:) = ugradv_sphere(gradth(:,:,:,k,ie), elem(ie)%state%v(:,:,:,k,tl),ederiv,elem(ie))
+          ! C(:,:,:) = ugradv_sphere(gradth(:,:,:,k,ie), elem(ie)%state%v(:,:,:,k,tl),ederiv,elem(ie))
+          call ugradv_sphere(gradth(:,:,:,k,ie), elem(ie)%state%v(:,:,:,k,tl),ederiv,elem(ie),C(:,:,:))
           
           ! gradth dot C
           frontgf(:,:,k,ie) = -( C(:,:,1)*gradth(:,:,1,k,ie) +  C(:,:,2)*gradth(:,:,2,k,ie)  )
@@ -145,13 +159,13 @@ CONTAINS
           
        enddo
        ! pack
-       call edgeVpack(edge3, frontgf(:,:,:,ie),nlev,0,elem(ie)%desc)
-       call edgeVpack(edge3, gradth(:,:,:,:,ie),2*nlev,nlev,elem(ie)%desc)
+       call edgeVpack(edge3, frontgf(:,:,:,ie),nlev,0,ie)
+       call edgeVpack(edge3, gradth(:,:,:,:,ie),2*nlev,nlev,ie)
     enddo
     call bndry_exchangeV(hybrid,edge3)
     do ie=nets,nete
-       call edgeVunpack(edge3, frontgf(:,:,:,ie),nlev,0,elem(ie)%desc)
-       call edgeVunpack(edge3, gradth(:,:,:,:,ie),2*nlev,nlev,elem(ie)%desc)
+       call edgeVunpack(edge3, frontgf(:,:,:,ie),nlev,0,ie)
+       call edgeVunpack(edge3, gradth(:,:,:,:,ie),2*nlev,nlev,ie)
        ! apply inverse mass matrix,
        do k=1,nlev
           gradth(:,:,1,k,ie)=gradth(:,:,1,k,ie)*elem(ie)%rspheremp(:,:)

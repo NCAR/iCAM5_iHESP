@@ -1,9 +1,9 @@
 module cam_restart
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! module to handle reading and writing of the master restart files.
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use shr_kind_mod,     only: r8 => shr_kind_r8, cl=>shr_kind_cl
    use spmd_utils,       only: masterproc
    use ppgrid,           only: begchunk, endchunk
@@ -11,14 +11,14 @@ module cam_restart
    use rgrid,            only: nlon, wnummax, fullgrid
    use ioFileMod,        only: getfil, opnfil
    use cam_abortutils,   only: endrun
-   use camsrfexch,       only: cam_in_t, cam_out_t     
+   use camsrfexch,       only: cam_in_t, cam_out_t
    use dyn_comp,         only: dyn_import_t, dyn_export_t
 
 #ifdef SPMD
    use mpishorthand,     only: mpicom, mpir8, mpiint, mpilog
 #endif
    use units,            only: getunit
-   use shr_kind_mod,     only: shr_kind_cm
+   use shr_kind_mod,     only: shr_kind_cs, shr_kind_cx
    use cam_logfile,      only: iulog
    use pio,              only: file_desc_t, pio_global, pio_noerr, &
                                pio_seterrorhandling, pio_bcast_error, pio_internal_error, &
@@ -46,7 +46,7 @@ module cam_restart
 
    integer, parameter :: nlen = 256       ! Length of character strings
    character(len=nlen):: pname = ' '      ! Full restart pathname
-   character(shr_kind_cm) :: tcase = ' '  ! Read in previous case name
+   character(shr_kind_cx) :: tcase = ' '  ! Read in previous case name
 
    ! Type of restart run
    logical :: nlres                       ! true => restart or branch run
@@ -72,30 +72,30 @@ CONTAINS
 
 subroutine restart_defaultopts( &
    cam_branch_file_out            )
-  !----------------------------------------------------------------------- 
+  !-----------------------------------------------------------------------
   ! Purpose: Return default runtime options
   !-----------------------------------------------------------------------
-  
+
   character(len=nlen), intent(out), optional :: cam_branch_file_out
   !-----------------------------------------------------------------------
 
   if ( present(cam_branch_file_out) ) then
      cam_branch_file_out = cam_branch_file
   endif
-  
+
 end subroutine restart_defaultopts
 
 !================================================================================================
 
 subroutine restart_setopts( nsrest, cam_branch_file_in )
-  !----------------------------------------------------------------------- 
+  !-----------------------------------------------------------------------
   ! Purpose: Set runtime options
   !-----------------------------------------------------------------------
   use cam_instance, only: inst_suffix
-  
+
   integer,             intent(in)           :: nsrest
   character(len=nlen), intent(in), optional :: cam_branch_file_in
-  
+
   integer :: numset=0
   integer :: rcode
   !-----------------------------------------------------------------------
@@ -118,14 +118,14 @@ subroutine restart_setopts( nsrest, cam_branch_file_in )
   else
      call endrun ('restart_setopts: not a valid option for nsrest (should be 0, 1 or 3)')
   endif
-  
+
   if ( present(cam_branch_file_in) ) then
      cam_branch_file = cam_branch_file_in
   endif
-  
+
   ! If branch set restart filepath to path given on namelist
   if ( lbrnch ) call set_restart_filepath( cam_branch_file )
-  
+
 end subroutine restart_setopts
 
 !=========================================================================================
@@ -144,20 +144,20 @@ end subroutine restart_printopts
    subroutine cam_write_restart( cam_in, cam_out, dyn_out, pbuf2d, &
 	                         yr_spec, mon_spec, day_spec, sec_spec )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Write the primary, secondary, and history buffer regeneration files.
-! 
-! Method: 
+!
+! Method:
 ! The cpp SPMD definition provides for the funnelling of all program i/o
 ! through the master processor. Processor 0 either reads restart/history
 ! data from the disk and distributes it to all processors, or collects
 ! data from all processors and writes it to disk.
-! 
-! Author: 
-! 
-!----------------------------------------------------------------------- 
+!
+! Author:
+!
+!-----------------------------------------------------------------------
      use physics_buffer,            only: physics_buffer_desc
       use cam_history,      only: write_restart_history, init_restart_history
       use radiation,        only: radiation_do
@@ -175,9 +175,9 @@ end subroutine restart_printopts
       !
       type(cam_in_t),      intent(in) :: cam_in(begchunk:endchunk)
       type(cam_out_t),     intent(in) :: cam_out(begchunk:endchunk)
-      
+
       type(dyn_export_t),  intent(in) :: dyn_out
-      
+
       type(physics_buffer_desc), pointer  :: pbuf2d(:,:)
 
       integer            , intent(in), optional :: yr_spec         ! Simulation year
@@ -198,9 +198,7 @@ end subroutine restart_printopts
       !-----------------------------------------------------------------------
       ! Write the primary restart datasets
       !-----------------------------------------------------------------------
-#ifdef DEBUG
-      write(iulog,*)'Entered CAM_WRITE_RESTART: writing nstep+1=',nstep+1, ' data to restart file'
-#endif
+
       aeres = radiation_do('aeres')
       if ( aeres ) aeres_int = 1
 
@@ -263,16 +261,16 @@ end subroutine restart_printopts
 
    subroutine cam_read_restart(cam_in, cam_out, dyn_in, dyn_out, pbuf2d, stop_ymd, stop_tod, NLFileName )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Acquire and position the restart, master, primary and secondary
 ! datasets for a continuation run
-! 
-! Method: 
-! 
-! Author: 
-! 
+!
+! Method:
+!
+! Author:
+!
 !-----------------------------------------------------------------------
      use physics_buffer, only: physics_buffer_desc
       use restart_physics,  only: read_restart_physics
@@ -316,17 +314,17 @@ end subroutine restart_printopts
    type(file_desc_t) :: File
    logical :: filefound
 
-      ! lbrnch is false for a restart run (nsrest=1), and true for a 
+      ! lbrnch is false for a restart run (nsrest=1), and true for a
       ! branch run (nsrest=3).  Only read the restart pointer file for
       ! a restart run.
    aeres = .false.
    if (.not.lbrnch) then
       call read_rest_pfile
    endif
-  
+
 !
 !------------------------------------------------------------------------
-! Obtain and read the master restart dataset 
+! Obtain and read the master restart dataset
 !------------------------------------------------------------------------
 !
 #ifdef DEBUG
@@ -353,7 +351,7 @@ end subroutine restart_printopts
    tcase(slen+1:len(tcase))=''
    ierr = PIO_Get_att(File, PIO_GLOBAL, 'aeres', aeres_int)
    if(aeres_int==1) aeres=.true.
-! If these variables are not in the file the call will give an error 
+! If these variables are not in the file the call will give an error
 !       which we can safely ignore
    call PIO_SetErrorHandling(File, PIO_BCAST_ERROR)
    ierr = pio_get_att(File, PIO_GLOBAL, 'NLON', tmp_rgrid)
@@ -381,7 +379,7 @@ end subroutine restart_printopts
       ! Dynamics, physics, History
       !-----------------------------------------------------------------------
 
-   call read_restart_dynamics(File, dyn_in, dyn_out, NLFileName)   
+   call read_restart_dynamics(File, dyn_in, dyn_out, NLFileName)
 
    call initcom ()
    call phys_grid_init
@@ -400,7 +398,7 @@ end subroutine restart_printopts
    end if
 
    call pio_closefile(File)
-   
+
    !-----------------------------------------------------------------------
    ! Allocate communication buffers for collective communications
    ! between physics and dynamics, if necessary
@@ -420,13 +418,13 @@ end subroutine restart_printopts
 !#######################################################################
 
    subroutine write_rest_pfile
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 !
 ! Write out the restart pointer file
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use restart_physics, only: get_abs_restart_filepath
    use cam_history,     only: get_ptapes, get_hist_restart_filepath, &
                               hstwr, get_hfilepath, nfils, mfilt
@@ -466,20 +464,20 @@ end subroutine restart_printopts
 !#######################################################################
 
    subroutine read_rest_pfile
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 !
 ! Read the master restart file from the restart pointer file
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
 
    character(len=nlen) :: locfn        ! Local pathname for restart pointer file
 
    nsds = getunit()
    call opnfil (rest_pfile, nsds, 'f', status="old")
    read (nsds,'(a)') pname
-   
+
    close(nsds)
 
 

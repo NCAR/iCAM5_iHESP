@@ -1,4 +1,3 @@
-
 !----------------------------------------------------------------------- 
 ! 
 ! Purpose: 
@@ -515,5 +514,3 @@ subroutine spegrd_aft (ztodt   ,lat     ,nlon    ,nlon_fft, &
 
    return
 end subroutine spegrd_aft
-
-

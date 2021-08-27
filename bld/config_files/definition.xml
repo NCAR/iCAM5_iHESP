@@ -89,6 +89,9 @@ Chemistry package: waccm_mozart, waccmx_mozart, waccm_mozart_mam3, waccm_mozart_
 <entry id="water_tracer" valid_values="none,h2o,h2o_hdo,h2o_h218o,h2o_hdo_h218o,h2o_h216o_hdo_h218o" value="">
 Water tracer (isotope or tag) package: none, h2o, h2o_hdo, h2o_h218o, h2o_hdo_h218o, or h2o_h216o_hdo_h218o.
 </entry>
+<entry id="water_tag_num" value="0">
+Number of water tags for this simulation.
+</entry>
 <entry id="prog_species" valid_values="DST,SSLT,SO4,GHG,OC,BC,CARBON16" value="" list="1">
 Prognostic mozart species packages: list of any subset of the following: DST,SSLT,SO4,GHG,OC,BC,CARBON16
 </entry>
@@ -113,10 +116,10 @@ Use clm, stub land or no lnd model in cam build: clm, slnd, none
 <entry id="rof" valid_values="rtm,srof,none" value="rtm">
 Use rtm, stub runoff or no runoff model in cam build: rtm, srof, none
 </entry>
-<entry id="ocn" valid_values="docn,dom,socn,aquaplanet,pop2" value="docn">
+<entry id="ocn" valid_values="docn,dom,socn,aquaplanet,pop" value="docn">
 Use data ocean model (docn or dom), stub ocean (socn), or aqua planet ocean
 (aquaplanet) in cam build.  When built from the CESM scripts the value of
-ocn may be set to pop2, but this doesn't impact how CAM is built.
+ocn may be set to pop, but this doesn't impact how CAM is built.
 </entry>
 <entry id="ice" valid_values="cice,sice,none" value="">
 Use cice, stub ice model or no ice model in cam build: cice, sice, none

@@ -132,6 +132,7 @@ end subroutine microp_driver_init_cnst
 !===============================================================================
 
 subroutine microp_driver_init(pbuf2d)
+
    type(physics_buffer_desc), pointer :: pbuf2d(:,:)
 
    ! Initialize the microphysics parameterizations
@@ -146,6 +147,7 @@ subroutine microp_driver_init(pbuf2d)
    case default
       call endrun('microp_driver_init:: unrecognized microp_scheme')
    end select
+
 
 end subroutine microp_driver_init
 

@@ -7,7 +7,7 @@ module interp_mod
   use dyn_grid,        only: elem, w
   use spmd_utils,      only: masterproc, iam
   use cam_pio_utils,   only: phys_decomp, fillvalue
-  use hybrid_mod,      only: hybrid_t, hybrid_create
+  use hybrid_mod,      only: hybrid_t, config_thread_region, get_loop_ranges, init_loop_ranges
   use cam_abortutils,  only: endrun
 
   implicit none
@@ -59,9 +59,9 @@ contains
 
   subroutine setup_history_interpolation(mtapes)
 
-    use dyn_comp, only : dom_mt
     use parallel_mod,   only: par
     use thread_mod,     only: omp_get_thread_num
+    use hybrid_mod,     only: config_thread_region
     use interpolate_mod, only : interpolate_analysis, get_interp_parameter
     implicit none
   
@@ -70,8 +70,9 @@ contains
 
     if(iam>= par%nprocs) return
 
-    ithr=omp_get_thread_num()
-    hybrid = hybrid_create(par,ithr,1)
+    hybrid = config_thread_region(par,'serial')
+!    ithr=omp_get_thread_num()
+!    hybrid = hybrid_create(par,ithr,1)
        
     if(any(interpolate_analysis)) then
        allocate(cam_interpolate(nelemd))
@@ -112,7 +113,8 @@ contains
     use dof_mod,         only: PutUniquePoints
     use interpolate_mod, only: get_interp_parameter
     use shr_pio_mod,     only: shr_pio_getiosys
-    use edge_mod,        only: edgebuffer_t, edgevpack, edgevunpack, initedgebuffer, freeedgebuffer
+    use edgetype_mod,    only: edgebuffer_t
+    use edge_mod,        only: edgevpack, edgevunpack, initedgebuffer, freeedgebuffer
     use bndry_mod,       only: bndry_exchangeV
     use parallel_mod,    only: par
     use cam_abortutils,  only: endrun
@@ -203,18 +205,18 @@ contains
 
        end if
        allocate(dest(np,np,numlev,nelemd))
-       call initEdgeBuffer(par, edgebuf, numlev)
+       call initEdgeBuffer(par, edgebuf, elem, numlev)
 
        do ie=1,nelemd
           ncols = elem(ie)%idxp%NumUniquePts
           call putUniquePoints(elem(ie)%idxP, numlev, fld_dyn(1:ncols,:,ie), dest(:,:,:,ie))
-          call edgeVpack(edgebuf, dest(:,:,:,ie), numlev, 0, elem(ie)%desc)
+          call edgeVpack(edgebuf, dest(:,:,:,ie), numlev, 0, ie)
        enddo
        if(iam < par%nprocs) then
           call bndry_exchangeV(par, edgebuf)
        end if
        do ie=1,nelemd
-          call edgeVunpack(edgebuf, dest(:,:,:,ie), numlev, 0, elem(ie)%desc)
+          call edgeVunpack(edgebuf, dest(:,:,:,ie), numlev, 0, ie)
        end do
        call freeEdgeBuffer(edgebuf)
        usefillvalues = any(dest == fillvalue)
@@ -279,7 +281,9 @@ contains
 
     deallocate(fldout)
     deallocate(idof)
-    call pio_freedecomp(file,iodesc)
+!
+! broken - needs to happen after file is closed
+!    call pio_freedecomp(pio_subsystem,iodesc)
 
   end subroutine write_interpolated_scalar
 
@@ -299,7 +303,8 @@ contains
     use dof_mod, only : PutUniquePoints
     use interpolate_mod, only : get_interp_parameter
     use shr_pio_mod, only : shr_pio_getiosys
-    use edge_mod, only : edgebuffer_t, edgevpack, edgevunpack, initedgebuffer, freeedgebuffer
+    use edgetype_mod, only : edgebuffer_t
+    use edge_mod, only : edgevpack, edgevunpack, initedgebuffer, freeedgebuffer
     use bndry_mod, only : bndry_exchangeV
     use parallel_mod,   only: par
     implicit none
@@ -395,20 +400,20 @@ contains
           deallocate( cbuffer )
 
        end if
-       call initEdgeBuffer(par, edgebuf, 2*numlev)
+       call initEdgeBuffer(par, edgebuf, elem, 2*numlev)
 
        do ie=1,nelemd
           ncols = elem(ie)%idxp%NumUniquePts
           call putUniquePoints(elem(ie)%idxP, 2, numlev, fld_dyn(1:ncols,:,:,ie), dest(:,:,:,:,ie))
           
-          call edgeVpack(edgebuf, dest(:,:,:,:,ie), 2*numlev, 0, elem(ie)%desc)
+          call edgeVpack(edgebuf, dest(:,:,:,:,ie), 2*numlev, 0, ie)
        enddo
        if(iam < par%nprocs) then
           call bndry_exchangeV(par, edgebuf)
        end if
 
        do ie=1,nelemd
-          call edgeVunpack(edgebuf, dest(:,:,:,:,ie), 2*numlev, 0, elem(ie)%desc)
+          call edgeVunpack(edgebuf, dest(:,:,:,:,ie), 2*numlev, 0, ie)
        enddo
        call freeEdgeBuffer(edgebuf)
        usefillvalues = any(dest==fillvalue)
@@ -477,7 +482,8 @@ contains
     deallocate(fldout)
     deallocate(idof)
     deallocate(dest)
-    call pio_freedecomp(file,iodesc)
+! broken - needs to happen after file is closed
+!    call pio_freedecomp(pio_subsystem,iodesc)
 
   end subroutine write_interpolated_vector
 
@@ -493,4 +499,3 @@ contains
 
 
 end module interp_mod
-
