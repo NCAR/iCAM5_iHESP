@@ -31,7 +31,7 @@ contains
     use dyn_comp,           only: dyn_import_t
     use parallel_mod,       only: par
     use bndry_mod,          only: bndry_exchangev
-    use constituents,       only: cnst_name, cnst_read_iv, qmin
+    use constituents,       only: cnst_name, cnst_read_iv, qmin, cnst_get_ind
     use dimensions_mod,     only: nelemd, nlev, np
     use dof_mod,            only: putUniquePoints
     use edgetype_mod,       only: EdgeBuffer_t
@@ -51,6 +51,7 @@ contains
     use microp_driver,      only: microp_driver_implements_cnst, microp_driver_init_cnst
     use phys_control,       only: phys_getopts
     use co2_cycle   ,       only: co2_implements_cnst, co2_init_cnst
+    use water_tracers,      only: wtrc_implements_cnst, wtrc_init_cnst
     use nctopo_util_mod,    only: nctopo_util_inidat
 
     implicit none
@@ -81,6 +82,10 @@ contains
     real(r8), parameter :: D2_0 = 2.0_r8
     character*16 :: subname='READ_INIDAT'
 
+    !water tracers:
+    integer :: ixcldliq, ixcldice
+    real(r8), pointer :: qqtmp(:,:), qltmp(:,:), qitmp(:,:)
+
     if(iam < par%nprocs) then
        elem=> dyn_in%elem
     else
@@ -93,7 +98,14 @@ contains
 
     tlncols = lsize/nlev
 
-    allocate(tmp(tlncols,nlev))    
+    allocate(tmp(tlncols,nlev))
+
+    !water tracers:
+    allocate( qqtmp(tlncols,nlev) )
+    allocate( qltmp(tlncols,nlev) )
+    allocate( qitmp(tlncols,nlev) )
+    call cnst_get_ind("CLDLIQ", ixcldliq)  ! Get Q, CLDICE & CLDLIQ
+    call cnst_get_ind("CLDICE", ixcldice)
 
     if (iam < par%nprocs) then
       if(elem(1)%idxP%NumUniquePts <=0 .or. elem(1)%idxP%NumUniquePts > np*np) then
@@ -197,6 +209,9 @@ contains
              call chem_init_cnst(cnst_name(m_cnst), tmp, gcid)
               if(par%masterproc) write(iulog,*) '          ', cnst_name(m_cnst), &
                    ' initialized by "chem_init_cnst"'
+          else if (wtrc_implements_cnst(cnst_name(m_cnst))) then
+            call wtrc_init_cnst(cnst_name(m_cnst), tmp, gcid, qqtmp, qltmp, qitmp)
+            if(masterproc) write(iulog,*) '          ', cnst_name(m_cnst), ' initialized by "wtrc_init_cnst"'
           else if (tracers_implements_cnst(cnst_name(m_cnst))) then
              call tracers_init_cnst(cnst_name(m_cnst), tmp, gcid)
               if(par%masterproc) write(iulog,*) '          ', cnst_name(m_cnst), &
@@ -222,7 +237,18 @@ contains
              tmp(ig,k)=max(qmin(m_cnst),tmp(ig,k))
           end do
        end do
-       
+
+       !water tracers:
+       !-------------
+       if (m_cnst == 1) then
+          qqtmp = tmp
+       else if (m_cnst == ixcldliq) then
+          qltmp = tmp
+       else if (m_cnst == ixcldice) then
+          qitmp = tmp
+       end if
+       !-------------
+
        start=1
        do ie=1,nelemd
           elem(ie)%state%Q(:,:,:,m_cnst)=0.0_r8
