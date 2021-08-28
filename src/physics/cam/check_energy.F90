@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 
 module check_energy
 
