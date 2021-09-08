@@ -1417,6 +1417,10 @@ subroutine diag_conv(state, ztodt, pbuf)
    real(r8), pointer :: prec_pcw(:)                ! total precipitation   from Hack convection
    real(r8), pointer :: snow_pcw(:)                ! snow from Hack   convection
 
+   !water tracers/isotopes:
+   real(r8), pointer :: wtprec(:)                  !water tracer precipitation
+   real(r8)          :: wtprect(pcols)             !total water tracer precipitation
+
 ! Local variables:
    
    integer :: i, k, m, lchnk, ncol

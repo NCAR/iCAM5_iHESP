@@ -338,7 +338,7 @@ end subroutine wtrc_init
     use physics_buffer, only: pbuf_add_field, dtype_r8
     use spmd_utils,     only: masterproc
     use pio,            only: file_desc_t, pio_inq_varid, PIO_BCAST_ERROR, PIO_NOERR
-    use pio,            only: pio_seterrorhandling
+    use pio,            only: pio_seterrorhandling, PIO_INTERNAL_ERROR
     use cam_initfiles,  only: initial_file_get_id
 
     real(r8)             :: mw  ! molecular weight for the constituent
@@ -350,7 +350,6 @@ end subroutine wtrc_init
 
     !For determining whether or not tracer is read from file:
     type(file_desc_t), pointer :: fh_ini
-    integer                    :: err_handle
     integer                    :: ierr
     integer                    :: wtrc_fil_id
     logical                    :: readiv_val
@@ -371,8 +370,8 @@ end subroutine wtrc_init
     ! Set initial conditions file pointer:
     fh_ini  => initial_file_get_id()
 
-    ! Set PIO error-handling so that a PIO erro doesn't end the model simulation:
-    call pio_seterrorhandling(fh_ini, PIO_BCAST_ERROR, err_handle)
+    ! Set PIO error-handling so that a PIO error doesn't end the model simulation:
+    call pio_seterrorhandling(fh_ini, PIO_BCAST_ERROR)
 
     ! Set the species of the total water as H2O, but DONT set them
     ! as water tracers, as they are prognostic (not "tracers")
@@ -523,7 +522,7 @@ end subroutine wtrc_init
       end do
 
       ! Set PIO error-handling back to its original value:
-      call pio_seterrorhandling(fh_ini, err_handle)
+      call pio_seterrorhandling(fh_ini, PIO_INTERNAL_ERROR)
 
       ! Determine which specifies are coupled to the surface.
       icnst = 1
