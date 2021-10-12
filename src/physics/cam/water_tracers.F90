@@ -337,8 +337,8 @@ end subroutine wtrc_init
     use constituents,   only: cnst_name
     use physics_buffer, only: pbuf_add_field, dtype_r8
     use spmd_utils,     only: masterproc
-    use pio,            only: file_desc_t, pio_inq_varid, PIO_BCAST_ERROR, PIO_NOERR
-    use pio,            only: pio_seterrorhandling, PIO_INTERNAL_ERROR
+    use pio,            only: file_desc_t !, pio_inq_varid, PIO_BCAST_ERROR, PIO_NOERR
+    !use pio,            only: pio_seterrorhandling, PIO_INTERNAL_ERROR
     use cam_initfiles,  only: initial_file_get_id
 
     real(r8)             :: mw  ! molecular weight for the constituent
@@ -371,7 +371,8 @@ end subroutine wtrc_init
     fh_ini  => initial_file_get_id()
 
     ! Set PIO error-handling so that a PIO error doesn't end the model simulation:
-    call pio_seterrorhandling(fh_ini, PIO_BCAST_ERROR)
+    ! Currently doesn't work with CIME/pio code used in iHESP. -JN
+    !call pio_seterrorhandling(fh_ini, PIO_BCAST_ERROR)
 
     ! Set the species of the total water as H2O, but DONT set them
     ! as water tracers, as they are prognostic (not "tracers")
@@ -491,12 +492,15 @@ end subroutine wtrc_init
         end if
 
         ! Check if tracer is present on initial conditions file:
-        ierr = pio_inq_varid(fh_ini, wtrc_names(icnst), wtrc_fil_id)
-        if (ierr == PIO_NOERR) then
-            readiv_val = .true.
-        else
-            readiv_val = .false.
-        end if
+        ! Currently doesn't work with CIME/pio code used in iHESP. -JN
+
+        !ierr = pio_inq_varid(fh_ini, wtrc_names(icnst), wtrc_fil_id)
+        !if (ierr == PIO_NOERR) then
+        !    readiv_val = .true.
+        !else
+        !    readiv_val = .false.
+        !end if
+        readiv_val = .false.
 
         ! Register the water isotope tracer.
         call wtrc_cnst_add(wtrc_names(icnst), wtrc_types(icnst), wtrc_species(icnst), &
@@ -522,7 +526,8 @@ end subroutine wtrc_init
       end do
 
       ! Set PIO error-handling back to its original value:
-      call pio_seterrorhandling(fh_ini, PIO_INTERNAL_ERROR)
+      ! Currently doesn't work with CIME/pio code used in iHESP. -JN
+      !call pio_seterrorhandling(fh_ini, PIO_INTERNAL_ERROR)
 
       ! Determine which specifies are coupled to the surface.
       icnst = 1

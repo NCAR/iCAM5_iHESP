@@ -2181,7 +2181,6 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
                  packed_cmei,    packed_vtrmc,   packed_vtrmi,   &
                  packed_umr,             packed_ums,             &
                  packed_qcsedten,        packed_qisedten,        &
-                 packed_qrsedten,        packed_qssedten,        &
                  packed_pra,             packed_prc,             &
                  packed_mnuccc,  packed_mnucct,  packed_msacwi,  &
                  packed_psacws,  packed_bergs,   packed_berg,    &
