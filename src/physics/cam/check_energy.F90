@@ -25,7 +25,7 @@ module check_energy
   use spmd_utils,      only: masterproc
   
   use phys_gmean,      only: gmean
-  use physconst,       only: gravit, latvap, latice, cpair, cpairv
+  use physconst,       only: gravit, latvap, latice
   use physics_types,   only: physics_state, physics_tend, physics_ptend, physics_ptend_init
   use constituents,    only: cnst_get_ind, pcnst, cnst_name, cnst_get_type_byind
   use time_manager,    only: is_first_step
@@ -178,10 +178,9 @@ end subroutine check_energy_get_integrals
                        history_budget_histfile_num_out = history_budget_histfile_num)
 
 ! register history variables
-    call addfld('TEINP   ', 'J/m2', 1,    'A', 'Total energy of physics input',    phys_decomp)
-    call addfld('TEOUT   ', 'J/m2', 1,    'A', 'Total energy of physics output',   phys_decomp)
-    call addfld('TEFIX   ', 'J/m2', 1,    'A', 'Total energy after fixer',         phys_decomp)
-    call addfld('EFIX    ', 'W/m2', 1,    'A', 'Effective sensible heat flux due to energy fixer',         phys_decomp)
+    call addfld('TEINP   ', 'W/m2', 1,    'A', 'Total energy of physics input',    phys_decomp)
+    call addfld('TEOUT   ', 'W/m2', 1,    'A', 'Total energy of physics output',   phys_decomp)
+    call addfld('TEFIX   ', 'W/m2', 1,    'A', 'Total energy after fixer',         phys_decomp)
     call addfld('DTCORE'  , 'K/s' , pver, 'A', 'T tendency due to dynamical core', phys_decomp)
 
     if (masterproc) then
@@ -198,7 +197,6 @@ end subroutine check_energy_get_integrals
 
   subroutine check_energy_timestep_init(state, tend, pbuf, col_type)
     use physics_buffer, only : physics_buffer_desc, pbuf_set_field
-    use cam_abortutils, only: endrun 
 !-----------------------------------------------------------------------
 ! Compute initial values of energy and water integrals, 
 ! zero cumulative tendencies
@@ -217,37 +215,19 @@ end subroutine check_energy_get_integrals
     real(r8) :: wl(state%ncol)                     ! vertical integral of water (liquid)
     real(r8) :: wi(state%ncol)                     ! vertical integral of water (ice)
 
-    real(r8),allocatable :: cpairv_loc(:,:,:)
-
-    integer lchnk                                  ! chunk identifier
     integer ncol                                   ! number of atmospheric columns
     integer  i,k                                   ! column, level indices
     integer :: ixcldice, ixcldliq                  ! CLDICE and CLDLIQ indices
     integer :: ixrain, ixsnow                      ! RAINQM and SNOWQM indices
 !-----------------------------------------------------------------------
 
-    lchnk = state%lchnk
     ncol  = state%ncol
     call cnst_get_ind('CLDICE', ixcldice, abort=.false.)
     call cnst_get_ind('CLDLIQ', ixcldliq, abort=.false.)
     call cnst_get_ind('RAINQM', ixrain,   abort=.false.)
     call cnst_get_ind('SNOWQM', ixsnow,   abort=.false.)
 
-    ! cpairv_loc needs to be allocated to a size which matches state and ptend
-    ! If psetcols == pcols, cpairv is the correct size and just copy into cpairv_loc
-    ! If psetcols > pcols and all cpairv match cpair, then assign the constant cpair
-
-    if (state%psetcols == pcols) then
-       allocate (cpairv_loc(state%psetcols,pver,begchunk:endchunk))
-       cpairv_loc(:,:,:) = cpairv(:,:,:)
-    else if (state%psetcols > pcols .and. all(cpairv(:,:,:) == cpair)) then
-       allocate(cpairv_loc(state%psetcols,pver,begchunk:endchunk))
-       cpairv_loc(:,:,:) = cpair
-    else
-       call endrun('check_energy_timestep_init: cpairv is not allowed to vary when subcolumns are turned on')
-    end if
-
-    ! Compute vertical integrals of dry static energy (modified), kinetic energy and water (vapor, liquid, ice)
+! Compute vertical integrals of dry static energy and water (vapor, liquid, ice)
     ke = 0._r8
     se = 0._r8
     wv = 0._r8
@@ -256,12 +236,9 @@ end subroutine check_energy_get_integrals
     do k = 1, pver
        do i = 1, ncol
           ke(i) = ke(i) + 0.5_r8*(state%u(i,k)**2 + state%v(i,k)**2)*state%pdel(i,k)/gravit
-          se(i) = se(i) +         state%t(i,k)*cpairv_loc(i,k,lchnk)*state%pdel(i,k)/gravit
-          wv(i) = wv(i) +         state%q(i,k,1)                    *state%pdel(i,k)/gravit
+          se(i) = se(i) + state%s(i,k         )*state%pdel(i,k)/gravit
+          wv(i) = wv(i) + state%q(i,k,1       )*state%pdel(i,k)/gravit
        end do
-    end do
-    do i = 1, ncol
-       se(i) = se(i) + state%phis(i)*state%ps(i)/gravit
     end do
 
     ! Don't require cloud liq/ice to be present.  Allows for adiabatic/ideal phys.
@@ -304,15 +281,12 @@ end subroutine check_energy_get_integrals
        call pbuf_set_field(pbuf, teout_idx, state%te_ini, col_type=col_type)
     end if
 
-    deallocate(cpairv_loc)
-
   end subroutine check_energy_timestep_init
 
 !===============================================================================
 
   subroutine check_energy_chng(state, tend, name, nstep, ztodt,        &
        flx_vap, flx_cnd, flx_ice, flx_sen)
-    use cam_abortutils, only: endrun 
 
 !-----------------------------------------------------------------------
 ! Check that the energy and water change matches the boundary fluxes
@@ -356,8 +330,6 @@ end subroutine check_energy_get_integrals
     real(r8) :: te(state%ncol)                     ! vertical integral of total energy
     real(r8) :: tw(state%ncol)                     ! vertical integral of total water
 
-    real(r8),allocatable :: cpairv_loc(:,:,:)
-
     integer lchnk                                  ! chunk identifier
     integer ncol                                   ! number of atmospheric columns
     integer  i,k                                   ! column, level indices
@@ -372,21 +344,7 @@ end subroutine check_energy_get_integrals
     call cnst_get_ind('RAINQM', ixrain,   abort=.false.)
     call cnst_get_ind('SNOWQM', ixsnow,   abort=.false.)
 
-    ! cpairv_loc needs to be allocated to a size which matches state and ptend
-    ! If psetcols == pcols, cpairv is the correct size and just copy into cpairv_loc
-    ! If psetcols > pcols and all cpairv match cpair, then assign the constant cpair
-
-    if (state%psetcols == pcols) then
-       allocate (cpairv_loc(state%psetcols,pver,begchunk:endchunk))
-       cpairv_loc(:,:,:) = cpairv(:,:,:)
-    else if (state%psetcols > pcols .and. all(cpairv(:,:,:) == cpair)) then
-       allocate(cpairv_loc(state%psetcols,pver,begchunk:endchunk))
-       cpairv_loc(:,:,:) = cpair
-    else
-       call endrun('check_energy_chng: cpairv is not allowed to vary when subcolumns are turned on')
-    end if
-
-    ! Compute vertical integrals of dry static energy (modified), kinetic energy and water (vapor, liquid, ice)
+    ! Compute vertical integrals of dry static energy and water (vapor, liquid, ice)
     ke = 0._r8
     se = 0._r8
     wv = 0._r8
@@ -395,12 +353,9 @@ end subroutine check_energy_get_integrals
     do k = 1, pver
        do i = 1, ncol
           ke(i) = ke(i) + 0.5_r8*(state%u(i,k)**2 + state%v(i,k)**2)*state%pdel(i,k)/gravit
-          se(i) = se(i) +         state%t(i,k)*cpairv_loc(i,k,lchnk)*state%pdel(i,k)/gravit
-          wv(i) = wv(i) +         state%q(i,k,1)                    *state%pdel(i,k)/gravit
+          se(i) = se(i) + state%s(i,k         )*state%pdel(i,k)/gravit
+          wv(i) = wv(i) + state%q(i,k,1       )*state%pdel(i,k)/gravit
        end do
-    end do
-    do i = 1, ncol
-       se(i) = se(i) + state%phis(i)*state%ps(i)/gravit
     end do
 
     ! Don't require cloud liq/ice to be present.  Allows for adiabatic/ideal phys.
@@ -487,8 +442,6 @@ end subroutine check_energy_get_integrals
        state%te_cur(i) = te(i)
        state%tw_cur(i) = tw(i)
     end do
-
-    deallocate(cpairv_loc)
 
   end subroutine check_energy_chng
 
