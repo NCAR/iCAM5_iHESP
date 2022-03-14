@@ -1652,11 +1652,6 @@ subroutine tphysac (ztodt,   cam_in,  &
 !!!   REMOVE THIS CALL, SINCE ONLY Q IS BEING ADJUSTED. WON'T BALANCE ENERGY. TE IS SAVED BEFORE THIS
 !!!   call check_energy_chng(state, tend, "drymass", nstep, ztodt, zero, zero, zero, zero)
 
-    ! store T in buffer for use in computing dynamics T-tendency in next timestep
-    do k = 1,pver
-       dtcore(:ncol,k) = state%t(:ncol,k)
-    end do
-
     !-------------- Energy budget checks ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     if (aqua_planet) then
@@ -2020,7 +2015,6 @@ subroutine tphysbc (ztodt,               &
        call check_energy_fix(state, ptend, nstep, flx_heat)
        call physics_update(state, ptend, ztodt, tend)
        call check_energy_chng(state, tend, "chkengyfix", nstep, ztodt, zero, zero, zero, flx_heat)
-       call outfld( 'EFIX', flx_heat    , pcols, lchnk   )
     end if
     ! Save state for convective tendency calculations.
     call diag_conv_tend_ini(state, pbuf)
