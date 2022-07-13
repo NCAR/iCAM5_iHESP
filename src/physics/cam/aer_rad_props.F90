@@ -6,7 +6,7 @@ module aer_rad_props
 !------------------------------------------------------------------------------------------------
 
 use shr_kind_mod,     only: r8 => shr_kind_r8
-use ppgrid,           only: pcols, pver, pverp
+use ppgrid,           only: pcols, pver
 use physconst,        only: rga
 use physics_types,    only: physics_state
 
@@ -16,7 +16,7 @@ use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_aer_mmr, &
                             rad_cnst_get_aer_props
 use wv_saturation,    only: qsat
 use modal_aer_opt,    only: modal_aero_sw, modal_aero_lw
-use cam_history,      only: fieldname_len, addfld, phys_decomp, outfld, add_default
+use cam_history,      only: fieldname_len, addfld, outfld, add_default, horiz_only
 use cam_history_support, only : fillvalue
 ! Placed here due to PGI bug.
 use ref_pres,         only: clim_modal_aero_top_lev
@@ -51,22 +51,24 @@ subroutine aer_rad_props_init()
    character(len=64), pointer :: aernames(:)  ! aerosol names
    logical                    :: history_amwg         ! output the variables used by the AMWG diag package
    logical                    :: history_aero_optics  ! Output aerosol optics diagnostics
+   logical                    :: history_dust         ! Output dust diagnostics
    logical                    :: prog_modal_aero      ! Prognostic modal aerosols present
 
    !----------------------------------------------------------------------------
 
    call phys_getopts( history_aero_optics_out    = history_aero_optics, &
                       history_amwg_out           = history_amwg,    &
+                      history_dust_out           = history_dust,    &
                       prog_modal_aero_out        = prog_modal_aero )
 
    ! Limit modal aerosols with top_lev here.
    if (prog_modal_aero) top_lev = clim_modal_aero_top_lev
 
-   call addfld ('AEROD_v ', '1', 1, 'A', &
-      'Total Aerosol Optical Depth in visible band', phys_decomp, flag_xyfill=.true.)
+   call addfld ('AEROD_v ', horiz_only, 'A', '1', &
+      'Total Aerosol Optical Depth in visible band', flag_xyfill=.true.)
 
-   call addfld ('AODvstrt', '1', 1, 'A', &
-      'Stratospheric Aerosol Optical Depth in visible band', phys_decomp, flag_xyfill=.true.)
+   call addfld ('AODvstrt', horiz_only, 'A', '1', &
+      'Stratospheric Aerosol Optical Depth in visible band', flag_xyfill=.true.)
 
    ! Contributions to AEROD_v from individual aerosols (climate species).
 
@@ -82,12 +84,12 @@ subroutine aer_rad_props_init()
    allocate(odv_names(numaerosols))
    do i = 1, numaerosols
       odv_names(i) = 'ODV_'//trim(aernames(i))
-      call addfld (odv_names(i), '1', 1, 'A', &
-         trim(aernames(i))//' optical depth in visible band', phys_decomp, flag_xyfill=.true.)
+      call addfld (odv_names(i), horiz_only, 'A', '1', &
+         trim(aernames(i))//' optical depth in visible band', flag_xyfill=.true.)
    end do
 
    ! Determine default fields
-   if (history_amwg ) then 
+   if (history_amwg .or. history_dust ) then 
       call add_default ('AEROD_v', 1, ' ')
    endif   
    
@@ -130,8 +132,7 @@ subroutine aer_rad_props_sw(list_idx, state, pbuf,  nnite, idxnite, &
 
    integer :: ncol
    integer :: lchnk
-   integer :: k, i    ! lev and daycolumn indices
-   integer :: iswband ! sw band indices
+   integer :: k       ! index
    integer :: troplev(pcols)
 
    ! optical props for each aerosol
@@ -175,6 +176,7 @@ subroutine aer_rad_props_sw(list_idx, state, pbuf,  nnite, idxnite, &
    integer  :: iaerosol        ! index into bulk aerosol list
 
    character(len=ot_length) :: opticstype       ! hygro or nonhygro
+   character(len=16) :: pbuf_fld
    !-----------------------------------------------------------------------------
 
    ncol  = state%ncol
@@ -246,7 +248,8 @@ subroutine aer_rad_props_sw(list_idx, state, pbuf,  nnite, idxnite, &
 
       case('nonhygro','insoluble ')
          ! get optical properties for non-hygroscopic aerosols
-         call rad_cnst_get_aer_props(list_idx, iaerosol, sw_nonhygro_ext=n_ext, sw_nonhygro_ssa=n_ssa, sw_nonhygro_asm=n_asm)
+         call rad_cnst_get_aer_props(list_idx, iaerosol, sw_nonhygro_ext=n_ext, sw_nonhygro_ssa=n_ssa, &
+                                     sw_nonhygro_asm=n_asm)
 
          call get_nonhygro_rad_props(ncol, aermass, n_ext, n_ssa, n_asm, ta, tw, twg, twf)
          tau    (1:ncol,1:pver,:) = tau    (1:ncol,1:pver,:) + ta (1:ncol,:,:)
@@ -256,7 +259,8 @@ subroutine aer_rad_props_sw(list_idx, state, pbuf,  nnite, idxnite, &
 
       case('volcanic')
          ! get optical properties for volcanic aerosols
-         call rad_cnst_get_aer_props(list_idx, iaerosol, sw_nonhygro_ext=n_ext, sw_nonhygro_scat=n_scat, sw_nonhygro_ascat=n_ascat)
+         call rad_cnst_get_aer_props(list_idx, iaerosol, sw_nonhygro_ext=n_ext, sw_nonhygro_scat=n_scat, &
+                                     sw_nonhygro_ascat=n_ascat)
 
          call get_volcanic_rad_props(ncol, aermass, n_ext, n_scat, n_ascat, ta, tw, twg, twf)
          tau    (1:ncol,1:pver,:) = tau    (1:ncol,1:pver,:) + ta (1:ncol,:,:)
@@ -264,10 +268,14 @@ subroutine aer_rad_props_sw(list_idx, state, pbuf,  nnite, idxnite, &
          tau_w_g(1:ncol,1:pver,:) = tau_w_g(1:ncol,1:pver,:) + twg(1:ncol,:,:)
          tau_w_f(1:ncol,1:pver,:) = tau_w_f(1:ncol,1:pver,:) + twf(1:ncol,:,:)
 
-      case('volcanic_radius')
+      case('volcanic_radius','volcanic_radius1','volcanic_radius2','volcanic_radius3')
+         pbuf_fld = 'VOLC_RAD_GEOM '
+         if (len_trim(opticstype)>15) then
+            pbuf_fld = trim(pbuf_fld)//opticstype(16:16)
+         endif
          ! get optical properties for volcanic aerosols
          call rad_cnst_get_aer_props(list_idx, iaerosol, r_sw_ext=r_ext, r_sw_scat=r_scat, r_sw_ascat=r_ascat, mu=r_mu)
-         call get_volcanic_radius_rad_props(lchnk, ncol, aermass, pbuf, r_ext, r_scat, r_ascat, r_mu, ta, tw, twg, twf)
+         call get_volcanic_radius_rad_props(ncol, aermass, pbuf_fld, pbuf, r_ext, r_scat, r_ascat, r_mu, ta, tw, twg, twf)
          tau    (1:ncol,1:pver,:) = tau    (1:ncol,1:pver,:) + ta (1:ncol,:,:)
          tau_w  (1:ncol,1:pver,:) = tau_w  (1:ncol,1:pver,:) + tw (1:ncol,:,:)
          tau_w_g(1:ncol,1:pver,:) = tau_w_g(1:ncol,1:pver,:) + twg(1:ncol,:,:)
@@ -318,7 +326,6 @@ subroutine aer_rad_props_lw(list_idx, state, pbuf,  odap_aer)
    integer :: i           ! column index
    integer :: k           ! lev index
    integer :: ncol        ! number of columns
-   integer :: lchnk       ! chunk index
    integer :: numaerosols ! number of bulk aerosols in climate/diagnostic list
    integer :: nmodes      ! number of aerosol modes in climate/diagnostic list
    integer :: iaerosol    ! index into bulk aerosol list
@@ -350,10 +357,11 @@ subroutine aer_rad_props_lw(list_idx, state, pbuf,  odap_aer)
    real(r8), pointer :: aermmr(:,:)    ! mass mixing ratio of aerosols
    real(r8) :: mmr_to_mass(pcols,pver) ! conversion factor for mmr to mass
    real(r8) :: aermass(pcols,pver)     ! mass of aerosols
+
+   character(len=16) :: pbuf_fld
    !-----------------------------------------------------------------------------
 
    ncol = state%ncol
-   lchnk = state%lchnk
 
    ! get number of bulk aerosols and number of modes in current list
    call rad_cnst_get_info(list_idx, naero=numaerosols, nmodes=nmodes)
@@ -419,11 +427,16 @@ subroutine aer_rad_props_lw(list_idx, state, pbuf,  odap_aer)
             end do
          end do
          
-      case('volcanic_radius')
-          ! get optical properties for hygroscopic aerosols
+      case('volcanic_radius','volcanic_radius1','volcanic_radius2','volcanic_radius3')
+         pbuf_fld = 'VOLC_RAD_GEOM '
+         if (len_trim(opticstype)>15) then
+            pbuf_fld = trim(pbuf_fld)//opticstype(16:16)
+         endif
+
+         ! get optical properties for hygroscopic aerosols
          call rad_cnst_get_aer_props(list_idx, iaerosol, r_lw_abs=r_lw_abs, mu=r_mu)
          ! get microphysical properties for volcanic aerosols
-         idx = pbuf_get_index('VOLC_RAD_GEOM')
+         idx = pbuf_get_index(pbuf_fld)
          call pbuf_get_field(pbuf, idx, geometric_radius )
          
          ! interpolate in radius
@@ -541,17 +554,16 @@ end subroutine get_nonhygro_rad_props
 
 !==============================================================================
     
-subroutine get_volcanic_radius_rad_props(lchnk, ncol, mass, pbuf,  r_ext, r_scat, r_ascat, r_mu, &
+subroutine get_volcanic_radius_rad_props(ncol, mass, pbuf_radius_name, pbuf,  r_ext, r_scat, r_ascat, r_mu, &
                                   tau, tau_w, tau_w_g, tau_w_f)
 
    
    use physics_buffer, only : pbuf_get_field, pbuf_get_index
 
    ! Arguments
-   integer,  intent(in) :: lchnk
    integer,  intent(in) :: ncol
    real(r8), intent(in) :: mass(pcols, pver)
-   
+   character(len=*) :: pbuf_radius_name
    type(physics_buffer_desc), pointer :: pbuf(:)
    real(r8), intent(in) :: r_ext(:,:)
    real(r8), intent(in) :: r_scat(:,:)
@@ -570,7 +582,6 @@ subroutine get_volcanic_radius_rad_props(lchnk, ncol, mass, pbuf,  r_ext, r_scat
    integer  :: idx                             ! index to radius in physics buffer
    real(r8), pointer :: geometric_radius(:,:)  ! geometric mean radius of volcanic aerosol
    real(r8) :: mu(pcols,pver)                  ! log(geometric mean radius of volcanic aerosol)
-   integer  :: imu                             ! index into table values of log radius
    integer  :: kmu, nmu
    real(r8) :: wmu, mutrunc, r_mu_max, r_mu_min
  
@@ -588,7 +599,7 @@ subroutine get_volcanic_radius_rad_props(lchnk, ncol, mass, pbuf,  r_ext, r_scat
    tau_w_f=0._r8                  
 
    ! get microphysical properties for volcanic aerosols
-   idx = pbuf_get_index('VOLC_RAD_GEOM')
+   idx = pbuf_get_index(pbuf_radius_name)
    call pbuf_get_field(pbuf, idx, geometric_radius )
 
    ! interpolate in radius

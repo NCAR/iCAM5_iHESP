@@ -47,7 +47,6 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
    use pmgrid
    use pspect
    use comspe
-   use rgrid
    use commap
    use physconst, only: ez, ra
    use eul_control_mod
@@ -96,12 +95,10 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
 !
 ! Compute alpn and dalpn
 !
-!DIR$ NOSTREAM
    lmwave0 = -1
    lmrwave0 = 0
    dalpn(2) = 0.0_r8
    mlength = numm(iam)
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
@@ -121,12 +118,10 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
    grpls (:)   = 0._r8
    grpms (:)   = 0._r8
    grdpss(:)   = 0._r8
-!cdir collapse
    tmpGRcoef (:,:) = 0._r8
 !
 ! Loop over n for t,q,d,and end of u and v
 !
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
@@ -137,7 +132,6 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
       end do
    end do
 !
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
@@ -159,7 +153,6 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
 ! Save accumulated results to gr* arrays
 !
    do lm=1,mlength
-!DIR$ PREFERVECTOR
       do k=1,plev
          grus (2*lm-1,k) = tmpGRcoef(k        ,lm)
          grus (2*lm  ,k) = tmpGRcoef(k+plev   ,lm)
@@ -195,12 +188,10 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
 !
 ! Computation for 1-level variables (ln(p*) and derivatives).
 !
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
       lmc = 2*lmr
-!cdir shortloop
       do n=1,nlen(m),2
          ir = lmc + 2*n - 1
          ii = ir + 1
@@ -208,17 +199,15 @@ subroutine grcalcs (irow    ,ztodt   ,grts    ,grths   ,grds    ,&
          grpss (2*lm-1) = grpss (2*lm-1) + alps(ir)*lalp(lmr+n,irow)
          grpss (2*lm  ) = grpss (2*lm  ) + alps(ii)*lalp(lmr+n,irow)
 !
-         grdpss(2*lm-1) = grdpss(2*lm-1) + alps(ir)*lalp(lmr+n,irow)*hdfst4(m+n-1)*ztodt
-         grdpss(2*lm  ) = grdpss(2*lm  ) + alps(ii)*lalp(lmr+n,irow)*hdfst4(m+n-1)*ztodt
+         grdpss(2*lm-1) = grdpss(2*lm-1) + alps(ir)*lalp(lmr+n,irow)*hdfstn(m+n-1)*ztodt
+         grdpss(2*lm  ) = grdpss(2*lm  ) + alps(ii)*lalp(lmr+n,irow)*hdfstn(m+n-1)*ztodt
       end do
    end do
 
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
       lmc = 2*lmr
-!cdir shortloop
       do n=2,nlen(m),2
          ir = lmc + 2*n - 1
          ii = ir + 1
@@ -286,7 +275,6 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
    use pmgrid
    use pspect
    use comspe
-   use rgrid
    use commap
    use physconst, only: ra
    use eul_control_mod
@@ -333,9 +321,7 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
 !
 ! Compute alpn and dalpn
 !
-!DIR$ NOSTREAM
    mlength = numm(iam)
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
@@ -350,12 +336,10 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
    grpla (:) = 0._r8
    grpma (:) = 0._r8
    grdpsa(:) = 0._r8
-!cdir collapse
    tmpGRcoef(:,:) = 0._r8
 !
 ! Loop over n for t,q,d,and end of u and v
 !
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
@@ -366,7 +350,6 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
       end do
    end do
 
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
@@ -388,7 +371,6 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
 ! Save accumulated results to gr* arrays
 !
    do lm=1,mlength
-!DIR$ PREFERVECTOR
       do k=1,plev
          grua (2*lm-1,k) = tmpGRcoef(k        ,lm)
          grua (2*lm  ,k) = tmpGRcoef(k+plev   ,lm)
@@ -414,12 +396,10 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
 !
 ! Computation for 1-level variables (ln(p*) and derivatives).
 !
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
       lmc = 2*lmr
-!cdir shortloop
       do n=1,nlen(m),2
          ir = lmc + 2*n - 1
          ii = ir + 1
@@ -429,12 +409,10 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
       end do
    end do
 
-!cdir novector
    do lm=1,mlength
       m = locm(lm,iam)
       lmr = lnstart(lm)
       lmc = 2*lmr
-!cdir shortloop
       do n=2,nlen(m),2
          ir = lmc + 2*n - 1
          ii = ir + 1
@@ -442,8 +420,8 @@ subroutine grcalca (irow    ,ztodt   ,grta    ,grtha   ,grda    ,&
          grpsa (2*lm-1) = grpsa (2*lm-1) + alps(ir)*lalp(lmr+n,irow)
          grpsa (2*lm  ) = grpsa (2*lm  ) + alps(ii)*lalp(lmr+n,irow)
 !
-         grdpsa(2*lm-1) = grdpsa(2*lm-1) + alps(ir)*lalp(lmr+n,irow)*hdfst4(m+n-1)*ztodt
-         grdpsa(2*lm  ) = grdpsa(2*lm  ) + alps(ii)*lalp(lmr+n,irow)*hdfst4(m+n-1)*ztodt
+         grdpsa(2*lm-1) = grdpsa(2*lm-1) + alps(ir)*lalp(lmr+n,irow)*hdfstn(m+n-1)*ztodt
+         grdpsa(2*lm  ) = grdpsa(2*lm  ) + alps(ii)*lalp(lmr+n,irow)*hdfstn(m+n-1)*ztodt
       end do
 !
 ! Multiply by m/a to get d(ln(p*))/dlamda
@@ -470,7 +448,6 @@ subroutine prepGRcalc(tmpSPEcoef)
   use pmgrid
   use pspect
   use comspe
-  use rgrid
   use commap
   use physconst, only: ra
   use eul_control_mod,    only: hdiftq, hdifzd

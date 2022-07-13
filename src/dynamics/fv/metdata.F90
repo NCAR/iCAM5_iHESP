@@ -1,4 +1,3 @@
-
 module metdata
 !----------------------------------------------------------------------- 
 !
@@ -82,7 +81,7 @@ module metdata
   real(r8), allocatable :: met_ps_next(:,:)   ! PS interpolated to next timestep
   real(r8), allocatable :: met_ps_curr(:,:)   ! PS interpolated to next timestep
 
-  logical :: met_cell_wall_winds = .false.  ! true => met data winds are cell centered
+  logical :: met_cell_wall_winds = .false.  ! true => met data winds are defined on model grid cell walls
   logical :: met_remove_file = .false.  ! delete metdata file when finished with it
 
   character(len=16) :: met_shflx_name = 'SHFLX'
@@ -94,6 +93,21 @@ module metdata
   logical  :: met_srf_nudge_flux = .true. ! wsx, wsy, shf, and cflx nudged rather than forced.
                                           ! This is done primarily to prevent unrealistic
                                           ! surface temperatures.
+
+  logical  :: met_srf_land = .true.       ! nudge surface fields over land (if false ignores
+                                          ! all surface nudging for gridboxes with LANDFRAC=1)
+  logical  :: met_srf_land_scale = .false. ! when met_srf_land is false, nudges proportional
+                                          ! to the non land fraction, rather than just where
+                                          ! LANDFRAC=1
+  logical  :: met_srf_rad  = .false.      ! nudge albedo and lwup?
+  logical  :: met_srf_refs = .false.      ! nudge 2m Q and T and 10m wind 
+  logical  :: met_srf_sst  = .false.      ! nudge sea surface temperature 
+  logical  :: met_srf_tau  = .true.       ! nudge taux and tauy
+  logical  :: met_nudge_temp = .true.     ! nudge atmospheric temperature
+  
+  
+  ! radiation/albedo surface field fill value (where there is no sunlight) read in from input data file 
+  real(r8) :: srf_fill_value
 
 ! !REVISION HISTORY:
 !   31 Oct 2003  Francis Vitt     Creation
@@ -126,13 +140,25 @@ module metdata
   real(r8), allocatable :: met_vs(:,:,:) ! interpolated meridional wind -staggered
   real(r8), allocatable :: met_q(:,:,:)  ! interpolated water vapor
 
-  real(r8), allocatable :: met_shflx(:,:)! interpolated surface pressure
+  real(r8), allocatable :: met_lhflx(:,:)! interpolated latent heat flux
+  real(r8), allocatable :: met_shflx(:,:)! interpolated sensible heat flux
   real(r8), allocatable :: met_qflx(:,:) ! interpolated water vapor flux
   real(r8), allocatable :: met_taux(:,:) ! interpolated 
   real(r8), allocatable :: met_tauy(:,:) ! interpolated
   real(r8), allocatable :: met_snowh(:,:) ! interpolated snow height
 
   real(r8), allocatable :: met_ts(:,:) ! interpolated
+
+  real(r8), allocatable :: met_asdir(:,:) ! interpolated VIS direct albedo
+  real(r8), allocatable :: met_asdif(:,:) ! interpolated VIS diffuse albedo
+  real(r8), allocatable :: met_aldir(:,:) ! interpolated NIR direct albedo
+  real(r8), allocatable :: met_aldif(:,:) ! interpolated NIR diffuse albedo
+  real(r8), allocatable :: met_lwup(:,:)  ! interpolated upwelling LW flux
+  real(r8), allocatable :: met_sst(:,:)   ! interpolated sea surface temperature
+  real(r8), allocatable :: met_icefrac(:,:)  ! interpolated ice fraction
+  real(r8), allocatable :: met_qref(:,:)  ! interpolated reference (2m) specific humidity
+  real(r8), allocatable :: met_tref(:,:)  ! interpolated reference (2m) temperature
+  real(r8), allocatable :: met_u10(:,:)   ! interpolated 10m wind speed
 
   type(input3d) :: met_ti(2)
   type(input3d) :: met_ui(2)
@@ -143,12 +169,23 @@ module metdata
 
   type(input2d) :: met_psi_next(2)
   type(input2d) :: met_psi_curr(2)
+  type(input2d) :: met_lhflxi(2)
   type(input2d) :: met_shflxi(2)
   type(input2d) :: met_qflxi(2)
   type(input2d) :: met_tauxi(2)
   type(input2d) :: met_tauyi(2)
   type(input2d) :: met_tsi(2)
   type(input2d) :: met_snowhi(2)
+  type(input2d) :: met_asdiri(2)
+  type(input2d) :: met_asdifi(2)
+  type(input2d) :: met_aldiri(2)
+  type(input2d) :: met_aldifi(2)
+  type(input2d) :: met_lwupi(2)
+  type(input2d) :: met_ssti(2)
+  type(input2d) :: met_icefraci(2)
+  type(input2d) :: met_qrefi(2)
+  type(input2d) :: met_trefi(2)
+  type(input2d) :: met_u10i(2)
 
   integer :: dateid           ! var id of the date in the netCDF
   integer :: secid            ! var id of the sec data 
@@ -189,12 +226,22 @@ module metdata
   real(r8) :: met_rlx(pver)
   integer  :: met_levels
   integer  :: num_met_levels
+  
   real(r8) :: met_rlx_top = 60._r8
   real(r8) :: met_rlx_bot = 50._r8
+
+  real(r8) :: met_rlx_bot_top = 0._r8
+  real(r8) :: met_rlx_bot_bot = 0._r8
+  
   real(r8) :: met_rlx_time = 0._r8
 
+#if ( defined OFFLINE_DYN )
   logical  :: met_fix_mass = .true.
+#else
+  logical  :: met_fix_mass = .false.
+#endif
   logical  :: has_ts = .false.
+  logical  :: has_lhflx = .false.      ! Is LHFLX present in the met file?
  
 contains
 
@@ -221,6 +268,8 @@ contains
         met_filenames_list, &
         met_rlx_top, &
         met_rlx_bot, &
+        met_rlx_bot_top, &
+        met_rlx_bot_bot, &
         met_rlx_time, &
         met_fix_mass, &
         met_shflx_name, &
@@ -229,7 +278,14 @@ contains
         met_qflx_name, &
         met_qflx_factor, &
         met_srf_feedback, &
-        met_srf_nudge_flux
+        met_srf_nudge_flux, &
+        met_srf_land, &
+        met_srf_land_scale, &
+        met_srf_rad, &
+        met_srf_refs, &
+        met_srf_sst, & 
+        met_srf_tau, &
+        met_nudge_temp
 
    ! Read namelist
    if (masterproc) then
@@ -257,6 +313,8 @@ contains
    call mpibcast (met_filenames_list ,len(met_filenames_list),mpichar,0,mpicom)
    call mpibcast (met_rlx_top,        1 ,mpir8,  0, mpicom )
    call mpibcast (met_rlx_bot,        1 ,mpir8,  0, mpicom )
+   call mpibcast (met_rlx_bot_top,    1 ,mpir8,  0, mpicom )
+   call mpibcast (met_rlx_bot_bot,    1 ,mpir8,  0, mpicom )
    call mpibcast (met_rlx_time,       1 ,mpir8,  0, mpicom )
    call mpibcast (met_fix_mass,       1 ,mpilog, 0, mpicom )
    call mpibcast (met_qflx_name      ,len(met_qflx_name),     mpichar,0,mpicom)
@@ -265,6 +323,14 @@ contains
    call mpibcast (met_shflx_factor   ,1, mpir8,  0, mpicom )
    call mpibcast (met_snowh_factor   ,1, mpir8,  0, mpicom )
    call mpibcast (met_srf_feedback   ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_nudge_flux ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_land       ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_land_scale ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_rad        ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_refs       ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_sst        ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_srf_tau        ,1 ,mpilog, 0, mpicom )
+   call mpibcast (met_nudge_temp     ,1 ,mpilog, 0, mpicom )
 #endif
 
    if (masterproc) then
@@ -272,8 +338,10 @@ contains
        write(iulog,*)'Meteorological data file will be removed (met_remove_file): ', met_remove_file
        write(iulog,*)'Meteorological winds are on cell walls (met_cell_wall_winds): ', met_cell_wall_winds
        write(iulog,*)'Meteorological file names list file: ', trim(met_filenames_list) 
-       write(iulog,*)'Meteorological relaxation top is (km): ', met_rlx_top
-       write(iulog,*)'Meteorological relaxation bottom is (km): ', met_rlx_bot
+       write(iulog,*)'Meteorological relax ramp region top at top is (km): ', met_rlx_top
+       write(iulog,*)'Meteorological relax ramp region bottom at top is (km): ', met_rlx_bot
+       write(iulog,*)'Meteorological relax ramp region top at bottom is (km): ', met_rlx_bot_top
+       write(iulog,*)'Meteorological relax ramp region bottom at bottom is (km): ', met_rlx_bot_bot
        write(iulog,*)'Meteorological relaxation time (hours): ',met_rlx_time
        write(iulog,*)'Offline driver mass fixer is trurned on (met_fix_mass): ',met_fix_mass
        write(iulog,*)'Meteorological shflx field name : ', trim(met_shflx_name) 
@@ -282,6 +350,13 @@ contains
        write(iulog,*)'Meteorological qflx multiplication factor : ', met_qflx_factor 
        write(iulog,*)'Meteorological snowh multiplication factor : ', met_snowh_factor
        write(iulog,*)'Meteorological allow srf models feedbacks : ', met_srf_feedback
+       write(iulog,*)'Meteorological allow srf land nudging : ', met_srf_land
+       write(iulog,*)'Meteorological scale srf land nudging : ', met_srf_land_scale
+       write(iulog,*)'Meteorological allow srf radiation nudging : ', met_srf_rad
+       write(iulog,*)'Meteorological allow srf reference field nudging : ', met_srf_refs
+       write(iulog,*)'Meteorological allow srf sst nudging : ', met_srf_sst
+       write(iulog,*)'Meteorological allow srf tau nudging : ', met_srf_tau
+       write(iulog,*)'Meteorological allow atm tempature nudging : ',met_nudge_temp
     endif
 
  end subroutine metdata_readnl
@@ -291,17 +366,15 @@ contains
 !--------------------------------------------------------------------------
   subroutine metdata_dyn_init(grid)
     use infnan,          only : nan, assignment(=)
-    use cam_control_mod, only : nsrest
+    use cam_control_mod, only : restart_run
     implicit none
 
 ! !INPUT PARAMETERS:
       type (T_FVDYCORE_GRID), intent(in) :: grid
 
 
-    character(len=256) :: filen
-    integer            :: im, jm, km, jfirst, jlast, kfirst, klast 
+    integer            :: im, km, jfirst, jlast, kfirst, klast 
     integer            :: ng_d, ng_s
-    integer            :: ierr
 
     im        = grid%im
     km        = grid%km
@@ -313,7 +386,7 @@ contains
     ng_s      = grid%ng_s
 
 
-    if (nsrest/=1) then ! initial run or branch run
+    if (.not. restart_run) then ! initial run or branch run
        curr_filename = met_data_file
        next_filename = ''
     else
@@ -369,22 +442,34 @@ contains
 
  subroutine metdata_phys_init
    use infnan,      only : nan, assignment(=)
-   use cam_history, only : addfld,dyn_decomp,phys_decomp
+   use cam_history, only : addfld, horiz_only
 
-   call addfld ('MET_RLX ','     ',pver, 'A','Meteorology relax function',dyn_decomp)
-   call addfld ('MET_TAUX','        ',1, 'A','Meteorology taux',phys_decomp)
-   call addfld ('MET_TAUY','        ',1, 'A','Meteorology tauy',phys_decomp)
-   call addfld ('MET_SHFX','        ',1, 'A','Meteorology shflx',phys_decomp)
-   call addfld ('MET_QFLX','        ',1, 'A','Meteorology qflx',phys_decomp)
-   call addfld ('MET_PS','          ',1, 'A','Meteorology PS',dyn_decomp)
-   call addfld ('MET_T','        ',pver, 'A','Meteorology T',phys_decomp)
-   call addfld ('MET_U','        ',pver, 'A','Meteorology U',dyn_decomp)
-   call addfld ('MET_V','        ',pver, 'A','Meteorology V',dyn_decomp)
-   call addfld ('MET_SNOWH','    ',1,    'A','Meteorology snow height',phys_decomp)
+   call addfld ('MET_RLX',     (/ 'lev' /),  'A', ' ', 'Meteorology relax function',              gridname='fv_centers')
+   call addfld ('MET_TAUX',    horiz_only,   'A', ' ', 'Meteorology taux',                        gridname='physgrid')
+   call addfld ('MET_TAUY',    horiz_only,   'A', ' ', 'Meteorology tauy',                        gridname='physgrid')
+   call addfld ('MET_LHFX',    horiz_only,   'A', ' ', 'Meteorology lhflx',                       gridname='physgrid')
+   call addfld ('MET_SHFX',    horiz_only,   'A', ' ', 'Meteorology shflx',                       gridname='physgrid')
+   call addfld ('MET_QFLX',    horiz_only,   'A', ' ', 'Meteorology qflx',                        gridname='physgrid')
+   call addfld ('MET_PS',      horiz_only,   'A', ' ', 'Meteorology PS',                          gridname='fv_centers')
+   call addfld ('MET_T',       (/ 'lev' /),  'A', ' ', 'Meteorology T',                           gridname='physgrid')
+   call addfld ('MET_U',       (/ 'lev' /),  'A', ' ', 'Meteorology U',                           gridname='fv_centers')
+   call addfld ('MET_V',       (/ 'lev' /),  'A', ' ', 'Meteorology V',                           gridname='fv_centers')
+   call addfld ('MET_SNOWH',   horiz_only,   'A', ' ', 'Meteorology snow height',                 gridname='physgrid')
 
-   call addfld ('MET_TS','K',1, 'A','Meteorology TS',phys_decomp)
-   call addfld ('MET_OCNFRC','fraction',1, 'A','Ocean frac derived from met TS',phys_decomp)
-   call addfld ('MET_ICEFRC','fraction',1, 'A','Sea ice frac derived from met TS',phys_decomp)
+   call addfld ('MET_TS',      horiz_only,   'A', 'K', 'Meteorology TS',                          gridname='physgrid')
+   call addfld ('MET_OCNFRC',  horiz_only,   'A', 'fraction', 'Ocean frac derived from met TS',   gridname='physgrid')
+   call addfld ('MET_ICEFRC',  horiz_only,   'A', 'fraction', 'Sea ice frac derived from met TS', gridname='physgrid')
+
+   call addfld ('MET_ASDIR',   horiz_only,   'A', '1', 'Meteorology ASDIR',                       gridname='physgrid')
+   call addfld ('MET_ASDIF',   horiz_only,   'A', '1', 'Meteorology ASDIF',                       gridname='physgrid')
+   call addfld ('MET_ALDIR',   horiz_only,   'A', '1', 'Meteorology ALDIR',                       gridname='physgrid')
+   call addfld ('MET_ALDIF',   horiz_only,   'A', '1', 'Meteorology ALDIF',                       gridname='physgrid')
+   call addfld ('MET_LWUP',    horiz_only,   'A', 'Wm-2', 'Meteorology LWUP',                     gridname='physgrid')
+   call addfld ('MET_SST',     horiz_only,   'A', 'K', 'Meteorology SST',                         gridname='physgrid')
+   call addfld ('MET_ICEFRAC', horiz_only,   'A', 'K', 'Meteorology ICEFRAC',                     gridname='physgrid')
+   call addfld ('MET_QREF',    horiz_only,   'A', 'kg/kg', 'Meteorology QREF',                    gridname='physgrid')
+   call addfld ('MET_TREF',    horiz_only,   'A', 'K', 'Meteorology TREF',                        gridname='physgrid')
+   call addfld ('MET_U10',     horiz_only,   'A', 'ms-1', 'Meteorology U10',                      gridname='physgrid')
 
 ! allocate chunked arrays   
 
@@ -395,6 +480,10 @@ contains
    allocate( met_qi(nm)%data(pcols,pver,begchunk:endchunk) )
    allocate( met_qi(np)%data(pcols,pver,begchunk:endchunk) )
    allocate( met_q(pcols,pver,begchunk:endchunk) )
+
+   allocate( met_lhflxi(nm)%data(pcols,begchunk:endchunk) )
+   allocate( met_lhflxi(np)%data(pcols,begchunk:endchunk) )
+   allocate( met_lhflx(pcols,begchunk:endchunk) )
 
    allocate( met_shflxi(nm)%data(pcols,begchunk:endchunk) )
    allocate( met_shflxi(np)%data(pcols,begchunk:endchunk) )
@@ -423,6 +512,52 @@ contains
       allocate( met_snowh(pcols,begchunk:endchunk) )
       met_snowh(:,:) = nan
    endif
+
+   if(met_srf_rad) then
+      allocate( met_asdiri(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_asdiri(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_asdir(pcols,begchunk:endchunk) )
+
+      allocate( met_asdifi(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_asdifi(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_asdif(pcols,begchunk:endchunk) )
+
+      allocate( met_aldiri(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_aldiri(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_aldir(pcols,begchunk:endchunk) )
+
+      allocate( met_aldifi(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_aldifi(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_aldif(pcols,begchunk:endchunk) )
+
+      allocate( met_lwupi(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_lwupi(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_lwup(pcols,begchunk:endchunk) )
+   end if
+
+   if(met_srf_refs) then
+      allocate( met_qrefi(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_qrefi(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_qref(pcols,begchunk:endchunk) )
+
+      allocate( met_trefi(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_trefi(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_tref(pcols,begchunk:endchunk) )
+
+      allocate( met_u10i(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_u10i(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_u10(pcols,begchunk:endchunk) )
+   end if
+
+   if(met_srf_sst) then
+      allocate( met_ssti(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_ssti(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_sst(pcols,begchunk:endchunk) )
+
+      allocate( met_icefraci(nm)%data(pcols,begchunk:endchunk) )
+      allocate( met_icefraci(np)%data(pcols,begchunk:endchunk) )
+      allocate( met_icefrac(pcols,begchunk:endchunk) )
+    end if
 
    call set_met_rlx()
 
@@ -489,6 +624,7 @@ contains
 ! Sets the following cam_in_t member fields to the 
 ! meteorology data :
 !   qflx
+!   lhflx
 !   shflx
 !   taux
 !   tauy
@@ -499,47 +635,137 @@ contains
     use phys_grid,           only: get_ncols_p
     use cam_history,         only: outfld
     use shr_const_mod,       only: shr_const_stebol
+    use physconst,           only: latvap, latice
 
     implicit none
 
     type(cam_in_t), intent(inout), dimension(begchunk:endchunk) :: cam_in
 
     integer :: c,ncol,i
+    real(r8) :: met_rlx_sfc(pcols)
+    real(r8) :: lcl_rlx(pcols)    
 
-    if (met_srf_nudge_flux) then
-       do c=begchunk,endchunk
-          ncol = get_ncols_p(c)
-          cam_in(c)%wsx(:ncol)     = (1._r8-met_rlx(pver)) * cam_in(c)%wsx(:ncol)    + met_rlx(pver) * met_taux(:ncol,c)
-          cam_in(c)%wsy(:ncol)     = (1._r8-met_rlx(pver)) * cam_in(c)%wsy(:ncol)    + met_rlx(pver) * met_tauy(:ncol,c)
-          cam_in(c)%shf(:ncol)     = (1._r8-met_rlx(pver)) * cam_in(c)%shf(:ncol)    + &
-               met_rlx(pver) * (met_shflx(:ncol,c) * met_shflx_factor)
-          cam_in(c)%cflx(:ncol,1)  = (1._r8-met_rlx(pver)) * cam_in(c)%cflx(:ncol,1) + &
-               met_rlx(pver) * (met_qflx(:ncol,c)  * met_qflx_factor)
-       end do                    ! Chunk loop
-    else
-       do c=begchunk,endchunk
-          ncol = get_ncols_p(c)
-          cam_in(c)%wsx(:ncol)     = met_taux(:ncol,c)
-          cam_in(c)%wsy(:ncol)     = met_tauy(:ncol,c)
-          cam_in(c)%shf(:ncol)     = met_shflx(:ncol,c) * met_shflx_factor
-          cam_in(c)%cflx(:ncol,1)  = met_qflx(:ncol,c)  * met_qflx_factor
-       end do                    ! Chunk loop
-    end if
+    do c=begchunk,endchunk
+       ncol = get_ncols_p(c)
+
+       ! Nudge or force the surface fields?
+       if (met_srf_nudge_flux) then
+         met_rlx_sfc(:ncol) = met_rlx(pver)
+       else
+         met_rlx_sfc(:ncol) = 1._r8
+       end if
+
+       ! Don't nudge the surface for locations that are entirely land?
+       if (.not. met_srf_land) then
+
+          ! Nudging land and forcing ocean.
+          if (met_srf_land_scale) then
+            met_rlx_sfc(:ncol) = (1._r8 - cam_in(c)%landfrac(:ncol)) * met_rlx_sfc(:ncol) + cam_in(c)%landfrac(:ncol) * met_rlx(pver)
+          else
+            where(cam_in(c)%landfrac(:ncol) .eq. 1._r8) met_rlx_sfc(:ncol) = 0._r8
+          end if
+       end if
+
+       if (met_srf_tau) then
+         cam_in(c)%wsx(:ncol)     = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%wsx(:ncol)    + met_rlx_sfc(:ncol) * met_taux(:ncol,c)
+         cam_in(c)%wsy(:ncol)     = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%wsy(:ncol)    + met_rlx_sfc(:ncol) * met_tauy(:ncol,c)
+       end if
+        
+       cam_in(c)%shf(:ncol)     = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%shf(:ncol)    + &
+             met_rlx_sfc(:ncol) * (met_shflx(:ncol,c) * met_shflx_factor)
+       cam_in(c)%cflx(:ncol,1)  = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%cflx(:ncol,1) + &
+             met_rlx_sfc(:ncol) * (met_qflx(:ncol,c)  * met_qflx_factor)
+
+       ! If present, nudge the latent heat; otherwise, make an approximation by scaling the
+       ! water vapor flux.
+       if (has_lhflx) then
+         cam_in(c)%lhf(:ncol)     = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%lhf(:ncol)    + &
+               met_rlx_sfc(:ncol) * (met_lhflx(:ncol,c) * met_qflx_factor)
+       else
+         cam_in(c)%lhf(:ncol)     = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%lhf(:ncol)    + &
+               met_rlx_sfc(:ncol) * (met_qflx(:ncol,c) * met_qflx_factor * latvap)
+       end if
+
+       if (met_srf_rad) then
+
+          ! There can be fill values in the albedos from the met fields, so use the cam_in value
+          ! if fill is detected. This could be jumpy if that value gets used, but should be in
+          ! an area with no downwelling solar. Time interpolate around the terminator could cause
+          ! problems, but the interpolation provides a non-fill value if either endpoint of the
+          ! interpolation is not fill.
+          lcl_rlx(:ncol) = met_rlx_sfc(:ncol)
+          where(met_asdir(:ncol,c) .eq. srf_fill_value) lcl_rlx(:ncol) = 0._r8
+          cam_in(c)%asdir(:ncol)   = (1._r8-lcl_rlx(:ncol)) * cam_in(c)%asdir(:ncol)    + lcl_rlx(:ncol) * met_asdir(:ncol,c)
+
+          lcl_rlx(:ncol) = met_rlx_sfc(:ncol)
+          where(met_asdif(:ncol,c) .eq. srf_fill_value) lcl_rlx(:ncol) = 0._r8
+          cam_in(c)%asdif(:ncol)   = (1._r8-lcl_rlx(:ncol)) * cam_in(c)%asdif(:ncol)    + lcl_rlx(:ncol) * met_asdif(:ncol,c)
+          
+          lcl_rlx(:ncol) = met_rlx_sfc(:ncol)
+          where(met_aldir(:ncol,c) .eq. srf_fill_value) lcl_rlx(:ncol) = 0._r8
+          cam_in(c)%aldir(:ncol)   = (1._r8-lcl_rlx(:ncol)) * cam_in(c)%aldir(:ncol)    + lcl_rlx(:ncol) * met_aldir(:ncol,c)
+
+          lcl_rlx(:ncol) = met_rlx_sfc(:ncol)
+          where(met_aldif(:ncol,c) .eq. srf_fill_value) lcl_rlx(:ncol) = 0._r8
+          cam_in(c)%aldif(:ncol)   = (1._r8-lcl_rlx(:ncol)) * cam_in(c)%aldif(:ncol)    + lcl_rlx(:ncol) * met_aldif(:ncol,c)
+          
+          cam_in(c)%lwup(:ncol)    = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%lwup(:ncol)     + met_rlx_sfc(:ncol) * met_lwup(:ncol,c)
+       end if
+
+       if (met_srf_refs) then
+          cam_in(c)%qref(:ncol)    = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%qref(:ncol)    + met_rlx_sfc(:ncol) * met_qref(:ncol,c)
+          cam_in(c)%tref(:ncol)    = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%tref(:ncol)    + met_rlx_sfc(:ncol) * met_tref(:ncol,c)
+          cam_in(c)%u10(:ncol)     = (1._r8-met_rlx_sfc(:ncol)) * cam_in(c)%u10(:ncol)     + met_rlx_sfc(:ncol) * met_u10(:ncol,c)
+       end if
+
+       if (met_srf_sst) then
+
+          ! Meteorological sst is 0 over 100% land, so use the cam_in value if the meteorology thinks
+          ! it is land.
+          lcl_rlx(:ncol) = met_rlx_sfc(:ncol)
+          where(met_sst(:ncol,c) .eq. srf_fill_value) lcl_rlx(:ncol) = 0._r8
+          cam_in(c)%sst(:ncol)    = (1._r8-lcl_rlx(:ncol)) * cam_in(c)%sst(:ncol)    + lcl_rlx(:ncol) * met_sst(:ncol,c)
+
+          cam_in(c)%icefrac(:ncol)    = (1._r8-lcl_rlx(:ncol)) * cam_in(c)%icefrac(:ncol)    + lcl_rlx(:ncol) * met_icefrac(:ncol,c)
+       end if
+     end do                    ! Chunk loop
 
     if (debug) then
        if (masterproc) then
           write(iulog,*)'METDATA   maxval(met_taux),minval(met_taux): ',maxval(met_taux),minval(met_taux)
           write(iulog,*)'METDATA   maxval(met_tauy),minval(met_tauy): ',maxval(met_tauy),minval(met_tauy)
-          write(iulog,*)'METDATA maxval(met_shflx),minval(met_shflx): ',maxval(met_shflx),minval(met_shflx)
+          write(iulog,*)'METDATA   maxval(met_lhflx),minval(met_lhflx): ',maxval(met_lhflx),minval(met_lhflx)
+          write(iulog,*)'METDATA   maxval(met_shflx),minval(met_shflx): ',maxval(met_shflx),minval(met_shflx)
           write(iulog,*)'METDATA   maxval(met_qflx),minval(met_qflx): ',maxval(met_qflx),minval(met_qflx)
+          write(iulog,*)'METDATA   maxval(met_asdir),minval(met_asdir): ',maxval(met_asdir),minval(met_asdir)
+          write(iulog,*)'METDATA   maxval(met_asdif),minval(met_asdif): ',maxval(met_asdif),minval(met_asdif)
+          write(iulog,*)'METDATA   maxval(met_aldir),minval(met_aldir): ',maxval(met_aldir),minval(met_aldir)
+          write(iulog,*)'METDATA   maxval(met_aldif),minval(met_aldif): ',maxval(met_aldif),minval(met_aldif)
+          write(iulog,*)'METDATA   maxval(met_lwup),minval(met_lwup): ',maxval(met_lwup),minval(met_lwup)
+          write(iulog,*)'METDATA   maxval(met_qref),minval(met_qref): ',maxval(met_qref),minval(met_qref)
+          write(iulog,*)'METDATA   maxval(met_tref),minval(met_tref): ',maxval(met_tref),minval(met_tref)
+          write(iulog,*)'METDATA   maxval(met_u10),minval(met_u10): ',maxval(met_u10),minval(met_u10)
+          write(iulog,*)'METDATA   maxval(met_sst),minval(met_sst): ',maxval(met_sst),minval(met_sst)
+          write(iulog,*)'METDATA   maxval(met_icefrac),minval(met_icefrac): ',maxval(met_icefrac),minval(met_icefrac)
        endif
     endif
     
     do c = begchunk, endchunk
        call outfld('MET_TAUX',cam_in(c)%wsx , pcols   ,c   )
        call outfld('MET_TAUY',cam_in(c)%wsy , pcols   ,c   )
+       call outfld('MET_LHFX',cam_in(c)%lhf , pcols   ,c   )
        call outfld('MET_SHFX',cam_in(c)%shf , pcols   ,c   )
        call outfld('MET_QFLX',cam_in(c)%cflx(:,1) , pcols   ,c   )
+       call outfld('MET_ASDIR',cam_in(c)%asdir , pcols   ,c   )
+       call outfld('MET_ASDIF',cam_in(c)%asdif , pcols   ,c   )
+       call outfld('MET_ALDIR',cam_in(c)%aldir , pcols   ,c   )
+       call outfld('MET_ALDIF',cam_in(c)%aldif , pcols   ,c   )
+       call outfld('MET_LWUP',cam_in(c)%lwup , pcols   ,c   )
+       call outfld('MET_QREF',cam_in(c)%qref , pcols   ,c   )
+       call outfld('MET_TREF',cam_in(c)%tref , pcols   ,c   )
+       call outfld('MET_U10',cam_in(c)%u10 , pcols   ,c   )
+       call outfld('MET_SST',cam_in(c)%sst , pcols   ,c   )
+       call outfld('MET_ICEFRAC',cam_in(c)%icefrac , pcols   ,c   )
     enddo
 
   end subroutine get_met_srf2
@@ -603,25 +829,36 @@ contains
     ! local vars
     integer :: i
     
-    if (.not.has_ts) then
-       if (masterproc) then
-          write(iulog,*) 'get_ocn_ice_frcs: TS is not in the met dataset and cannot set ocnfrc and icefrc'
-          write(iulog,*) ' try setting drydep_method to xactive_atm or table'
-          call endrun('get_ocn_ice_frcs: TS is not in the met dataset')
-       endif
-    endif
+    if (met_srf_sst) then
+      do i = 1,ncol
 
-    do i = 1,ncol
+        ! If configured for using SST, and ICEFRAC, then get icefrc
+        ! directly from the meteorological data.
+        icefrc(i) = min(met_icefrac(i,lchnk), 1._r8 - lndfrc(i))
+        ocnfrc(i) = 1._r8 - lndfrc(i) - icefrc(i)
+      enddo
+    else
+    
+      if (.not.has_ts) then
+         if (masterproc) then
+            write(iulog,*) 'get_ocn_ice_frcs: TS is not in the met dataset and cannot set ocnfrc and icefrc'
+            write(iulog,*) ' try setting drydep_method to xactive_atm or table'
+            call endrun('get_ocn_ice_frcs: TS is not in the met dataset')
+         endif
+      endif
 
-       if ( met_ts(i,lchnk) < SHR_CONST_TKFRZ-2._r8 ) then
-          ocnfrc(i) = 0._r8
-          icefrc(i) = 1._r8 - lndfrc(i)
-       else
-          icefrc(i) = 0._r8
-          ocnfrc(i) = 1._r8 - lndfrc(i)
-       endif
+      do i = 1,ncol
 
-    enddo
+         if ( met_ts(i,lchnk) < SHR_CONST_TKFRZ-2._r8 ) then
+            ocnfrc(i) = 0._r8
+            icefrc(i) = 1._r8 - lndfrc(i)
+         else
+            icefrc(i) = 0._r8
+            ocnfrc(i) = 1._r8 - lndfrc(i)
+         endif
+
+      enddo
+    end if
 
     call outfld('MET_TS', met_ts(:ncol,lchnk) , ncol   ,lchnk   )
     call outfld('MET_OCNFRC', ocnfrc(:ncol) , ncol   ,lchnk   )
@@ -654,28 +891,22 @@ contains
     real(r8):: qini(pcols,pver)   ! initial specific humidity
 
     real(r8) :: tmp(pcols,pver)
-
+    
     call t_startf('MET__GET_DYN2')
     
     do c = begchunk, endchunk
        ncol = get_ncols_p(c)
        do k=1,pver
           do i=1,ncol
-             state(c)%t(i,k) = (1._r8-met_rlx(k))*state(c)%t(i,k) + met_rlx(k)*met_t(i,k,c)
+             if (met_nudge_temp) then
+                state(c)%t(i,k) = (1._r8-met_rlx(k))*state(c)%t(i,k) + met_rlx(k)*met_t(i,k,c)
+             end if
 
              qini(i,k) = state(c)%q(i,k,1)
 
              ! at this point tracer mixing ratios have already been
              ! converted from dry to moist
-!!$             if (  moist_q_mmr .and. (.not. online_test)) then
-                state(c)%q(i,k,1) = alpha*state(c)%q(i,k,1) + &
-                     (1-alpha)*met_q(i,k,c)
-!!$             else 
-!!$                ! dry-to-moist conversion
-!!$                state(c)%q(i,k,1) = alpha*state(c)%q(i,k,1) + &
-!!$                     (1.-alpha)*met_q(i,c,k) &
-!!$                     * state(c)%pdeldry(i,k)/state(c)%pdel(i,k)
-!!$             endif
+             state(c)%q(i,k,1) = alpha*state(c)%q(i,k,1) + (D1_0-alpha)*met_q(i,k,c)
 
              if ((state(c)%q(i,k,1) < D0_0).and. (alpha .ne. D1_0 )) state(c)%q(i,k,1) = D0_0
 
@@ -1106,7 +1337,7 @@ contains
        !-----------------------------------------------------------------------
        pos = len_trim( filename )
        fn_new = filename(:pos)
-       write(iulog,*) 'incr_flnm: old filename = ',trim(fn_new)
+       if (masterproc) write(iulog,*) 'incr_flnm: old filename = ',trim(fn_new)
        if( fn_new(pos-2:) == '.nc' ) then
           pos = pos - 3
        end if
@@ -1120,8 +1351,8 @@ contains
     else
 
        ! open met_filenames_list
-       write(iulog,*) 'incr_flnm: old filename = ',trim(filename)
-       write(iulog,*) 'incr_flnm: open met_filenames_list : ',met_filenames_list 
+       if (masterproc) write(iulog,*) 'incr_flnm: old filename = ',trim(filename)
+       if (masterproc) write(iulog,*) 'incr_flnm: open met_filenames_list : ',met_filenames_list 
        unitnumber = shr_file_getUnit()
        open( unit=unitnumber, file=met_filenames_list, iostat=ios, status="OLD")
        if (ios /= 0) then
@@ -1150,7 +1381,7 @@ contains
        call shr_file_freeUnit(unitnumber)
     endif
     incr_filename = trim(fn_new)
-    write(iulog,*) 'incr_flnm: new filename = ',incr_filename
+    if (masterproc) write(iulog,*) 'incr_flnm: new filename = ',incr_filename
 
   end function incr_filename
 
@@ -1220,6 +1451,7 @@ contains
 !------------------------------------------------------------------------------
   subroutine read_next_ps(grid)
     use ncdio_atm,          only: infld
+
     implicit none
 
     type (T_FVDYCORE_GRID), intent(in) :: grid
@@ -1247,13 +1479,13 @@ contains
     call find_times( recnos, fids, datatimemn, datatimepn, next_mod_time )
 
     call infld(varname, fids(1), 'lon', 'lat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-         wrk_xy, readvar, grid_map='DYN', timelevel=recnos(1))
+         wrk_xy, readvar, gridname='fv_centers', timelevel=recnos(1))
 
     ! transpose xy -> yz decomposition
     call transpose_xy2yz_2d( wrk_xy, met_psi_next(nm)%data, grid )
 
     call infld(varname, fids(2), 'lon', 'lat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-         wrk_xy, readvar, grid_map='DYN', timelevel=recnos(2))
+         wrk_xy, readvar, gridname='fv_centers', timelevel=recnos(2))
 
     ! transpose xy -> yz decomposition
     call transpose_xy2yz_2d( wrk_xy, met_psi_next(np)%data, grid )
@@ -1334,6 +1566,8 @@ contains
 !------------------------------------------------------------------------
   subroutine read_next_metdata(grid)
     use ncdio_atm,          only: infld
+    use cam_grid_support,   only: cam_grid_check, cam_grid_id
+    use cam_grid_support,   only: cam_grid_get_dim_names
 
     implicit none
 
@@ -1342,6 +1576,7 @@ contains
     type(file_desc_t) :: fids(2)
 
     character(len=8) :: Uname, Vname, Tname, Qname, psname
+    character(len=8) :: dim1name, dim2name
     integer :: im, jm, km
     logical :: readvar
     integer :: ifirstxy, ilastxy, jfirstxy, jlastxy
@@ -1350,6 +1585,7 @@ contains
     real(r8), allocatable :: tmp_data(:,:,:)
     integer :: elev1,blev1, elev2,blev2
     integer :: elev3,blev3, elev4,blev4
+    integer :: grid_id  ! grid ID for data mapping
 
     call t_startf('MET__read_next_metdata')
 
@@ -1427,19 +1663,26 @@ contains
     allocate(wrk2_xy(ifirstxy:ilastxy, jfirstxy:jlastxy))
     allocate(wrk3_xy(ifirstxy:ilastxy, jfirstxy:jlastxy, 1:max(km,num_met_levels)))
 
+    ! physgrid intput for FV is probably always lon/lat but let's be pedantic
+    grid_id = cam_grid_id('physgrid')
+    if (.not. cam_grid_check(grid_id)) then
+       call endrun('read_next_metdata: Internal error, no "physgrid" grid')
+    end if
+    call cam_grid_get_dim_names(grid_id, dim1name, dim2name)
+
     do i=1,2
 
        met_ti(i)%data = 0._r8
 
-       call infld(Tname, fids(i), 'lon', 'lev', 'lat',  1, pcols, 1,num_met_levels , &
-            begchunk, endchunk, tmp_data, readvar, grid_map='PHYS',timelevel=recnos(i))
+       call infld(Tname, fids(i), dim1name, 'lev', dim2name,  1, pcols, 1,num_met_levels , &
+            begchunk, endchunk, tmp_data, readvar, gridname='physgrid',timelevel=recnos(i))
 
        met_ti(i)%data(:,blev1:elev1,:) = tmp_data(:, blev2:elev2, :)
 
        met_qi(i)%data = 0._r8
 
-       call infld(Qname, fids(i), 'lon', 'lev', 'lat',  1, pcols, 1,num_met_levels, &
-            begchunk, endchunk, tmp_data, readvar, grid_map='PHYS',timelevel=recnos(i))
+       call infld(Qname, fids(i), dim1name, 'lev', dim2name,  1, pcols, 1,num_met_levels, &
+            begchunk, endchunk, tmp_data, readvar, gridname='physgrid',timelevel=recnos(i))
 
        met_qi(i)%data(:,blev1:elev1,:) = tmp_data(:, blev2:elev2, :)
 
@@ -1447,16 +1690,16 @@ contains
 
           wrk3_xy = 0._r8
           met_usi(i)%data(:,:,:) = 0._r8
-          call infld(Uname, fids(i), 'lon', 'lev', 'slat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, grid_map='DYN',timelevel=recnos(i))
+          call infld(Uname, fids(i), 'lon', 'slat', 'lev',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
+               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, gridname='fv_u_stagger',timelevel=recnos(i))
 
           ! transpose xy -> yz decomposition
           call transpose_xy2yz_3d( wrk3_xy(:,:,blev3:elev3), met_usi(i)%data(:,:,:), grid )
 
           wrk3_xy = 0._r8
           met_vsi(i)%data(:,:,:) = 0._r8
-          call infld(Vname, fids(i), 'slon', 'lev', 'lat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, grid_map='DYN',timelevel=recnos(i))
+          call infld(Vname, fids(i), 'slon', 'lat', 'lev',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
+               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, gridname='fv_v_stagger',timelevel=recnos(i))
 
           ! transpose xy -> yz decomposition
           call transpose_xy2yz_3d( wrk3_xy(:,:,blev3:elev3), met_vsi(i)%data(:,:,:), grid )
@@ -1467,16 +1710,16 @@ contains
 
           wrk3_xy = 0._r8
           met_ui(i)%data = 0._r8
-          call infld(Uname, fids(i), 'lon', 'lev', 'lat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, grid_map='DYN',timelevel=recnos(i))
+          call infld(Uname, fids(i), 'lon', 'lat', 'lev',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
+               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, gridname='fv_centers',timelevel=recnos(i))
 
           ! transpose xy -> yz decomposition
           call transpose_xy2yz_3d( wrk3_xy(:,:,blev3:elev3), met_ui(i)%data(:,:,:), grid )
 
           wrk3_xy = 0._r8
           met_vi(i)%data = 0._r8
-          call infld(Vname, fids(i), 'lon', 'lev', 'lat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, grid_map='DYN',timelevel=recnos(i))
+          call infld(Vname, fids(i), 'lon', 'lat', 'lev',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
+               1,num_met_levels, wrk3_xy(:,:,blev4:elev4), readvar, gridname='fv_centers',timelevel=recnos(i))
 
           ! transpose xy -> yz decomposition
           call transpose_xy2yz_3d( wrk3_xy(:,:,blev3:elev3), met_vi(i)%data(:,:,:), grid )
@@ -1484,7 +1727,7 @@ contains
        endif ! met_cell_wall_winds
 
        call infld(PSname, fids(i), 'lon', 'lat',  ifirstxy, ilastxy, jfirstxy, jlastxy, &
-            wrk2_xy, readvar, grid_map='DYN', timelevel=recnos(i))
+            wrk2_xy, readvar, gridname='fv_centers', timelevel=recnos(i))
 
        ! transpose xy -> yz decomposition
         call transpose_xy2yz_2d( wrk2_xy, met_psi_curr(i)%data, grid )
@@ -1517,20 +1760,57 @@ contains
     do i=1,2
 
        call infld(met_shflx_name, fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
-            met_shflxi(i)%data, readvar, grid_map='PHYS',timelevel=recnos(i))
+            met_shflxi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
+       
+       if (has_lhflx) then
+         call infld('LHFLX', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+              met_lhflxi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
+       end if
+       
        call infld(met_qflx_name, fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
-            met_qflxi(i)%data, readvar, grid_map='PHYS',timelevel=recnos(i))
+            met_qflxi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
        call infld('TAUX', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
-            met_tauxi(i)%data, readvar, grid_map='PHYS',timelevel=recnos(i))
+            met_tauxi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
        call infld('TAUY', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
-            met_tauyi(i)%data, readvar, grid_map='PHYS',timelevel=recnos(i))
+            met_tauyi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
+
        if ( .not.met_srf_feedback ) then
           call infld('SNOWH', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
-               met_snowhi(i)%data, readvar, grid_map='PHYS',timelevel=recnos(i))
+               met_snowhi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
        endif
+
        if (has_ts) then
           call infld('TS', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
-               met_tsi(i)%data, readvar, grid_map='PHYS',timelevel=recnos(i))
+               met_tsi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))
+       endif
+
+       if (met_srf_rad) then
+          call infld('ASDIR', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_asdiri(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('ASDIF', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_asdifi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('ALDIR', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_aldiri(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('ALDIF', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_aldifi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('LWUP', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_lwupi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+       endif
+       
+       if (met_srf_refs) then
+          call infld('QREF', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_qrefi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('TREF', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_trefi(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('U10', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_u10i(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+       endif
+       
+       if (met_srf_sst) then
+          call infld('SST', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_ssti(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
+          call infld('ICEFRAC', fids(i), 'lon', 'lat',  1, pcols, begchunk, endchunk, &
+               met_icefraci(i)%data, readvar, gridname='physgrid',timelevel=recnos(i))          
        endif
     enddo
   end subroutine read_phys_srf_flds
@@ -1538,30 +1818,121 @@ contains
 !------------------------------------------------------------------------------
 !------------------------------------------------------------------------------
   subroutine interp_phys_srf_flds( )
-
+    use phys_grid,           only: get_ncols_p
     real(r4) :: fact1, fact2
     real(r8) :: deltat
+    integer :: i, c, ncol
 
     deltat = datatimep - datatimem
     fact1 = (datatimep - curr_mod_time)/deltat
     fact2 = D1_0-fact1
+    
 
-    met_shflx(:,:) = fact1*met_shflxi(nm)%data(:,:) + fact2*met_shflxi(np)%data(:,:)
-    met_qflx(:,:) = fact1*met_qflxi(nm)%data(:,:) + fact2*met_qflxi(np)%data(:,:)
-    met_taux(:,:) = fact1*met_tauxi(nm)%data(:,:) + fact2*met_tauxi(np)%data(:,:)
-    met_tauy(:,:) = fact1*met_tauyi(nm)%data(:,:) + fact2*met_tauyi(np)%data(:,:)
+    do c=begchunk,endchunk
+       ncol = get_ncols_p(c)
+       do i=1,ncol
+          if (has_lhflx) then
+            met_lhflx(i,c) = fact1*met_lhflxi(nm)%data(i,c) + fact2*met_lhflxi(np)%data(i,c)
+          end if
+          met_shflx(i,c) = fact1*met_shflxi(nm)%data(i,c) + fact2*met_shflxi(np)%data(i,c)
+          met_qflx(i,c) = fact1*met_qflxi(nm)%data(i,c) + fact2*met_qflxi(np)%data(i,c)
+          met_taux(i,c) = fact1*met_tauxi(nm)%data(i,c) + fact2*met_tauxi(np)%data(i,c)
+          met_tauy(i,c) = fact1*met_tauyi(nm)%data(i,c) + fact2*met_tauyi(np)%data(i,c)
+       enddo
+    enddo
     if ( .not.met_srf_feedback ) then
-       met_snowh(:,:) = fact1*met_snowhi(nm)%data(:,:) + fact2*met_snowhi(np)%data(:,:)
+       do c=begchunk,endchunk
+          ncol = get_ncols_p(c)
+          do i=1,ncol
+             met_snowh(i,c) = fact1*met_snowhi(nm)%data(i,c) + fact2*met_snowhi(np)%data(i,c)
+          enddo
+       enddo
     endif
     if (has_ts) then
-       met_ts(:,:) = fact1*met_tsi(nm)%data(:,:) + fact2*met_tsi(np)%data(:,:)
+       do c=begchunk,endchunk
+          ncol = get_ncols_p(c)
+          do i=1,ncol
+             met_ts(i,c) = fact1*met_tsi(nm)%data(i,c) + fact2*met_tsi(np)%data(i,c)
+          enddo
+       enddo
     endif
+    if (met_srf_rad) then
+       do c=begchunk,endchunk
+          ncol = get_ncols_p(c)
+          do i=1,ncol
+             ! Albedo can be fillValue from the meteorology where the is no downwelling
+             ! solar. However, this changes slowly, so for interpolation use either end-point
+             ! if nothing is present. If there is no solar, then the albedo won't matter, so
+             ! should not cause problems.
+             if (met_asdiri(nm)%data(i,c) .eq. srf_fill_value) then
+                met_asdir(i,c) = met_asdiri(np)%data(i,c)
+             else if (met_asdiri(np)%data(i,c) .eq. srf_fill_value) then
+                met_asdir(i,c) = met_asdiri(nm)%data(i,c)
+             else
+                met_asdir(i,c) = fact1*met_asdiri(nm)%data(i,c) + fact2*met_asdiri(np)%data(i,c)
+             endif
 
+             if (met_asdifi(nm)%data(i,c) .eq. srf_fill_value) then
+                met_asdif(i,c) = met_asdifi(np)%data(i,c)
+             else if (met_asdifi(np)%data(i,c) .eq. srf_fill_value) then
+                met_asdif(i,c) = met_asdifi(nm)%data(i,c)
+             else
+                met_asdif(i,c) = fact1*met_asdifi(nm)%data(i,c) + fact2*met_asdifi(np)%data(i,c)
+             endif
+
+             if (met_aldiri(nm)%data(i,c) .eq. srf_fill_value) then
+                met_aldir(i,c) = met_aldiri(np)%data(i,c)
+             else if (met_aldiri(np)%data(i,c) .eq. srf_fill_value) then
+                met_aldir(i,c) = met_aldiri(nm)%data(i,c)
+             else
+                met_aldir(i,c) = fact1*met_aldiri(nm)%data(i,c) + fact2*met_aldiri(np)%data(i,c)
+             endif
+
+             if (met_aldifi(nm)%data(i,c) .eq. srf_fill_value) then
+                met_aldif(i,c) = met_aldifi(np)%data(i,c)
+             else if (met_aldifi(np)%data(i,c) .eq. srf_fill_value) then
+                met_aldif(i,c) = met_aldifi(nm)%data(i,c)
+             else
+                met_aldif(i,c) = fact1*met_aldifi(nm)%data(i,c) + fact2*met_aldifi(np)%data(i,c)
+             endif
+
+             met_lwup(i,c)  = fact1*met_lwupi(nm)%data(i,c)  + fact2*met_lwupi(np)%data(i,c)
+          enddo
+       enddo
+    endif
+    if (met_srf_refs) then
+       do c=begchunk,endchunk
+          ncol = get_ncols_p(c)
+          do i=1,ncol
+             met_qref(i,c) = fact1*met_qrefi(nm)%data(i,c) + fact2*met_qrefi(np)%data(i,c)
+             met_tref(i,c) = fact1*met_trefi(nm)%data(i,c) + fact2*met_trefi(np)%data(i,c)
+             met_u10(i,c)  = fact1*met_u10i(nm)%data(i,c)  + fact2*met_u10i(np)%data(i,c)
+          enddo
+       enddo
+    endif
+    if (met_srf_sst) then
+       do c=begchunk,endchunk
+          ncol = get_ncols_p(c)
+          do i=1,ncol
+             ! The sst is fill value over land, which should not change from timestep to
+             ! timestep, but just in case use the sst value if only one is present.
+             if (met_ssti(nm)%data(i,c) .eq. srf_fill_value) then
+                met_sst(i,c) = met_ssti(np)%data(i,c)
+             else if (met_ssti(np)%data(i,c) .eq. srf_fill_value) then
+                met_sst(i,c) = met_ssti(nm)%data(i,c)
+             else
+                met_sst(i,c) = fact1*met_ssti(nm)%data(i,c) + fact2*met_ssti(np)%data(i,c)
+             endif
+             met_icefrac(i,c) = fact1*met_icefraci(nm)%data(i,c) + fact2*met_icefraci(np)%data(i,c)
+          enddo
+       enddo
+    endif
+    
   end subroutine interp_phys_srf_flds
 !------------------------------------------------------------------------------
 !------------------------------------------------------------------------------
   subroutine interpolate_metdata(grid)
-
+    use phys_grid,           only: get_ncols_p
 #if defined( SPMD )
     use mod_comm, only : mp_send4d_ns, mp_recv4d_ns
 #endif
@@ -1572,7 +1943,7 @@ contains
     real(r4) fact1, fact2
     real(r4) nfact1, nfact2
     real(r8) deltat,deltatn
-    integer :: i,j,k
+    integer :: i,c,k, ncol
     integer :: im, jm, km, jfirst, jlast, kfirst, klast, ng_d, ng_s
 
     im      = grid%im
@@ -1598,8 +1969,16 @@ contains
 !    nfact2 = (next_mod_time - datatimemn)/deltatn
     nfact2 = D1_0-nfact1
 
-    met_t(:,:,:) = fact1*met_ti(nm)%data(:,:,:) + fact2*met_ti(np)%data(:,:,:)
-    met_q(:,:,:) = fact1*met_qi(nm)%data(:,:,:) + fact2*met_qi(np)%data(:,:,:)
+    met_q = 0.0_r8
+    do c=begchunk,endchunk
+       ncol = get_ncols_p(c)
+       do k=1,pver
+          do i=1,ncol
+             met_t(i,k,c) = fact1*met_ti(nm)%data(i,k,c) + fact2*met_ti(np)%data(i,k,c)
+             met_q(i,k,c) = fact1*met_qi(nm)%data(i,k,c) + fact2*met_qi(np)%data(i,k,c)
+          enddo
+       enddo
+    enddo
 
     if (.not. online_test) where (met_q .lt. D0_0) met_q = D0_0
 
@@ -1609,7 +1988,12 @@ contains
     call interp_phys_srf_flds()
 
     if (has_ts) then
-       met_ts(:,:) = fact1*met_tsi(nm)%data(:,:) + fact2*met_tsi(np)%data(:,:)
+       do c=begchunk,endchunk
+          ncol = get_ncols_p(c)
+          do i=1,ncol
+             met_ts(i,c) = fact1*met_tsi(nm)%data(i,c) + fact2*met_tsi(np)%data(i,c)
+          enddo
+       enddo
     endif
 
     if ( .not. met_cell_wall_winds ) then
@@ -1707,6 +2091,9 @@ contains
     ierr = pio_inq_varid( fileid, 'TS', varid )
     has_ts = ierr==PIO_NOERR
 
+    ierr = pio_inq_varid( fileid, 'LHFLX', varid )
+    has_lhflx = ierr==PIO_NOERR
+
     call pio_seterrorhandling(fileid, PIO_INTERNAL_ERROR)
 
     if (masterproc) write(iulog,*) 'open_met_datafile: ',trim(filen)
@@ -1762,6 +2149,11 @@ contains
        endif
     endif
 
+    if (met_srf_rad) then
+       ierr = pio_inq_varid( fileid, 'ASDIR', varid )
+       ierr = pio_get_att( fileid, varid, '_FillValue', srf_fill_value)
+    endif
+       
   end subroutine open_met_datafile
 
 !------------------------------------------------------------------------------
@@ -1847,13 +2239,14 @@ contains
 !-----------------------------------------------------------------------
   subroutine set_met_rlx( )
 
-    use pmgrid
+    use pmgrid, only: plev
     use hycoef, only: hypm, ps0
 
     integer :: k, k_cnt, k_top
     real(r8), parameter :: h0 = 7._r8        ! scale height (km)
     real(r8), parameter :: hsec = 3600._r8   ! seconds per hour
     real(r8) :: p_top, p_bot
+    real(r8) :: p_bot_top, p_bot_bot
     real(r8) ::  met_max_rlxdt,  dtime_hrs
 
 996 format( 'set_met_rlx: ',a15, I10 )
@@ -1861,6 +2254,7 @@ contains
 998 format( 'set_met_rlx: ',a15, PLEV(E10.2))
 999 format( 'set_met_rlx: ',a15, PLEV(F10.5))
 993 format( 'set_met_rlx: ',a25, E10.2 )
+991 format( 'set_met_rlx: ',a25, I4, E10.2, E10.2 )
 
     met_rlx(:) = 999._r8
 
@@ -1882,45 +2276,85 @@ contains
     p_top = ps0 * exp( - met_rlx_top/h0 )
     p_bot = ps0 * exp( - met_rlx_bot/h0 )
 
+    p_bot_top = ps0 * exp( - met_rlx_bot_top/h0 )
+    p_bot_bot = ps0 * exp( - met_rlx_bot_bot/h0 )
+
     if (masterproc) then
        write(iulog,fmt=997) 'p_top = ',p_top
        write(iulog,fmt=997) 'p_bot = ',p_bot
+       write(iulog,fmt=997) 'p_bot_top = ',p_bot_top
+       write(iulog,fmt=997) 'p_bot_bot = ',p_bot_bot
     endif
 
     if ( p_bot < hypm( pver-met_levels+1 ) .and. ( met_levels < pver ) ) then
        call endrun(  'set_met_rlx: met_rlx_bot is too high ' )
     endif
 
-    where( hypm < p_top )
-       met_rlx = 0._r8
+    met_rlx = 0._r8
+
+    where (p_top <= hypm .and. hypm < p_bot)
+       met_rlx = 999._r8
     endwhere
 
-    where( hypm > p_bot )
+    where( p_bot <= hypm .and. hypm <= p_bot_top )
        met_rlx = met_max_rlxdt
+    endwhere
+
+    where(p_bot_top < hypm .and. hypm <= p_bot_bot)
+       met_rlx = -999._r8
     endwhere
 
     if ( any( met_rlx(:) /= met_max_rlxdt) ) then
        k_top = max(plev - met_levels, 1)
 
-       do while ( met_rlx(k_top) /= 999._r8 )
-          k_top = k_top + 1
-          if ( k_top == pver ) then
-             call endrun ( 'set_met_rlx: cannot find ramped region ')
+       ! ramp region at model top
+       k_cnt = count(p_top < hypm .and. hypm < p_bot)      
+       if (k_cnt > 0) then
+          k_top = max(plev - met_levels, 1)
+          do while ( met_rlx(k_top) /= 999._r8 )
+             k_top = k_top + 1
+             if ( k_top == pver ) then
+                call endrun ( 'set_met_rlx: cannot find ramped region ')
+             endif
+          enddo
+
+          met_rlx(1:k_top) = 0._r8
+
+          k_cnt = count( met_rlx == 999._r8 )
+
+          if (masterproc) then
+             write(iulog,*) 'top of model ramped region:'
+             write(iulog,fmt=996) 'k_cnt = ',k_cnt
+             write(iulog,fmt=996) 'k_top = ',k_top 
           endif
-       enddo
 
-       met_rlx(1:k_top) = 0._r8
-
-       k_cnt = count( met_rlx == 999._r8 )
-
-       if (masterproc) then
-          write(iulog,fmt=996) 'k_cnt = ',k_cnt
-          write(iulog,fmt=996) 'k_top = ',k_top 
+          do k = k_top,k_top+k_cnt
+             met_rlx(k) = met_max_rlxdt*real( k - k_top ) / real(k_cnt)
+          enddo
        endif
 
-       do k = k_top,k_top+k_cnt
-          met_rlx(k) = met_max_rlxdt*real( k - k_top ) / real(k_cnt)
-       enddo
+       ! ramp region at model bottom
+       k_cnt = count(p_bot_top < hypm .and. hypm < p_bot_bot)
+       if (k_cnt > 0) then
+          k_top = max(plev - met_levels, 1)
+          do while ( met_rlx(k_top) /= -999._r8 )
+             k_top = k_top + 1
+             if ( k_top == pver ) then
+                call endrun ( 'set_met_rlx: cannot find ramped region ')
+             endif
+          enddo
+          
+          if (masterproc) then
+             write(iulog,*) 'bottom of model ramped region:'
+             write(iulog,fmt=996) 'k_cnt = ',k_cnt
+             write(iulog,fmt=996) 'k_top = ',k_top 
+          endif
+          
+          do k = k_top,k_top+k_cnt-1
+             met_rlx(k) = met_max_rlxdt*(1._r8 - real( k - k_top +1) / real(k_cnt))
+          enddo
+       endif
+
     endif
 
     if (masterproc) then
@@ -1933,8 +2367,9 @@ contains
     endif
 
     if (masterproc) then
-       write(iulog,fmt=998) 'press levels = ',hypm
-       write(iulog,fmt=999) '     met_rlx = ',met_rlx
+      do k = max(plev - met_levels, 1), pver
+         write(iulog,fmt=991) 'press levels, met_rlx = ', k, hypm(k), met_rlx(k)
+      end do
     endif
 
     if ( any( (met_rlx > 1._r8) .or. (met_rlx < 0._r8) ) ) then

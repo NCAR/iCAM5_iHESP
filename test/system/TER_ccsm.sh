@@ -91,10 +91,9 @@ fi
 echo "TER_ccsm.sh: restarting CESM; output in ${CAM_TESTDIR}/${test_name}/test.log" 
 
 cd ${CAM_TESTDIR}/case.$1.$2
-./xmlchange -file env_run.xml -id STOP_N -val $restart_length -silent
-./xmlchange -file env_run.xml -id CONTINUE_RUN -val TRUE -silent
-runscript=`ls *.run`
-./$runscript > ${CAM_TESTDIR}/${test_name}/test.log 2>&1
+./xmlchange  STOP_N=$restart_length
+./xmlchange  CONTINUE_RUN=TRUE
+./case.submit --no-batch > ${CAM_TESTDIR}/${test_name}/test.log 2>&1
 rc=$?
 cd ${rundir}
 if [ $rc -eq 0 ] && grep -c "SUCCESSFUL TERMINATION" test.log > /dev/null; then

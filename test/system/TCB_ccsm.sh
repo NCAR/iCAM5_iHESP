@@ -60,11 +60,11 @@ if [[ -n "$CCSM_MPILIB" ]]; then
 else
     mpiopt=""
 fi
-echo "${CAM_ROOT}/scripts/create_newcase -case ${CAM_TESTDIR}/case.$1.$2 \
-    -res $1 -compset $compset -mach ${CCSM_MACH} ${mpiopt}"
+echo "${CAM_ROOT}/cime/scripts/create_newcase --case ${CAM_TESTDIR}/case.$1.$2 \
+    --res $1 --compset $compset  ${mpiopt} --run-unsupported "
 
-${CAM_ROOT}/scripts/create_newcase -case ${CAM_TESTDIR}/case.$1.$2 \
-    -res $1 -compset $compset -mach ${CCSM_MACH} ${mpiopt} >test.log 2>&1
+${CAM_ROOT}/cime/scripts/create_newcase --case ${CAM_TESTDIR}/case.$1.$2 \
+    --res $1 --compset $compset ${mpiopt} --run-unsupported  >test.log 2>&1
 rc=$?
 if [ $rc -eq 0 ]; then
     echo "TCB_ccsm.sh: create_newcase was successful" 
@@ -76,37 +76,37 @@ else
 fi
 
 cd ${CAM_TESTDIR}/case.$1.$2
-echo "./xmlchange -file env_build.xml -id EXEROOT -val ${CAM_TESTDIR}/case.$1.$2/bld -silent"
-./xmlchange -file env_build.xml -id EXEROOT -val ${CAM_TESTDIR}/case.$1.$2/bld -silent
+echo "./xmlchange EXEROOT=${CAM_TESTDIR}/case.$1.$2/bld"
+./xmlchange EXEROOT=${CAM_TESTDIR}/case.$1.$2/bld
 
-echo "./xmlchange -file env_run.xml -id RUNDIR -val ${CAM_TESTDIR}/case.$1.$2/run -silent"
-./xmlchange -file env_run.xml -id RUNDIR -val ${CAM_TESTDIR}/case.$1.$2/run -silent
+echo "./xmlchange RUNDIR=${CAM_TESTDIR}/case.$1.$2/run"
+./xmlchange RUNDIR=${CAM_TESTDIR}/case.$1.$2/run
 
 # chemistry preprocessor
 if [ $usrmech != $2 ]; then
    string1=`grep CAM_CONFIG_OPTS env_build.xml`
    string2=`echo $string1 | cut -d "=" -f 3`
    cfgstring=`echo $string2 | cut -d "\"" -f 2`
-   echo "./xmlchange -file env_build.xml -id CAM_CONFIG_OPTS -val ""$cfgstring -usr_mech_infile ${CAM_SCRIPTDIR}/config_files/$usrmech"" "
-   ./xmlchange -file env_build.xml -id CAM_CONFIG_OPTS -val "$cfgstring -usr_mech_infile ${CAM_SCRIPTDIR}/config_files/$usrmech" 
+   echo "./xmlchange CAM_CONFIG_OPTS=""$cfgstring -usr_mech_infile ${CAM_SCRIPTDIR}/config_files/$usrmech -build_chem_proc"" "
+   ./xmlchange CAM_CONFIG_OPTS="$cfgstring -usr_mech_infile ${CAM_SCRIPTDIR}/config_files/$usrmech -build_chem_proc" 
 fi
 
 #
 # Override CESM pe layout.
 #
 
-for comp in ATM LND ICE OCN CPL GLC ROF WAV; do
-    echo "./xmlchange -file env_mach_pes.xml -id NTASKS_${comp} -val $CAM_TASKS"
-    ./xmlchange -file env_mach_pes.xml -id NTASKS_${comp} -val $CAM_TASKS
+for comp in ATM LND ICE OCN CPL GLC ROF WAV ESP; do
+    echo "./xmlchange NTASKS_${comp}=$CAM_TASKS"
+    ./xmlchange NTASKS_${comp}=$CAM_TASKS
 #    echo "./xmlchange DEBUG=TRUE"
 #    ./xmlchange DEBUG=TRUE
-    echo "./xmlchange -file env_mach_pes.xml -id NTHRDS_${comp} -val $CAM_THREADS"
-    ./xmlchange -file env_mach_pes.xml -id NTHRDS_${comp} -val $CAM_THREADS
+    echo "./xmlchange NTHRDS_${comp}=$CAM_THREADS"
+    ./xmlchange NTHRDS_${comp}=$CAM_THREADS
 done
 
 
-echo "./cesm_setup"
-./cesm_setup >> ${CAM_TESTDIR}/${test_name}/test.log 2>&1
+echo "./case.setup"
+./case.setup >> ${CAM_TESTDIR}/${test_name}/test.log 2>&1
 rc=$?
 if [ $rc -eq 0 ]; then
     echo "TCB_ccsm.sh: CESM configure was successful" 

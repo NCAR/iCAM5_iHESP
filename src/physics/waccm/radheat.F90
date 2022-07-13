@@ -20,7 +20,7 @@ module radheat
   use spmd_utils,    only: masterproc
   use ppgrid,        only: pcols, pver
   use physics_types, only: physics_state, physics_ptend, physics_ptend_init
-  use physconst,     only: gravit, cpair, cpairv
+  use physconst,     only: gravit, cpairv
   use perf_mod
   use cam_logfile,   only: iulog
 
@@ -41,7 +41,8 @@ module radheat
   logical :: nlte_use_mo = .true. ! Determines which constituents are used from NLTE calculations
                                   !  = .true. uses prognostic constituents
                                   !  = .false. uses constituents from prescribed dataset waccm_forcing_file
-
+  logical :: nlte_limit_co2 = .false. ! if true apply upper limit to co2 in the Formichev scheme 
+  
 ! Private variables for merging heating rates
   real(r8):: qrs_wt(pver)             ! merge weight for cam solar heating
   real(r8):: qrl_wt(pver)             ! merge weight for cam long wave heating
@@ -75,8 +76,8 @@ contains
 
     use namelist_utils,  only: find_group_name
     use units,           only: getunit, freeunit
-    use mpishorthand
     use cam_abortutils,  only: endrun
+    use spmd_utils,     only : mpicom, masterprocid, mpi_logical
 
     use waccm_forcing,   only: waccm_forcing_readnl
 
@@ -86,7 +87,7 @@ contains
     integer :: unitn, ierr
     character(len=*), parameter :: subname = 'radheat_readnl'
 
-    namelist /radheat_nl/ nlte_use_mo
+    namelist /radheat_nl/ nlte_use_mo, nlte_limit_co2
 
     if (masterproc) then
        unitn = getunit()
@@ -103,9 +104,8 @@ contains
 
     end if
 
-#ifdef SPMD
-    call mpibcast (nlte_use_mo,   1,                      mpilog,  0, mpicom)
-#endif
+    call mpi_bcast (nlte_use_mo,    1, mpi_logical, masterprocid, mpicom, ierr)
+    call mpi_bcast (nlte_limit_co2, 1, mpi_logical, masterprocid, mpicom, ierr)
 
     ! Have waccm_forcing read its namelist as well.
     call waccm_forcing_readnl(nlfile)
@@ -116,15 +116,13 @@ contains
 
   subroutine radheat_init(pref_mid)
 
-    use pmgrid,           only: plev
     use nlte_lw,          only: nlte_init
-    use cam_history,      only: add_default, addfld, phys_decomp
-    use physics_buffer,   only: physics_buffer_desc
+    use cam_history,      only: add_default, addfld
     use phys_control,     only: phys_getopts
 
     ! args
 
-    real(r8),          intent(in) :: pref_mid(plev) ! mid point reference pressure
+    real(r8),          intent(in) :: pref_mid(pver) ! mid point reference pressure
 
     ! local vars
 
@@ -133,13 +131,15 @@ contains
     logical :: camrt
 
     character(len=16) :: rad_pkg
+    logical :: history_scwaccm_forcing
     logical :: history_waccm
 
 !-----------------------------------------------------------------------
 
 
     call phys_getopts(radiation_scheme_out=rad_pkg, &
-         history_waccm_out=history_waccm)
+                      history_waccm_out=history_waccm, &
+                      history_scwaccm_forcing_out=history_scwaccm_forcing)
     camrt = rad_pkg == 'CAMRT' .or. rad_pkg == 'camrt'
 
     ! set max/min pressures for merging regions.
@@ -219,23 +219,27 @@ contains
     end if
 
     if (waccm_heating) then
-       call nlte_init(pref_mid, nlte_use_mo)
+       call nlte_init(pref_mid, nlte_use_mo, nlte_limit_co2)
     endif
 
 ! Add history variables to master field list
-    call addfld ('QRL_TOT  ','K/s     ',plev, 'A','Merged LW heating: QRL+QRLNLTE',phys_decomp)
-    call addfld ('QRS_TOT  ','K/s     ',plev, 'A','Merged SW heating: QRS+QCP+QRS_EUV+QRS_CO2NIR+QRS_AUR+QTHERMAL',phys_decomp)
+    call addfld ('QRL_TOT',(/ 'lev' /), 'A','K/s','Merged LW heating: QRL+QRLNLTE')
+    call addfld ('QRS_TOT',(/ 'lev' /), 'A','K/s','Merged SW heating: QRS+QCP+QRS_EUV+QRS_CO2NIR+QRS_AUR+QTHERMAL')
 
-    call addfld ('QRS_TOT_24_COS','K/s  ',plev, 'A','SW heating 24hr. cos coeff.',phys_decomp)
-    call addfld ('QRS_TOT_24_SIN','K/s  ',plev, 'A','SW heating 24hr. sin coeff.',phys_decomp)
-    call addfld ('QRS_TOT_12_COS','K/s  ',plev, 'A','SW heating 12hr. cos coeff.',phys_decomp)
-    call addfld ('QRS_TOT_12_SIN','K/s  ',plev, 'A','SW heating 12hr. sin coeff.',phys_decomp)
+    call addfld ('QRS_TOT_24_COS',(/ 'lev' /), 'A','K/s','SW heating 24hr. cos coeff.')
+    call addfld ('QRS_TOT_24_SIN',(/ 'lev' /), 'A','K/s','SW heating 24hr. sin coeff.')
+    call addfld ('QRS_TOT_12_COS',(/ 'lev' /), 'A','K/s','SW heating 12hr. cos coeff.')
+    call addfld ('QRS_TOT_12_SIN',(/ 'lev' /), 'A','K/s','SW heating 12hr. sin coeff.')
+    call addfld ('QRS_TOT_08_COS',(/ 'lev' /), 'A','K/s','SW heating  8hr. cos coeff.')
+    call addfld ('QRS_TOT_08_SIN',(/ 'lev' /), 'A','K/s','SW heating  8hr. sin coeff.')
 
 ! Add default history variables to files
     if (history_waccm) then
        call add_default ('QRL_TOT', 1, ' ')
        call add_default ('QRS_TOT', 1, ' ')
-       call add_default ('QRS_TOT', 2, ' ')
+    end if
+    if (history_scwaccm_forcing) then
+       call add_default ('QRS_TOT', 8, ' ')
     end if
 
   end subroutine radheat_init
@@ -302,7 +306,7 @@ contains
     real(r8) :: qrs_mrg(pcols,pver)                 ! merged SW heating
     real(r8) :: qrs_mlt(pcols,pver)                 ! M/LT solar heating rates
     real(r8) :: qout(pcols,pver)                    ! temp for outfld call
-    real(r8) :: dcoef(4)                            ! for tidal component of heating
+    real(r8) :: dcoef(6)                            ! for tidal component of heating
 
 !-----------------------------------------------------------------------
 
@@ -335,6 +339,8 @@ contains
     call outfld( 'QRS_TOT_24_COS', qout(:ncol,:)*dcoef(2), ncol, lchnk )
     call outfld( 'QRS_TOT_12_SIN', qout(:ncol,:)*dcoef(3), ncol, lchnk )
     call outfld( 'QRS_TOT_12_COS', qout(:ncol,:)*dcoef(4), ncol, lchnk )
+    call outfld( 'QRS_TOT_08_SIN', qout(:ncol,:)*dcoef(5), ncol, lchnk )
+    call outfld( 'QRS_TOT_08_COS', qout(:ncol,:)*dcoef(6), ncol, lchnk )
 
     if (waccm_heating.and.waccm_heating_on) then
        call t_startf( 'nltedrv' )

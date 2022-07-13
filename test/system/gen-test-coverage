@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 # Execute this script in the directory containing the test-driver scripts
-# (~models/atm/cam/test/system) to generate an HTML table
+# (~components/cam/test/system) to generate an HTML table
 # (test_coverage.html) containing all the tests in the master list, and
 # indicate in which of the pretag lists the test is done.
 

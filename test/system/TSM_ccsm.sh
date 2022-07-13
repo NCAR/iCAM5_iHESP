@@ -88,14 +88,17 @@ else
   cp ${CAM_SCRIPTDIR}/nl_files/outfrq24h ./user_nl_cam
 fi
 
-./xmlchange -file env_run.xml -id STOP_N -val $run_length -silent
-./xmlchange -file env_run.xml -id STOP_OPTION -val $stop_option -silent
-./xmlchange -file env_run.xml -id DOUT_S -val FALSE -silent
-runscript=`ls *.run` 
-./$runscript > ${CAM_TESTDIR}/${test_name}/test.log 2>&1
+./xmlchange  STOP_N=$run_length
+./xmlchange  STOP_OPTION=$stop_option
+./xmlchange  DOUT_S=FALSE
+CIMEROOT=${CAM_ROOT}/cime ./case.submit --no-batch > ${CAM_TESTDIR}/${test_name}/test.log 2>&1
 rc=$?
 cd ${rundir}
-log_file=`ls -t ${CAM_TESTDIR}/case.$1.$2/logs/atm.log* | head -n1`
+if [ -e ${CAM_TESTDIR}/case.$1.$2/logs/atm.log* ]; then
+   log_file=`ls -t ${CAM_TESTDIR}/case.$1.$2/logs/atm.log* | head -n1`
+else
+   log_file=`ls -t ${CAM_TESTDIR}/case.$1.$2/run/atm.log* | head -n1`
+fi
 echo 'log_file:' $log_file
 if [ $rc -eq 0 ] && zgrep -c "END OF MODEL RUN" $log_file > /dev/null; then
     echo "TSM_ccsm.sh: CESM smoke test passed" 

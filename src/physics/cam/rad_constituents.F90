@@ -15,15 +15,15 @@ use spmd_utils,     only: masterproc
 use ppgrid,         only: pcols, pver
 use physconst,      only: rga
 use physics_types,  only: physics_state
-use constituents,   only: cnst_name, cnst_get_ind
-use radconstants,   only: gasnamelength, nradgas, rad_gas_index, ot_length
+use phys_control,   only: use_simple_phys
+use constituents,   only: cnst_get_ind
+use radconstants,   only: nradgas, rad_gas_index, ot_length
 use phys_prop,      only: physprop_accum_unique_files, physprop_init, &
-                          physprop_get_id, physprop_get
-use cam_history,    only: addfld, fieldname_len, phys_decomp, outfld
+                          physprop_get_id
+use cam_history,    only: addfld, fieldname_len, outfld, horiz_only
 use physics_buffer, only: physics_buffer_desc, pbuf_get_field, pbuf_get_index
 
 
-use error_messages, only: alloc_err   
 use cam_abortutils, only: endrun
 use cam_logfile,    only: iulog
 
@@ -49,6 +49,8 @@ public :: &
    rad_cnst_out,                &! output constituent diagnostics (mass per layer and column burden)
    rad_cnst_get_call_list        ! return list of active climate/diagnostic calls to radiation
 
+public :: rad_cnst_num_name
+
 integer, parameter :: cs1 = 256
 integer, public, parameter :: N_DIAG = 10
 character(len=cs1), public :: iceopticsfile, liqopticsfile
@@ -58,7 +60,7 @@ logical,            public :: oldcldoptics = .false.
 ! Private module data
 
 ! max number of strings in mode definitions
-integer, parameter :: n_mode_str = 60
+integer, parameter :: n_mode_str = 120
 
 ! max number of externally mixed entities in the climate/diag lists
 integer, parameter :: n_rad_cnst = N_RAD_CNST
@@ -255,6 +257,8 @@ subroutine rad_cnst_readnl(nlfile)
 
    !-----------------------------------------------------------------------------
 
+   if (use_simple_phys) return
+
    if (masterproc) then
       unitn = getunit()
       open( unitn, file=trim(nlfile), status='old' )
@@ -394,7 +398,6 @@ subroutine rad_cnst_init()
    !    physprop module.
 
    integer :: i
-   integer :: num_aerosols
    logical, parameter :: stricttest = .true.
    character(len=*), parameter :: subname = 'rad_cnst_init'
    !-----------------------------------------------------------------------------
@@ -486,6 +489,58 @@ subroutine rad_cnst_get_gas(list_idx, gasname, state, pbuf, mmr)
    end select
 
 end subroutine rad_cnst_get_gas
+
+!================================================================================================
+
+function rad_cnst_num_name(list_idx, spc_name_in, num_name_out, mode_out, spec_out ) result(found)
+
+  ! for a given species name spc_name_in return (optionals):
+  !   num_name_out -- corresponding number density species name
+  !   mode_out -- corresponding mode number
+  !   spec_out -- corresponding species number within the mode
+
+  integer,         intent(in) :: list_idx ! index of the climate or a diagnostic list
+  character(len=*),intent(in) :: spc_name_in
+  character(len=*),intent(out):: num_name_out
+  integer,optional,intent(out):: mode_out
+  integer,optional,intent(out):: spec_out
+
+  logical :: found
+
+  ! Local variables
+  type(modelist_t), pointer :: m_list ! local pointer to mode list of interest
+  integer :: n,m, mm
+  integer :: nmodes
+  integer :: nspecs
+  character(len= 32) :: spec_name
+
+  found = .false.
+  
+  m_list => ma_list(list_idx)
+  nmodes = m_list%nmodes
+  
+  do n = 1,nmodes
+     mm = m_list%idx(n)
+     nspecs = modes%comps(mm)%nspec
+     do m = 1,nspecs
+        spec_name = modes%comps(mm)%camname_mmr_a(m)
+        if (spc_name_in == spec_name) then
+           num_name_out = modes%comps(mm)%camname_num_a
+           found = .true.
+           if (present(mode_out)) then
+              mode_out = n
+           endif
+           if (present(spec_out)) then
+              spec_out = m
+           endif
+           return
+        endif
+     enddo
+  enddo
+
+  return
+
+end function
 
 !================================================================================================
 
@@ -1070,8 +1125,8 @@ subroutine list_init1(namelist, gaslist, aerlist, ma_list)
 
 
    ! Local variables
-   integer :: ii, idx, m, naero, nmodes
-   integer :: igas, ifileindex, ba_idx, ma_idx
+   integer :: ii, m, naero, nmodes
+   integer :: igas, ba_idx, ma_idx
    integer :: istat
    character(len=*), parameter :: routine = 'list_init1'
    !-----------------------------------------------------------------------------
@@ -1257,12 +1312,12 @@ subroutine rad_gas_diag_init(glist)
       name = 'm_' // trim(glist%gas(i)%camname) // trim(suffix)
       glist%gas(i)%mass_name = name
       long_name = trim(glist%gas(i)%camname)//' mass per layer'//long_name_description
-      call addfld(trim(name), 'kg/m^2', pver, 'A', trim(long_name), phys_decomp)
+      call addfld(trim(name), (/ 'lev' /), 'A', 'kg/m^2', trim(long_name))
 
       ! construct names for column burden diagnostics
       name = 'cb_' // trim(glist%gas(i)%camname) // trim(suffix)
       long_name = trim(glist%gas(i)%camname)//' column burden'//long_name_description
-      call addfld(trim(name), 'kg/m^2', 1, 'A', trim(long_name), phys_decomp)
+      call addfld(trim(name), horiz_only, 'A', 'kg/m^2', trim(long_name))
 
       ! error check for name length
       if (len_trim(name) > fieldname_len) then
@@ -1309,12 +1364,12 @@ subroutine rad_aer_diag_init(alist)
       name = 'm_' // trim(alist%aer(i)%camname) // trim(suffix)
       alist%aer(i)%mass_name = name
       long_name = trim(alist%aer(i)%camname)//' mass per layer'//long_name_description
-      call addfld(trim(name), 'kg/m^2', pver, 'A', trim(long_name), phys_decomp)
+      call addfld(trim(name), (/ 'lev' /), 'A', 'kg/m^2', trim(long_name))
 
       ! construct names for column burden diagnostic fields
       name = 'cb_' // trim(alist%aer(i)%camname) // trim(suffix)
       long_name = trim(alist%aer(i)%camname)//' column burden'//long_name_description
-      call addfld(trim(name), 'kg/m^2', 1, 'A', trim(long_name), phys_decomp)
+      call addfld(trim(name), horiz_only, 'A', 'kg/m^2', trim(long_name))
 
       ! error check for name length
       if (len_trim(name) > fieldname_len) then
@@ -1377,12 +1432,12 @@ subroutine parse_mode_defs(nl_in, modes)
    type(modes_t),    intent(inout) :: modes       ! structure containing parsed input
 
    ! Local variables
-   integer :: i, m
+   integer :: m
    integer :: istat
-   integer :: nmodes, nstr, istr
+   integer :: nmodes, nstr
    integer :: mbeg, mcur
    integer :: nspec, ispec
-   integer :: strlen, ibeg, iend, ipos
+   integer :: strlen, iend, ipos
    logical :: num_mr_found
    character(len=*), parameter :: routine = 'parse_mode_defs'
    character(len=len(nl_in(1))) :: tmpstr

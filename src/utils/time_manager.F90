@@ -1,124 +1,83 @@
-
 module time_manager
 
-   use shr_kind_mod,     only: r8 => shr_kind_r8, SHR_KIND_CS
-   use shr_cal_mod,      only: shr_cal_noleap, shr_cal_gregorian
-   use spmd_utils,       only: masterproc
-   use ESMF
-   use string_utils,     only: to_upper
-   use dycore,           only: dycore_is
-   use cam_abortutils,   only: endrun
-   use cam_logfile,      only: iulog
-#ifdef SPMD
-   use mpishorthand,     only: mpicom, mpiint, mpilog, mpichar
-#endif
-   use pio,              only : file_desc_t, var_desc_t, &
-                                pio_char, pio_int, pio_global, &
-                                pio_put_att, pio_def_var, pio_def_dim, &
-                                pio_inq_varid, pio_put_var, pio_get_var
+! Provide CAM specific time management.  This is a wrapper layer for the ESMF
+! time manager utility.
 
-   implicit none
-   private
+use ESMF
+
+use shr_kind_mod,     only: r8 => shr_kind_r8, SHR_KIND_CS
+use shr_cal_mod,      only: shr_cal_noleap, shr_cal_gregorian
+use spmd_utils,       only: masterproc
+use string_utils,     only: to_upper
+use cam_abortutils,   only: endrun
+use cam_logfile,      only: iulog
+
+implicit none
+private
+save
 
 ! Public methods
 
-   public ::&
-      timemgr_init,             &! time manager initialization
-      advance_timestep,         &! increment timestep number
-      get_step_size,            &! return step size in seconds
-      get_nstep,                &! return timestep number
-      get_curr_date,            &! return date components at end of current timestep
-      get_prev_date,            &! return date components at beginning of current timestep
-      get_start_date,           &! return components of the start date
-      get_ref_date,             &! return components of the reference date
-      get_perp_date,            &! return components of the perpetual date, and current time of day
-      get_curr_time,            &! return components of elapsed time since reference date at end of current timestep
-      get_prev_time,            &! return components of elapsed time since reference date at beg of current timestep
-      get_curr_calday,          &! return calendar day at end of current timestep
-      get_calday,               &! return calendar day from input date
-      is_first_step,            &! return true on first step of initial run
-      is_first_restart_step,    &! return true on first step of restart or branch run
-      timemgr_is_caltype,       &! return true if incoming calendar type string matches actual calendar type in use
-      timemgr_get_calendar_cf,  &! return cf standard for calendar type
-      is_end_curr_day,          &! return true on last timestep in current day
-      is_end_curr_month,        &! return true on last timestep in current month
-      is_last_step,             &! return true on last timestep
-      is_perpetual,             &! return true if perpetual calendar is in use
-      timemgr_init_restart,     &! initialize the pio(netcdf) restart file for writting
-      timemgr_write_restart,    &! write info to file needed to restart the time manager
-      timemgr_read_restart,     &! read info from file needed to restart the time manager
-      timemgr_restart,          &! restart the time manager
-      timemgr_check_restart,    &! check that restart agrees with input clock info
-      timemgr_datediff,         &! calculate difference between two time instants
-      timemgr_time_ge,          &! check if time2 is later than or equal to time1
-      timemgr_time_inc,         &! increment time instant by a given interval
-      timemgr_set_date_time,    &! set the current date and time
-      set_time_float_from_date, &! returns a float representation of time given  yr, mon, day, sec
-      set_date_from_time_float   ! returns yr, mon, day, sec given time float
+public ::&
+   timemgr_init,             &! time manager initialization
+   advance_timestep,         &! increment the clocks current time
+   get_step_size,            &! return step size in seconds
+   get_nstep,                &! return timestep number
+   get_curr_date,            &! return date components at end of current timestep
+   get_prev_date,            &! return date components at beginning of current timestep
+   get_start_date,           &! return components of the start date
+   get_ref_date,             &! return components of the reference date
+   get_perp_date,            &! return components of the perpetual date, and current time of day
+   get_curr_time,            &! return components of elapsed time since reference date at end of current timestep
+   get_prev_time,            &! return components of elapsed time since reference date at beg of current timestep
+   get_curr_calday,          &! return calendar day at end of current timestep
+   get_calday,               &! return calendar day from input date
+   is_first_step,            &! return true on first step of initial run
+   is_first_restart_step,    &! return true on first step of restart or branch run
+   timemgr_is_caltype,       &! return true if incoming calendar type string matches actual calendar type in use
+   timemgr_get_calendar_cf,  &! return cf standard for calendar type
+   is_end_curr_day,          &! return true on last timestep in current day
+   is_end_curr_month,        &! return true on last timestep in current month
+   is_last_step,             &! return true on last timestep
+   is_perpetual,             &! return true if perpetual calendar is in use
+   timemgr_datediff,         &! calculate difference between two time instants
+   timemgr_time_ge,          &! check if time2 is later than or equal to time1
+   timemgr_time_inc,         &! increment time instant by a given interval
+   timemgr_set_date_time,    &! set the current date and time
+   set_time_float_from_date, &! returns a float representation of time given  yr, mon, day, sec
+   set_date_from_time_float   ! returns yr, mon, day, sec given time float
 
-! interfaces
-
-
-! Public data for namelist input
-
-   integer, parameter :: uninit_int = -999999999
-   integer, public ::&
-      dtime         = uninit_int ! timestep in seconds
 
 ! Private module data
 
-   ! The save attribute in the following declarations are there to make the xlf90 (v8.1.1.6)
-   ! compiler happy.  It shouldn't be there since this module has a global save.
+integer, parameter :: uninit_int = -999999999
 
-   type(ESMF_Calendar), target, save :: tm_cal        ! calendar
-   type(ESMF_Clock),    save :: tm_clock      ! Model clock   
-   type(ESMF_Time),     save :: tm_perp_date  ! perpetual date
+integer :: dtime = uninit_int               ! timestep in seconds
 
-   integer ::&                      ! Data required to restart time manager:
-      rst_nstep     = uninit_int,  &! current step number
-      rst_step_days = uninit_int,  &! days component of timestep size
-      rst_step_sec  = uninit_int,  &! timestep size seconds
-      rst_start_ymd = uninit_int,  &! start date
-      rst_start_tod = uninit_int,  &! start time of day
-      rst_stop_ymd  = uninit_int,  &! stop date
-      rst_stop_tod  = uninit_int,  &! stop time of day
-      rst_ref_ymd   = uninit_int,  &! reference date
-      rst_ref_tod   = uninit_int,  &! reference time of day
-      rst_curr_ymd  = uninit_int,  &! current date
-      rst_curr_tod  = uninit_int,  &! current time of day
-      rst_perp_ymd  = uninit_int    ! perpetual date
-   character(len=32) :: rst_calendar  ! Calendar
-   logical ::&
-      rst_perp_cal  = .false.         ! true when using perpetual calendar
+character(len=32) :: calendar               ! Calendar type
+logical :: tm_first_restart_step = .false.  ! true for first step of a restart or branch run
+logical :: tm_perp_calendar = .false.       ! true when using perpetual calendar
+integer :: cal_type = uninit_int            ! calendar type
 
-   character(len=32) :: calendar               ! Calendar type
-   logical :: tm_first_restart_step = .false.  ! true for first step of a restart or branch run
-   logical :: tm_perp_calendar = .false.       ! true when using perpetual calendar
-   integer :: cal_type = uninit_int            ! calendar type
-
-   integer, parameter :: varcnt=14
-   type var_id
-      type(Var_desc_t) :: vardesc
-      character(len=18) :: name
-   end type var_id
-   type(var_id), target :: timevars(varcnt)
-
-
-
+! The target attribute for tm_cal is needed (at least by NAG) because there are
+! pointers to this object inside ESMF_Time objects.
+type(ESMF_Calendar), target :: tm_cal        ! calendar
+type(ESMF_Clock)            :: tm_clock      ! Model clock   
+type(ESMF_Time)             :: tm_perp_date  ! perpetual date
 
 !=========================================================================================
 contains
 !=========================================================================================
 
-subroutine timemgr_init( calendar_in, start_ymd, start_tod, ref_ymd, &
-                         ref_tod, stop_ymd, stop_tod,                &
-                         perpetual_run, perpetual_ymd )
+subroutine timemgr_init( &
+   dtime_in, calendar_in, start_ymd, start_tod, ref_ymd, &
+   ref_tod, stop_ymd, stop_tod, curr_ymd, curr_tod,      &
+   perpetual_run, perpetual_ymd, initial_run)
 
-! Initialize the ESMF time manager.
-!
-! NOTE - Assumptions:
-!      1) The namelist variables have been set before this routine is called.  (set in control/parse_namelist.F90)
-! Arguments
+   ! Initialize the time manager.
+
+   ! Arguments
+   integer,          intent(in) :: dtime_in       ! Coupling period (sec)
    character(len=*), intent(IN) :: calendar_in    ! Calendar type
    integer,          intent(IN) :: start_ymd      ! Start date (YYYYMMDD)
    integer,          intent(IN) :: start_tod      ! Start time of day (sec)
@@ -126,51 +85,60 @@ subroutine timemgr_init( calendar_in, start_ymd, start_tod, ref_ymd, &
    integer,          intent(IN) :: ref_tod        ! Reference time of day (sec)
    integer,          intent(IN) :: stop_ymd       ! Stop date (YYYYMMDD)
    integer,          intent(IN) :: stop_tod       ! Stop time of day (sec)
+   integer,          intent(IN) :: curr_ymd       ! current date (YYYYMMDD)
+   integer,          intent(IN) :: curr_tod       ! current time of day (sec)
    logical,          intent(IN) :: perpetual_run  ! If in perpetual mode or not
    integer,          intent(IN) :: perpetual_ymd  ! Perpetual date (YYYYMMDD)
+   logical,          intent(in) :: initial_run    ! true => initial (or startup) run
 
-! Local variables
+   ! Local variables
    character(len=*), parameter :: sub = 'timemgr_init'
    integer :: rc                            ! return code
    type(ESMF_Time) :: start_date            ! start date for run
    type(ESMF_Time) :: stop_date             ! stop date for run
    type(ESMF_Time) :: curr_date             ! temporary date used in logic
    type(ESMF_Time) :: ref_date              ! reference date for time coordinate
-!----------------------------------------------------------------------------------------
+   !----------------------------------------------------------------------------------------
 
-! Initalize calendar type.
+   dtime = dtime_in
 
    calendar = trim(calendar_in)
-
    call init_calendar()
 
-! Initalize start date.
+   ! create ESMF time instant objects
+   start_date = TimeSetymd(start_ymd, start_tod, "start_date")
+   stop_date  = TimeSetymd(stop_ymd, stop_tod, "stop_date")
+   ref_date   = TimeSetymd(ref_ymd, ref_tod, "ref_date")
+   curr_date  = TimeSetymd(curr_ymd, curr_tod, "curr_date")
 
-   start_date = TimeSetymd( start_ymd, start_tod, "start_date" )
-
-! Initalize stop date.
-
-   stop_date = TimeSetymd( stop_ymd, stop_tod, "stop_date" )
-
-! Initalize reference date for time coordinate.
-
-   ref_date = TimeSetymd( ref_ymd, ref_tod, "ref_date" )
-
-   curr_date = start_date
-
-! Initialize clock and stop date
-
-   call initialize_clock( start_date, ref_date, curr_date, stop_date )
-
-! Initialize date used for perpetual calendar day calculation.
-
-   if ( perpetual_run ) then
-      tm_perp_calendar = .true.
-      tm_perp_date = TimeSetymd( perpetual_ymd, 0, "tm_perp_date" )
+   ! In order that an initial run start with nstep=0 (which is the criteria
+   ! for the is_first_step() function to return true), the current time
+   ! must be the same as the start time.  To allow the driver to be doing a
+   ! continue run and at the same time force CAM into an initial run mode
+   ! this code forces the start time to equal the current time, even though
+   ! that may not be true for the data received from the driver.
+   if (initial_run) then
+      start_date = curr_date
    end if
 
-! Print configuration summary to log file (stdout).
+   ! Initialize ESMF clock
+   call initialize_clock(start_date, ref_date, curr_date, stop_date)
 
+   if (.not. initial_run) then
+
+      ! Advance the timestep.  Data from the restart file corresponds to the
+      ! last timestep of the previous run.
+      call advance_timestep()
+      tm_first_restart_step = .true.
+   end if
+
+   ! Initialize date used for perpetual calendar day calculation.
+   if (perpetual_run) then
+      tm_perp_calendar = .true.
+      tm_perp_date = TimeSetymd(perpetual_ymd, 0, "tm_perp_date")
+   end if
+
+   ! Print configuration summary to log file (stdout).
    if (masterproc) then
       call timemgr_print()
    end if
@@ -180,17 +148,17 @@ end subroutine timemgr_init
 !=========================================================================================
 
 subroutine initialize_clock( start_date, ref_date, curr_date, stop_date )
-!
-! Purpose: Initialize the clock based on the start_date, ref_date, and curr_date
-! as well as the settings from the namelist specifying the time to stop
-!
-! Input variables
+
+! Create an ESMF clock based on the stepsize, start_date, stop_date, and ref_date
+! Then advance the clock to the curr_date.
+
+   ! Input variables
    type(ESMF_Time), intent(inout) :: start_date  ! start date for run
    type(ESMF_Time), intent(inout) :: ref_date    ! reference date for time coordinate
    type(ESMF_Time), intent(inout) :: curr_date   ! current date (equal to start_date)
    type(ESMF_Time), intent(inout) :: stop_date   ! stop date for run
 
-! Local variables
+   ! Local variables
    character(len=*), parameter :: sub = 'initialize_clock'
    type(ESMF_TimeInterval) :: step_size       ! timestep size
    type(ESMF_Time) :: current     ! current date (from clock)
@@ -198,12 +166,13 @@ subroutine initialize_clock( start_date, ref_date, curr_date, stop_date )
    integer :: rc                  ! return code
 
    if ( mod(86400,dtime) /= 0 ) then
-!!!!      call endrun (sub//': timestep must divide evenly into 1 day')
+      call endrun (sub//': timestep must divide evenly into 1 day')
    end if
 
-   call ESMF_TimeIntervalSet( step_size, s=dtime, rc=rc )
+   call ESMF_TimeIntervalSet(step_size, s=dtime, rc=rc)
    call chkrc(rc, sub//': error return from ESMF_TimeIntervalSet: setting step_size')
 
+   ! check for valid input
    if ( stop_date <= start_date ) then
       write(iulog,*)sub, ': stop date must be specified later than start date: '
       call ESMF_TimeGet( start_date, yy=yr, mm=mon, dd=day, s=tod )
@@ -221,14 +190,12 @@ subroutine initialize_clock( start_date, ref_date, curr_date, stop_date )
       call endrun
    end if
 
-! Initialize the clock
-
+   ! Initialize the clock
    tm_clock = ESMF_ClockCreate(name="CAM Time-manager clock", timeStep=step_size, startTime=start_date, &
                                stopTime=stop_date, refTime=ref_date, rc=rc)
    call chkrc(rc, sub//': error return from ESMF_ClockSetup')
 
-! Advance clock to the current time (in case of a restart)
-
+   ! Advance clock to the current time (in case of a branch or restart)
    call ESMF_ClockGet(tm_clock, currTime=current, rc=rc )
    call chkrc(rc, sub//': error return from ESMF_ClockGet')
    do while( curr_date > current )
@@ -237,6 +204,7 @@ subroutine initialize_clock( start_date, ref_date, curr_date, stop_date )
       call ESMF_ClockGet(tm_clock, currTime=current )
       call chkrc(rc, sub//': error return from ESMF_ClockGet')
    end do
+
 end subroutine initialize_clock
 
 !=========================================================================================
@@ -409,149 +377,6 @@ end subroutine timemgr_set_date_time
 
 !=========================================================================================
 
-subroutine timemgr_restart( stop_ymd, stop_tod )
-
-! Restart the ESMF time manager.
-!
-! NOTE - Assumptions:
-!      1) Restart data have been read on the master process before this routine is called.
-!         (timemgr_read_restart called from control/restart.F90::cam_read_restart)
-!      2) Stopping time has been set and input to this routine.
-! Arguments
-   integer,          intent(IN) :: stop_ymd       ! Stop date (YYYYMMDD)
-   integer,          intent(IN) :: stop_tod       ! Stop time of day (sec)
-
-! Local variables
-   character(len=*), parameter :: sub = 'timemgr_restart'
-   integer :: rc                  ! return code
-   type(ESMF_Time) :: start_date  ! start date for run
-   type(ESMF_Time) :: stop_date   ! stop date for run
-   type(ESMF_Time) :: ref_date    ! reference date
-   type(ESMF_Time) :: curr_date   ! date of data in restart file
-!-----------------------------------------------------------------------------------------
-
-#if ( defined SPMD ) 
-   call mpibcast(rst_calendar,  len(rst_calendar), mpichar, 0, mpicom)
-   call mpibcast(rst_step_sec,  1, mpiint, 0, mpicom)
-   call mpibcast(rst_start_ymd, 1, mpiint, 0, mpicom)
-   call mpibcast(rst_start_tod, 1, mpiint, 0, mpicom)
-   call mpibcast(rst_stop_ymd,  1, mpiint, 0, mpicom)
-   call mpibcast(rst_stop_tod,  1, mpiint, 0, mpicom)
-   call mpibcast(rst_ref_ymd,   1, mpiint, 0, mpicom)
-   call mpibcast(rst_ref_tod,   1, mpiint, 0, mpicom)
-   call mpibcast(rst_curr_ymd,  1, mpiint, 0, mpicom)
-   call mpibcast(rst_curr_tod,  1, mpiint, 0, mpicom)
-   call mpibcast(rst_perp_ymd,  1, mpiint, 0, mpicom)
-   call mpibcast(rst_perp_cal,  1, mpilog, 0, mpicom)
-#endif
-
-  calendar = trim(rst_calendar)
-
-! Initialize calendar type.
-
-   call init_calendar( )
-
-! Initialize the timestep.
-
-   dtime = rst_step_sec
-
-! Initialize start date.
-
-   start_date = TimeSetymd( rst_start_ymd, rst_start_tod, "start_date" )
-
-! Initialize stop date.
-
-   stop_date = TimeSetymd( stop_ymd, stop_tod, "stop_date" )
-
-! Initialize current date.
-
-   curr_date = TimeSetymd( rst_curr_ymd, rst_curr_tod, "curr_date" )
-
-! Initialize ref date.
-
-   ref_date = TimeSetymd( rst_ref_ymd, rst_ref_tod, "ref_date" )
-
-! Initialize clock and the stop date
-
-
-   call initialize_clock( start_date, ref_date, curr_date, stop_date )
-
-! Advance the timestep.  Data from the restart file corresponds to the
-! last timestep of the previous run.
-
-   call advance_timestep()
-
-!  Set flag that this is the first timestep of the restart run.
-
-   tm_first_restart_step = .true.
-
-! Initialize date used for perpetual calendar day calculation.
-
-   if ( rst_perp_cal ) then
-      tm_perp_date = TimeSetymd( rst_perp_ymd, 0, "tm_perp_date" )
-      tm_perp_calendar = .true.
-   end if
-
-! Print configuration summary to log file (stdout).
-
-   if (masterproc) then
-      call timemgr_print()
-   end if
-
-end subroutine timemgr_restart
-
-!=========================================================================================
-
-subroutine timemgr_check_restart( calendar_in, start_ymd, start_tod, ref_ymd, &
-                                  ref_tod, dtime_in, perpetual_run, perpetual_ymd )
-
-! Check that time-manager restart agrees with input clock information primitives.
-!
-! Arguments
-   character(len=*), intent(IN) :: calendar_in    ! Calendar type
-   integer,          intent(IN) :: start_ymd      ! Start date (YYYYMMDD)
-   integer,          intent(IN) :: start_tod      ! Start time of day (sec)
-   integer,          intent(IN) :: ref_ymd        ! Reference date (YYYYMMDD)
-   integer,          intent(IN) :: ref_tod        ! Reference time of day (sec)
-   integer,          intent(IN) :: dtime_in       ! Time-step
-   logical,          intent(IN) :: perpetual_run  ! If in perpetual mode or not
-   integer,          intent(IN) :: perpetual_ymd  ! Perpetual date (YYYYMMDD)
-
-! Local variables
-   character(len=*), parameter :: sub = 'timemgr_check_restart'
-!-----------------------------------------------------------------------------------------
-
-  ! Check that input agrees with data on restart file
-
-  if ( (rst_start_ymd /= start_ymd) .or. (rst_start_tod /= start_tod) )then
-     write(iulog,*) sub,' start ',rst_start_ymd,start_ymd,rst_start_tod,start_tod
-     call endrun( sub//': input start date does not agree with restart' )
-  end if
-  if ( (rst_ref_ymd /= ref_ymd) .or. (rst_ref_tod /= ref_tod) )then
-     write(iulog,*) sub,' ref ',rst_ref_ymd,ref_ymd,rst_ref_tod,ref_tod
-     call endrun( sub//': input ref date does not agree with restart' )
-  end if
-  if ( rst_perp_cal .neqv. perpetual_run )then
-     call endrun( sub//': input perpetual mode does not agree with restart' )
-  end if
-  if ( rst_step_sec /= dtime_in )then
-     call endrun( sub//': input dtime does not agree with restart' )
-  end if
-  if ( trim(rst_calendar) /= trim(calendar_in) )then
-     write(iulog,*) 'Input calendar:   ', trim(calendar_in)
-     write(iulog,*) 'Restart calendar: ', trim(rst_calendar)
-     call endrun( sub//': input calendar does not agree with restart' )
-  end if
-  if ( perpetual_run )then
-     if ( (rst_perp_ymd /= perpetual_ymd) )then
-        call endrun( sub//': input perpetual date does not agree with restart' )
-     end if
-  end if
-  
-end subroutine timemgr_check_restart
-
-!=========================================================================================
-
 subroutine init_calendar( )
 !
 ! Initialize calendar
@@ -583,7 +408,7 @@ subroutine timemgr_print()
    character(len=*), parameter :: sub = 'timemgr_print'
    integer :: rc
    integer :: yr, mon, day
-   integer ::&                  ! Data required to restart time manager:
+   integer ::&
       nstep     = uninit_int,  &! current step number
       step_sec  = uninit_int,  &! timestep size seconds
       start_yr  = uninit_int,  &! start year
@@ -605,7 +430,7 @@ subroutine timemgr_print()
    integer(ESMF_KIND_I8) :: step_no
    type(ESMF_Time) :: start_date! start date for run
    type(ESMF_Time) :: stop_date ! stop date for run
-   type(ESMF_Time) :: curr_date ! date of data in restart file
+   type(ESMF_Time) :: curr_date ! current date for run
    type(ESMF_Time) :: ref_date  ! reference date
    type(ESMF_TimeInterval) :: step ! Time-step
 !-----------------------------------------------------------------------------------------
@@ -1202,177 +1027,6 @@ end function is_perpetual
 
 !=========================================================================================
 
-subroutine timemgr_init_restart(File)
-
-  type(File_desc_t) :: File
-  integer :: i, ret, dims(1)
-
-  call timevars_set_names()
-  rst_calendar  = trim(calendar)
-
-  ret = PIO_DEF_dim(File, 'cal_strlen', 32, dims(1))
-  ret = PIO_def_var(File, timevars(1)%name, PIO_CHAR,dims(1:1),timevars(1)%vardesc)
-  do i=2,varcnt
-     ret = PIO_def_var(File, timevars(i)%name, PIO_INT, dims(1:0), timevars(i)%vardesc)
-  end do
-
-end subroutine timemgr_init_restart
-
-subroutine timemgr_write_restart(File)
-
-  type(File_desc_t) :: File
-  type(var_id), pointer :: timevar
-  integer :: rst_perp_cal_int
-  integer :: i, ret
-  character(len=*), parameter :: sub = 'timemgr_write_nfrestart'
-  type(ESMF_Time) :: start_date            ! start date for run
-  type(ESMF_Time) :: stop_date             ! stop date for run
-  type(ESMF_Time) :: curr_date             ! temporary date used in logic
-  type(ESMF_Time) :: ref_date              ! reference date for time coordinate
-
-  if ( tm_perp_calendar ) then
-     rst_perp_ymd = TimeGetymd( tm_perp_date )
-     rst_perp_cal = tm_perp_calendar
-  else
-     rst_perp_cal = .false.
-  end if
-  
-  call ESMF_ClockGet( tm_clock, startTime=start_date, stopTime=stop_date, &
-       currTime=curr_date, refTime=ref_date, rc=ret )
-  call chkrc(ret, sub//': error return from ESMF_ClockGet')
-
-  rst_step_sec  = dtime
-  rst_start_ymd = TimeGetymd( start_date, tod=rst_start_tod )
-  rst_stop_ymd  = TimeGetymd( stop_date,  tod=rst_stop_tod  )
-  rst_ref_ymd   = TimeGetymd( ref_date,   tod=rst_ref_tod   )
-  rst_curr_ymd  = TimeGetymd( curr_date,  tod=rst_curr_tod  )
-  
-  if ( rst_perp_cal ) then
-     rst_perp_cal_int = 1
-  else
-     rst_perp_cal_int = 0
-  end if
-
-
-  do i=1,varcnt
-     timevar => timevars(i)
-     if(timevar%name .eq. 'rst_calendar') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_calendar)
-     else if(timevar%name == 'rst_nstep') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_nstep)
-     else if(timevar%name == 'rst_step_days') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_step_days)
-     else if(timevar%name == 'rst_step_sec') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_step_sec)
-     else if(timevar%name == 'rst_start_ymd') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_start_ymd)
-     else if(timevar%name == 'rst_start_tod') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_start_tod)
-     else if(timevar%name == 'rst_stop_ymd') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_stop_ymd)
-     else if(timevar%name == 'rst_stop_tod') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_stop_tod)
-     else if(timevar%name == 'rst_ref_ymd') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_ref_ymd)
-     else if(timevar%name == 'rst_ref_tod') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_ref_tod)
-     else if(timevar%name == 'rst_curr_ymd') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_curr_ymd)
-     else if(timevar%name == 'rst_curr_tod') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_curr_tod)
-     else if(timevar%name == 'rst_perp_ymd') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_perp_ymd)
-     else if(timevar%name == 'rst_perp_cal_int') then
-        ret = PIO_put_var(File, timevar%vardesc%varID, rst_perp_cal_int)
-     else
-        write(iulog,*) __FILE__,__LINE__,'Could not find a match for ', i, timevar%name
-        call endrun('time_manager')
-     end if
-  end do
-end subroutine timemgr_write_restart
-
-subroutine timemgr_read_restart(File)
-
-  type(File_desc_t) :: File
-  type(var_id), pointer :: timevar
-  integer :: ret, i
-  integer :: rst_perp_cal_int
-
-  call timevars_set_names()
-  
-  do i=1,varcnt
-     ret = PIO_inq_varid(File, timevars(i)%name, timevars(i)%vardesc)
-  end do
-  
-  do i=1,varcnt
-     timevar => timevars(i)
-     if(timevar%name == 'rst_calendar') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_calendar)
-        if(rst_calendar(1:7).eq.trim(shr_cal_noleap)) then
-           rst_calendar(8:)=' '
-        else if(rst_calendar(1:9).eq.trim(shr_cal_gregorian)) then
-           rst_calendar(10:)=' '
-        end if
-     else if(timevar%name == 'rst_nstep') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_nstep)
-     else if(timevar%name == 'rst_step_days') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_step_days)
-     else if(timevar%name == 'rst_step_sec') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_step_sec)
-     else if(timevar%name == 'rst_start_ymd') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_start_ymd)
-     else if(timevar%name == 'rst_start_tod') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_start_tod)
-     else if(timevar%name == 'rst_stop_ymd') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_stop_ymd)
-     else if(timevar%name == 'rst_stop_tod') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_stop_tod)
-     else if(timevar%name == 'rst_ref_ymd') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_ref_ymd)
-     else if(timevar%name == 'rst_ref_tod') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_ref_tod)
-     else if(timevar%name == 'rst_curr_ymd') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_curr_ymd)
-     else if(timevar%name == 'rst_curr_tod') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_curr_tod)
-     else if(timevar%name == 'rst_perp_ymd') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_perp_ymd)
-     else if(timevar%name == 'rst_perp_cal_int') then
-        ret = PIO_get_var(File, timevar%vardesc%varID, rst_perp_cal_int)
-     else
-        write(iulog,*) __FILE__,__LINE__,'Could not find a match for ', i, timevar%name
-        call endrun('time_manager')
-     end if
-  end do
-
-  if ( rst_perp_cal_int /= 0 ) then
-     rst_perp_cal = .true.
-  else
-     rst_perp_cal = .false.
-  end if
-
-
-end subroutine timemgr_read_restart
-
-
-
-subroutine timevars_set_names()
-  timevars(1)%name = 'rst_calendar'
-  timevars(2)%name = 'rst_nstep'
-  timevars(3)%name = 'rst_step_days'
-  timevars(4)%name = 'rst_step_sec'
-  timevars(5)%name = 'rst_start_ymd'
-  timevars(6)%name = 'rst_start_tod'
-  timevars(7)%name = 'rst_stop_ymd'
-  timevars(8)%name = 'rst_stop_tod'
-  timevars(9)%name = 'rst_ref_ymd'
-  timevars(10)%name = 'rst_ref_tod'
-  timevars(11)%name = 'rst_curr_ymd'
-  timevars(12)%name = 'rst_curr_tod'
-  timevars(13)%name = 'rst_perp_ymd'
-  timevars(14)%name = 'rst_perp_cal_int'
-end subroutine timevars_set_names
-
 subroutine timemgr_datediff(ymd1, tod1, ymd2, tod2, days)
 
 ! Calculate the difference (ymd2,tod2) - (ymd1,tod1) and return the result in days.
@@ -1402,6 +1056,7 @@ subroutine timemgr_datediff(ymd1, tod1, ymd2, tod2, days)
    call chkrc(rc, sub//': error return from ESMF_TimeIntervalGet')
 
 end subroutine timemgr_datediff
+
 !=========================================================================================
 
 subroutine timemgr_time_ge(ymd1, tod1, ymd2, tod2, time2_ge_time1)

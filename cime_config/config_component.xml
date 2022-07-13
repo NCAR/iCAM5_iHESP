@@ -8,7 +8,7 @@
       CAM
     ===============
    -->
-    <desc atm="CAM60[%1PCT][%4xCO2][%CCTS][%CFIRE][%CVBSX][%PORT][%RCO2][%SCAM][%SDYN][%WCCM][%WCMD][%WCSC][%WCTS][%WXIE]">CAM cam6 physics:</desc>
+    <desc atm="CAM60[%1PCT][%4xCO2][%CCTS][%CFIRE][%CVBSX][%PORT][%RCO2][%SCAM][%SDYN][%WCCM][%WCMD][%WCSC][%WCTS][%WXIE][%WISO]">CAM cam6 physics:</desc>
     <desc atm="CAM50[%CCTS][%CLB][%PORT][%RCO2][%SCAM][%SDYN][%WCSC][%WCTS]"              >CAM cam5 physics:</desc>
     <desc atm="CAM40[%PORT][%RCO2][%SCAM][%SDYN][%TMOZ][%WXIE][%WXIED][%WCMD]"                   >CAM cam4 physics:</desc>
     <desc atm="CAM[%ADIAB][%DABIP04][%TJ16][%HS94][%KESSLER][%RCO2][%SPCAMS][%SPCAMCLBS][%SPCAMM][%SPCAMCLBM]">CAM simplified and non-versioned physics :</desc>
@@ -43,6 +43,14 @@
     <desc option="SPCAMM"       >CAM super-parameterized CAM double moment m2005 SAM microphysics </desc>
     <desc option="SPCAMCLBM"    >CAM super-parameterized CAM double moment m2005 SAM microphysics using CLUBB </desc>
     <desc option="TMOZ"         >CAM tropospheric chemistry with bulk aerosols:</desc>
+
+  <!--
+    ===================
+    CAM - Water Tracers
+    ===================
+  -->
+
+    <desc option="WISO"         >CAM with water isotopes/tracers.</desc>
 
   <!--
     ===============
@@ -128,6 +136,9 @@
 
       <value compset="_CAM.*_BGC%B">-co2_cycle</value>
 
+      <!-- Modifiers for CAM with water isotopes -->
+      <value compset="_CAM60%WISO">-water_tracer h2o_h216o_hdo_h218o</value>
+
       <!-- Match against "%WC" to set defaults for all WACCM cases. -->
       <!-- Later settings of "-chem" take precedence over earlier ones. -->
       <value compset="_(CAM50|CAM60)%(WC|CC|CV|CF)">-age_of_air_trcs</value>
@@ -183,8 +194,7 @@
     <values match="last">
       <value compset="1850_CAM40"        >1850_cam4</value>
       <value compset="1850_CAM50"        >1850_cam5</value>
-      <value compset="1950_CAM50"        >1950_cam5</value>
-      <value compset="1950TR_CAM50"      >1950-2050_cam5</value>
+
       <value compset="1850_CAM60"        >1850_cam6</value>
       <value compset="1850_CAM60%WCTS"   >waccm_tsmlt_1850_cam6</value>
       <value compset="1850_CAM60%WCCM"   >waccm_ma_1850_cam6</value>
@@ -198,7 +208,7 @@
       <value compset="2000_CAM60%WCCM"   >waccm_ma_2000_cam6</value>
       <value compset="2000_CAM60%WCSC"   >waccm_sc_2000_cam6</value>
       <value compset="2000_CAM60%CCTS"   >2000_trop_strat_vbs_cam6</value>
-      <value compset="2000_CAM60%WXIE"   >waccmxie_ma_2000_cam6</value>
+      <value compset="2000_CAM60%WXIE"   >waccmx_ma_2000_cam6</value>
 
       <value compset="2000_CAM40_SLND_SICE_DOCN%SOMAQP">aquaplanet_cam4</value>
       <value compset="2000_CAM40_SLND_SICE_DOCN%AQP"   >aquaplanet_cam4</value>
@@ -228,6 +238,7 @@
       <value compset="HIST_CAM60%CCTS"   >hist_trop_strat_vbs_cam6</value>
       <value compset="HIST_CAM60%CVBSX"  >hist_trop_strat_vbsext_cam6</value>
       <value compset="HIST_CAM60%CFIRE"  >hist_trop_strat_vbsfire_cam6</value>
+      <value compset="HIST_CAM60%WXIE"   >waccmx_ma_hist_cam6</value>
 
       <value compset="PIPD_CAM50"        >1850-PD_cam5</value>
 
@@ -245,6 +256,7 @@
 
       <value compset="_CAM40%WXIED%SDYN"  >sd_waccmx_ma_cam4</value>
       <value compset="_CAM40%WXIE%SDYN"   >sd_waccmx_ma_cam4</value>
+      <value compset="_CAM60%WXIE%SDYN"   >sd_waccmx_ma_cam6</value>
       <value compset="_CAM60%WCTS%SDYN"   >sd_waccm_tsmlt_cam6</value>
       <value compset="_CAM60%WCCM%SDYN"   >sd_waccm_ma_cam6</value>
       <value compset="_CAM60%WCMD%SDYN"   >sd_waccm_ma_cam6</value>
@@ -268,7 +280,7 @@
       leverages groups of namelist options (use cases) that are often
       paired with the CAM configure options.  These use cases are xml
       files located in
-      $CIMEROOT/../components/atm/cam/bld/namelist_files/use_cases.
+      $CIMEROOT/../components/cam/bld/namelist_files/use_cases.
       In general, this variable should not be modified for supported
       component sets (compsets).  Recommendation: If you want to
       modify this value for your experiment, use your own user-defined
@@ -309,9 +321,9 @@
     <valid_values></valid_values>
     <default_value></default_value>
     <values match="last">
-    <value compset="DOCN%AQP">$SRCROOT/components/cam/cime_config/usermods_dirs/aquap</value>
-    <value compset="DOCN%SOMAQP">$SRCROOT/components/cam/cime_config/usermods_dirs/aquap</value>
-    <value compset="CAM[456]0%SCAM" >$SRCROOT/components/cam/cime_config/usermods_dirs/scam_mandatory</value>
+    <value compset="DOCN%AQP">$COMP_ROOT_DIR_ATM/cime_config/usermods_dirs/aquap</value>
+    <value compset="DOCN%SOMAQP">$COMP_ROOT_DIR_ATM/cime_config/usermods_dirs/aquap</value>
+    <value compset="CAM[456]0%SCAM" >$COMP_ROOT_DIR_ATM/cime_config/usermods_dirs/scam_mandatory</value>
     </values>
     <group>run_component_cam</group>
     <file>env_case.xml</file>

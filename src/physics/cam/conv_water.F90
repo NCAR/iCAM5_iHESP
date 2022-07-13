@@ -66,7 +66,7 @@ subroutine conv_water_readnl(nlfile)
    integer :: unitn, ierr
    character(len=*), parameter :: subname = 'conv_water_readnl'
 
-   real(r8) :: conv_water_frac_limit 
+   real(r8) :: conv_water_frac_limit = 0._r8
 
    namelist /conv_water_nl/ conv_water_in_rad, conv_water_frac_limit
    !-----------------------------------------------------------------------------
@@ -134,7 +134,7 @@ end subroutine conv_water_readnl
 
    
    use physics_buffer, only : pbuf_get_index
-   use cam_history,    only : phys_decomp, addfld
+   use cam_history,    only : addfld
 
    use constituents,  only: cnst_get_ind
 
@@ -152,19 +152,19 @@ end subroutine conv_water_readnl
    rei_idx      = pbuf_get_index('REI')
 
    ! Convective cloud water variables.
-   call addfld ('ICIMRCU  ', 'kg/kg   ', pver, 'A', 'Convection in-cloud ice mixing ratio '   , phys_decomp)
-   call addfld ('ICLMRCU  ', 'kg/kg   ', pver, 'A', 'Convection in-cloud liquid mixing ratio ', phys_decomp)
-   call addfld ('ICIMRTOT ', 'kg/kg   ', pver, 'A', 'Total in-cloud ice mixing ratio '        , phys_decomp)
-   call addfld ('ICLMRTOT ', 'kg/kg   ', pver, 'A', 'Total in-cloud liquid mixing ratio '     , phys_decomp)
+   call addfld ('ICIMRCU',  (/ 'lev' /), 'A', 'kg/kg', 'Convection in-cloud ice mixing ratio '   )
+   call addfld ('ICLMRCU',  (/ 'lev' /), 'A', 'kg/kg', 'Convection in-cloud liquid mixing ratio ')
+   call addfld ('ICIMRTOT', (/ 'lev' /), 'A', 'kg/kg', 'Total in-cloud ice mixing ratio '        )
+   call addfld ('ICLMRTOT', (/ 'lev' /), 'A', 'kg/kg', 'Total in-cloud liquid mixing ratio '     )
 
-   call addfld ('GCLMRDP  ', 'kg/kg   ', pver, 'A', 'Grid-mean deep convective LWC'           , phys_decomp)
-   call addfld ('GCIMRDP  ', 'kg/kg   ', pver, 'A', 'Grid-mean deep convective IWC'           , phys_decomp)
-   call addfld ('GCLMRSH  ', 'kg/kg   ', pver, 'A', 'Grid-mean shallow convective LWC'        , phys_decomp)
-   call addfld ('GCIMRSH  ', 'kg/kg   ', pver, 'A', 'Grid-mean shallow convective IWC'        , phys_decomp)
-   call addfld ('FRESH  ', '1', pver, 'A', 'Fractional occurrence of shallow cumulus with condensate', phys_decomp)
-   call addfld ('FREDP  ', '1', pver, 'A', 'Fractional occurrence of deep cumulus with condensate', phys_decomp)
-   call addfld ('FRECU  ', '1', pver, 'A', 'Fractional occurrence of cumulus with condensate', phys_decomp)
-   call addfld ('FRETOT ', '1', pver, 'A', 'Fractional occurrence of cloud with condensate', phys_decomp)
+   call addfld ('GCLMRDP',  (/ 'lev' /), 'A', 'kg/kg', 'Grid-mean deep convective LWC'           )
+   call addfld ('GCIMRDP',  (/ 'lev' /), 'A', 'kg/kg', 'Grid-mean deep convective IWC'           )
+   call addfld ('GCLMRSH',  (/ 'lev' /), 'A', 'kg/kg', 'Grid-mean shallow convective LWC'        )
+   call addfld ('GCIMRSH',  (/ 'lev' /), 'A', 'kg/kg', 'Grid-mean shallow convective IWC'        )
+   call addfld ('FRESH',    (/ 'lev' /), 'A', '1', 'Fractional occurrence of shallow cumulus with condensate')
+   call addfld ('FREDP',    (/ 'lev' /), 'A', '1', 'Fractional occurrence of deep cumulus with condensate')
+   call addfld ('FRECU',    (/ 'lev' /), 'A', '1', 'Fractional occurrence of cumulus with condensate')
+   call addfld ('FRETOT',   (/ 'lev' /), 'A', '1', 'Fractional occurrence of cloud with condensate')
 
    end subroutine conv_water_init
 
@@ -332,7 +332,7 @@ end subroutine conv_water_readnl
 
           ! Select radiation constants (effective radii) for emissivity averaging.
             
-            if( microp_scheme == 'RK' ) then
+            if( microp_scheme == 'RK' .or. microp_scheme == 'SPCAM_sam1mom') then
                kabsi = 0.005_r8 + 1._r8/rei(i,k)
             else
                kabsi = 0.005_r8 + 1._r8/min(max(13._r8,rei(i,k)),130._r8)

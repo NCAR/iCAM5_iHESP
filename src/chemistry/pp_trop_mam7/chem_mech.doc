@@ -38,17 +38,17 @@
       ( 35)  so4_a7             (SO4)
       ( 36)  nh4_a7             (NH4)
       ( 37)  num_a7             (H)
+      ( 38)  H2O             
   
   
      Invariant species
       (  1)  M               
       (  2)  N2              
       (  3)  O2              
-      (  4)  H2O             
-      (  5)  O3              
-      (  6)  OH              
-      (  7)  NO3             
-      (  8)  HO2             
+      (  4)  O3              
+      (  5)  OH              
+      (  6)  NO3             
+      (  7)  HO2             
   
   
      Column integrals
@@ -97,6 +97,7 @@ Class List
       ( 35)  so4_a7          
       ( 36)  nh4_a7          
       ( 37)  num_a7          
+      ( 38)  H2O             
   
      Photolysis
   jh2o2            (  1)   H2O2 + hv -> (No products)                                           rate = ** User defined **         (  1)
@@ -119,6 +120,7 @@ Extraneous prod/loss species
  ( 6)   pom_a3   (dataset)
  ( 7)   bc_a3   (dataset)
  ( 8)   num_a3   (dataset)
+ ( 9)   H2O   (dataset)
   
   
  Equation Report
@@ -162,3 +164,4 @@ Extraneous prod/loss species
     d(so4_a7)/dt = 0                                                                                                    
     d(nh4_a7)/dt = 0                                                                                                    
     d(num_a7)/dt = 0                                                                                                    
+    d(H2O)/dt = r2*OH*H2O2  + r7*OH*NH3                                                                                 

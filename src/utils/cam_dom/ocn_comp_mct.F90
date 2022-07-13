@@ -15,7 +15,7 @@ module ocn_comp_mct
                                get_area_all_p,ngcols, get_gcol_p
   use ppgrid,            only: pcols,begchunk,endchunk
   use cam_logfile,       only: iulog
-  use cam_control_mod,   only: nsrest
+  use cam_control_mod,   only: initial_run
 
   use ocn_types,         only: ocn_out_t
   use ocn_comp,          only: ocn_init, ocn_run, ocn_write_restart, ocn_read_restart, frac
@@ -105,7 +105,7 @@ contains
          perpetual=perpetual_run,          &
          perpetual_ymd=perpetual_ymd)
 
-    if ( nsrest == 0 )then
+    if (initial_run)then
        call timemgr_init( calendar_in=calendar, start_ymd=start_ymd, &
             start_tod=start_tod, ref_ymd=ref_ymd,      &
             ref_tod=ref_tod, stop_ymd=stop_ymd,        &

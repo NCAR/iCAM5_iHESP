@@ -62,9 +62,19 @@ if [ -n "${BL_ROOT}" ]; then
     echo "TPF.sh: generating baseline data from root $BL_ROOT - results in $BL_TESTDIR"
 
     echo "TPF.sh: calling ****baseline**** TSM.sh for smoke test"
-    env CAM_TESTDIR=${BL_TESTDIR} \
-	CAM_SCRIPTDIR=${BL_ROOT}/models/atm/cam/test/system \
-	${BL_ROOT}/models/atm/cam/test/system/TSM.sh $1 $2 $3 $4
+    if [ -d "${BL_ROOT}/components/cam" ]; then
+
+        env CAM_TESTDIR=${BL_TESTDIR} \
+	CAM_SCRIPTDIR=${BL_ROOT}/components/cam/test/system \
+	${BL_ROOT}/components/cam/test/system/TSM.sh $1 $2 $3 $4
+
+    else
+
+        env CAM_TESTDIR=${BL_TESTDIR} \
+        CAM_SCRIPTDIR=${BL_ROOT}/test/system \
+        ${BL_ROOT}/test/system/TSM.sh $1 $2 $3 $4
+
+    fi
     rc=$?
     if [ $rc -ne 0 ]; then
 	echo "TPF.sh: error from *baseline* TSM.sh= $rc" 
@@ -78,8 +88,8 @@ if [ $4 = "build_only" ]; then
 fi
 
 #made the following extraction of timing info compatible with single or multiple timing files
-model_time=`grep -i DRIVER_RUN_LOOP ${CAM_TESTDIR}/TSM.$1.$2.$3/ccsm_timing* | perl -e 'while (my $ll = <>) \
-    { if ($ll =~ /DRIVER_RUN_LOOP[\s-]+[0-9]+[\s-]+([0-9\.]+)/) \
+model_time=`grep -i "CPL:RUN_LOOP " ${CAM_TESTDIR}/TSM.$1.$2.$3/cesm_timing* | perl -e 'while (my $ll = <>) \
+    { if ($ll =~ /CPL:RUN_LOOP[\s-]+[0-9]+[\s-]+([0-9\.]+)/) \
     { print "$1"; last }}' `
 if [ "$model_time" = "" ]; then
     echo "TPF.sh: unable to determine model time from timing file(s) in ${CAM_TESTDIR}/TSM.$1.$2.$3/" 
@@ -89,8 +99,8 @@ fi
 echo "TPF.sh: model_time= $model_time"
 
 #made the following extraction of timing info compatible with single or multiple timing files
-bl_time=`grep -i DRIVER_RUN_LOOP ${BL_TESTDIR}/TSM.$1.$2.$3/ccsm_timing* | perl -e 'while (my $ll = <>) \
-    { if ($ll =~ /DRIVER_RUN_LOOP[\s-]+[0-9]+[\s-]+([0-9\.]+)/) \
+bl_time=`grep -i "CPL:RUN_LOOP " ${BL_TESTDIR}/TSM.$1.$2.$3/cesm_timing* | perl -e 'while (my $ll = <>) \
+    { if ($ll =~ /CPL:RUN_LOOP[\s-]+[0-9]+[\s-]+([0-9\.]+)/) \
     { print "$1"; last }}' `
 if [ "$bl_time" = "" ]; then
     echo "TPF.sh: unable to determine model time from timing file(s) in ${BL_TESTDIR}/TSM.$1.$2.$3/" 

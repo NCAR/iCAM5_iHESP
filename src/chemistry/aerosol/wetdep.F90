@@ -11,6 +11,7 @@ use ppgrid,       only: pcols, pver
 use physconst,    only: gravit, rair, tmelt
 use phys_control, only: cam_physpkg_is
 use cam_logfile,  only: iulog
+use cam_abortutils, only: endrun
 
 implicit none
 save
@@ -92,7 +93,6 @@ endsubroutine wetdep_init
 ! gathers up the inputs needed for the wetdepa routines
 !==============================================================================
 subroutine wetdep_inputs_set( state, pbuf, inputs )
-  use phys_control,   only: cam_physpkg_is
   use physics_types,  only: physics_state
   use physics_buffer, only: physics_buffer_desc, pbuf_get_field, pbuf_old_tim_idx
 
@@ -140,7 +140,7 @@ subroutine wetdep_inputs_set( state, pbuf, inputs )
   inputs%cmfdqr(:ncol,:) = rprddp(:ncol,:)  + rprdsh(:ncol,:)
 
   ! sum deep and shallow convection contributions
-  if (cam_physpkg_is('cam5')) then
+  if (cam_physpkg_is('cam5') .or. cam_physpkg_is('cam6')) then
      ! Dec.29.2009. Sungsu
      inputs%conicw(:ncol,:) = (icwmrdp(:ncol,:)*dp_frac(:ncol,:) + icwmrsh(:ncol,:)*sh_frac(:ncol,:))/ &
                               max(0.01_r8, sh_frac(:ncol,:) + dp_frac(:ncol,:))
@@ -281,6 +281,7 @@ subroutine wetdepa_v2(                                  &
    iscavt, cldvcu, cldvst, dlf, fracis,                 &
    sol_fact, ncol, scavcoef, is_strat_cloudborne, qqcw, &
    f_act_conv, icscavt, isscavt, bcscavt, bsscavt,      &
+   convproc_do_aer, rcscavt, rsscavt,                   &
    sol_facti_in, sol_factic_in )
 
    !----------------------------------------------------------------------- 
@@ -341,9 +342,16 @@ subroutine wetdepa_v2(                                  &
    real(r8), intent(out), optional :: bcscavt(pcols,pver)     ! below cloud, convective
    real(r8), intent(out), optional :: bsscavt(pcols,pver)     ! below cloud, stratiform
 
+   ! Setting convproc_do_aer=.true. removes the resuspension term from bcscavt and
+   ! bsscavt and returns those terms as rcscavt and rsscavt respectively.
+   logical,  intent(in),  optional :: convproc_do_aer
+   real(r8), intent(out), optional :: rcscavt(pcols,pver)     ! resuspension, convective
+   real(r8), intent(out), optional :: rsscavt(pcols,pver)     ! resuspension, stratiform
+
    ! local variables
 
    integer :: i, k
+   logical :: out_resuspension
 
    real(r8) :: omsm                 ! 1 - (a small number)
    real(r8) :: clds(pcols)          ! stratiform cloud fraction
@@ -398,6 +406,20 @@ subroutine wetdepa_v2(                                  &
 
    sol_factic  = sol_facti
    if ( present(sol_factic_in ) )  sol_factic  = sol_factic_in
+
+   ! Determine whether resuspension fields are output.
+   out_resuspension = .false.
+   if (present(convproc_do_aer)) then
+      if (convproc_do_aer) then
+         if (present(bcscavt) .and. present(bsscavt) .and. &
+             present(rcscavt) .and. present(rsscavt) ) then
+            out_resuspension = .true.
+         else
+            call endrun('wetdepa_v2: bcscavt, bsscavt, rcscavt, rsscavt'// &
+                        ' must be present when convproc_do_aero true')
+         end if
+      end if
+   end if
 
    ! this section of code is for highly soluble aerosols,
    ! the assumption is that within the cloud that
@@ -563,11 +585,21 @@ subroutine wetdepa_v2(                                  &
 
          if ( present(icscavt) ) icscavt(i,k) = -(srcc(i)*finc(i)) * omsm
          if ( present(isscavt) ) isscavt(i,k) = -(srcs(i)*fins(i)) * omsm
-         if ( present(bcscavt) ) bcscavt(i,k) = -(srcc(i) * (1-finc(i))) * omsm +  &
-            fracev_cu(i)*scavabc(i)*rpdog(i)
 
-         if ( present(bsscavt) ) bsscavt(i,k) = -(srcs(i) * (1-fins(i))) * omsm +  &
-            fracev(i)*scavab(i)*rpdog(i)
+         if (.not. out_resuspension) then
+            if (present(bcscavt)) bcscavt(i,k) = -(srcc(i) * (1-finc(i))) * omsm +  &
+                                                  fracev_cu(i)*scavabc(i)*rpdog(i)
+
+            if (present(bsscavt)) bsscavt(i,k) = -(srcs(i) * (1-fins(i))) * omsm +  &
+                                                  fracev(i)*scavab(i)*rpdog(i)
+         else
+            bcscavt(i,k) = -(srcc(i) * (1-finc(i))) * omsm 
+            rcscavt(i,k) =  fracev_cu(i)*scavabc(i)*rpdog(i)
+
+            bsscavt(i,k) = -(srcs(i) * (1-fins(i))) * omsm
+            rsscavt(i,k) =  fracev(i)*scavab(i)*rpdog(i)
+         end if
+
          dblchek(i) = tracer(i,k) + deltat*scavt(i,k)
 
          ! now keep track of scavenged mass and precip
@@ -628,7 +660,7 @@ end subroutine wetdepa_v2
          p(pcols,pver),        &! pressure
          q(pcols,pver),        &! moisture
          pdel(pcols,pver),     &! pressure thikness
-         cldt(pcols,pver),    &! total cloud fraction
+         cldt(pcols,pver),     &! total cloud fraction
          cldc(pcols,pver),     &! convective cloud fraction
          cmfdqr(pcols,pver),   &! rate of production of convective precip
          conicw(pcols,pver),   &! convective cloud water
@@ -1100,7 +1132,7 @@ end subroutine wetdepa_v2
             scavin = precic*(1._r8-weight)*mplb
 
             ! fraction of precip which entered above that leaves below
-            if (cam_physpkg_is('cam5')) then
+            if (cam_physpkg_is('cam5') .or. cam_physpkg_is('cam6')) then
                ! Sungsu added evaporation of convective precipitation below.
                precxx = precab(i)-pdog*(evaps(i,k)+evapc(i,k))
             else

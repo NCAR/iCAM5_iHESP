@@ -5,6 +5,7 @@ module mo_drydep
   !---------------------------------------------------------------------
 
 !LKE (10/11/2010): added HCN, CH3CN, HCOOH
+!LKE (7/30/2015): added new TS1 species (phenooh, iepox, noa, etc.)
 
   use shr_kind_mod,     only : r8 => shr_kind_r8, shr_kind_cl
   use chem_mods,        only : gas_pcnst
@@ -14,11 +15,8 @@ module mo_drydep
   use mo_tracname,      only : solsym
   use cam_abortutils,   only : endrun
   use ioFileMod,        only : getfil
-#ifdef SPMD
-  use mpishorthand,     only : mpicom, mpir8, mpiint, mpilog
-#endif
   use pio
-  use cam_pio_utils,    only : cam_pio_openfile
+  use cam_pio_utils,    only : cam_pio_openfile, cam_pio_closefile
   use cam_logfile,      only : iulog
   use dyn_grid,         only : get_dyn_grid_parm, get_horiz_grid_d
   use scamMod,          only : single_column
@@ -88,16 +86,20 @@ module mo_drydep
   integer :: o3a_ndx,xpan_ndx,xmpan_ndx,xno2_ndx,xhno3_ndx,xonit_ndx,xonitr_ndx,xno_ndx,xho2no2_ndx,xnh4no3_ndx
   logical :: o3a_dd, xpan_dd, xmpan_dd, xno2_dd, xhno3_dd, xonit_dd, xonitr_dd, xno_dd, xho2no2_dd, xnh4no3_dd
 
-  integer :: cohc_ndx=-1, come_ndx=-1, co01_ndx=-1, co02_ndx=-1, co03_ndx=-1, co04_ndx=-1, co05_ndx=-1
-  integer :: co06_ndx=-1, co07_ndx=-1, co08_ndx=-1, co09_ndx=-1, co10_ndx=-1
-  integer :: co11_ndx=-1, co12_ndx=-1, co13_ndx=-1, co14_ndx=-1, co15_ndx=-1
-  integer :: co16_ndx=-1, co17_ndx=-1, co18_ndx=-1, co19_ndx=-1, co20_ndx=-1
-  integer :: co21_ndx=-1, co22_ndx=-1, co23_ndx=-1, co24_ndx=-1, co25_ndx=-1
-  integer :: co26_ndx=-1, co27_ndx=-1, co28_ndx=-1, co29_ndx=-1, co30_ndx=-1
-  integer :: co31_ndx=-1, co32_ndx=-1, co33_ndx=-1, co34_ndx=-1, co35_ndx=-1
-  integer :: co36_ndx=-1, co37_ndx=-1, co38_ndx=-1, co39_ndx=-1, co40_ndx=-1
-  integer :: co41_ndx=-1, co42_ndx=-1
+!lke-TS1
+  integer :: phenooh_ndx, benzooh_ndx, c6h5ooh_ndx, bzooh_ndx, xylolooh_ndx, xylenooh_ndx 
+  integer :: terp2ooh_ndx, terprod1_ndx, terprod2_ndx, hmprop_ndx, mboooh_ndx, hpald_ndx, iepox_ndx
+  integer :: noa_ndx, alknit_ndx, isopnita_ndx, isopnitb_ndx, honitr_ndx, isopnooh_ndx
+  integer :: nc4cho_ndx, nc4ch2oh_ndx, terpnit_ndx, nterpooh_ndx
+  logical :: phenooh_dd, benzooh_dd, c6h5ooh_dd, bzooh_dd, xylolooh_dd, xylenooh_dd
+  logical :: terp2ooh_dd, terprod1_dd, terprod2_dd, hmprop_dd, mboooh_dd, hpald_dd, iepox_dd
+  logical :: noa_dd, alknit_dd, isopnita_dd, isopnitb_dd, honitr_dd, isopnooh_dd
+  logical :: nc4cho_dd, nc4ch2oh_dd, terpnit_dd, nterpooh_dd
 
+  integer :: cohc_ndx=-1, come_ndx=-1
+  integer, parameter :: NTAGS = 50
+  integer :: cotag_ndx(NTAGS)
+  integer :: tag_cnt
 
   integer :: &
        o3_tab_ndx = -1, &
@@ -262,6 +264,7 @@ contains
     real(r8)  :: met_ocnfrac(pcols)
     real(r8)  :: met_icefrac(pcols)            
 #endif
+    integer :: i
 
     lndfrac(:ncol) = 1._r8 - ocnfrac(:ncol) - icefrac(:ncol)
 
@@ -333,139 +336,18 @@ contains
     !-------------------------------------------------------------------------------------
     if( cohc_ndx>0 .and. co_ndx>0 ) then
        dvelocity(:ncol,cohc_ndx) = dvelocity(:ncol,co_ndx)
+       dflx(:ncol,cohc_ndx) = dvelocity(:ncol,co_ndx) * term(:ncol) * mmr(:ncol,plev,cohc_ndx)
     endif
     if( come_ndx>0 .and. co_ndx>0 ) then
        dvelocity(:ncol,come_ndx) = dvelocity(:ncol,co_ndx)
+       dflx(:ncol,come_ndx) = dvelocity(:ncol,co_ndx) * term(:ncol) * mmr(:ncol,plev,come_ndx)
     endif
 
-    if( co01_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co01_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co02_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co02_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co03_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co03_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co04_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co04_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co05_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co05_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co06_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co06_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co07_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co07_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co08_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co08_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co09_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co09_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co10_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co10_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co11_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co11_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co12_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co12_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co13_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co13_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co14_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co14_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co15_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co15_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co16_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co16_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co17_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co17_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co18_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co18_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co19_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co19_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co20_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co20_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co21_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co21_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co22_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co22_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co23_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co23_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co24_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co24_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co25_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co25_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co26_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co26_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co27_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co27_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co28_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co28_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co29_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co29_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co30_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co30_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co31_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co31_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co32_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co32_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co33_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co33_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co34_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co34_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co35_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co35_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co36_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co36_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co37_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co37_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co38_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co38_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co39_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co39_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co40_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co40_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co41_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co41_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if( co42_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,co42_ndx) = dvelocity(:ncol,co_ndx)
-    endif
-    if ( o3s_ndx>0 .and. co_ndx>0 ) then
-       dvelocity(:ncol,o3s_ndx) = dvelocity(:ncol,o3_ndx)
+    if ( co_ndx>0 ) then
+       do i=1,tag_cnt
+          dvelocity(:ncol,cotag_ndx(i)) = dvelocity(:ncol,co_ndx)
+          dflx(:ncol,cotag_ndx(i)) = dvelocity(:ncol,co_ndx) * term(:ncol) * mmr(:ncol,plev,cotag_ndx(i))
+       enddo
     endif
 
     do ispec = 1,nddvels
@@ -517,7 +399,6 @@ contains
 
     character(len=shr_kind_cl) :: locfn
     integer :: mm,n
-    integer :: plat, plon
 
     integer :: i, c, ncols
     real(r8) :: to_lats(pcols), to_lons(pcols)
@@ -545,9 +426,6 @@ contains
     endif
 
     if ( nddvels < 1 ) return
-
-    plat = get_dyn_grid_parm('plat')
-    plon = get_dyn_grid_parm('plon')
 
     !---------------------------------------------------------------------------
     !       ... Setup species maps
@@ -718,12 +596,15 @@ contains
             c3h7ooh_ndx, rooh_ndx, ch3cocho_ndx, co_ndx, ch3coch3_ndx, &
             no_ndx, ho2no2_ndx, glyald_ndx, hyac_ndx, ch3oh_ndx, c2h5oh_ndx, &
             hydrald_ndx, h2_ndx, Pb_ndx, o3s_ndx, o3inert_ndx, macrooh_ndx, &
-            xooh_ndx, ch3cho_ndx, isopooh_ndx
+            xooh_ndx, ch3cho_ndx, isopooh_ndx, noa_ndx, alknit_ndx, isopnita_ndx,  &
+            honitr_ndx, isopnooh_ndx, nc4cho_ndx, nc4ch2oh_ndx, terpnit_ndx, nterpooh_ndx
        write(iulog,*) pan_dd, mpan_dd, no2_dd, hno3_dd, o3_dd, isopooh_dd, ch4_dd,&
             h2o2_dd, onit_dd, onitr_dd, ch2o_dd, macrooh_dd, xooh_dd, &
             ch3ooh_dd, pooh_dd, ch3coooh_dd, c2h5ooh_dd, eooh_dd, ch3cho_dd, c2h5oh_dd, &
             c3h7ooh_dd, rooh_dd, ch3cocho_dd, co_dd, ch3coch3_dd, &
-            glyald_dd, hyac_dd, ch3oh_dd, hydrald_dd, h2_dd, Pb_dd, o3s_dd, o3inert_dd
+            glyald_dd, hyac_dd, ch3oh_dd, hydrald_dd, h2_dd, Pb_dd, o3s_dd, o3inert_dd, &
+            noa_dd, alknit_dd, isopnita_dd,  &
+            honitr_dd, isopnooh_dd, nc4cho_dd, nc4ch2oh_dd, terpnit_dd, nterpooh_dd
     endif
     !---------------------------------------------------------------------------
     !       ... Open NetCDF file
@@ -921,7 +802,7 @@ contains
     end do
     deallocate( species_names )
 
-    call pio_closefile( piofile )
+    call cam_pio_closefile( piofile )
 
     !---------------------------------------------------------------------------
     !     	... Allocate dvel_interp array
@@ -1034,7 +915,6 @@ contains
     !-----------------------------------------------------------------------
     ! 	... Local variables
     !-----------------------------------------------------------------------
-    integer  :: j, plat
     real(r8) :: factor
 
     factor = (tint - t1)/(t2 - t1)
@@ -1078,7 +958,7 @@ contains
     !-----------------------------------------------------------------------
     ! 	... Local variables
     !-----------------------------------------------------------------------
-    integer :: m, spc_ndx, tmp_ndx, i
+    integer :: m, i
     real(r8), dimension(ncol) :: vel, glace, temp_fac, wrk, tmp
     real(r8), dimension(ncol) :: o3_tab_dvel
     real(r8), dimension(ncol) :: ocean 
@@ -1326,13 +1206,6 @@ contains
           dflx(:ncol,tolooh_ndx)   = wrk(:ncol) * tmp(:ncol) * q(:ncol,plev,tolooh_ndx)
        end if
     end if
-    if( terpooh_dd ) then
-       if( map(terpooh_ndx) == 0 ) then
-          depvel(:ncol,terpooh_ndx) = tmp(:ncol)
-          dflx(:ncol,terpooh_ndx)   = wrk(:ncol) * tmp(:ncol) * q(:ncol,plev,terpooh_ndx)
-       end if
-    end if
-
     if( o3_in_tab ) then
        tmp(:ncol) = o3_tab_dvel(:ncol)
     else
@@ -1532,6 +1405,152 @@ contains
           dflx(:ncol,xho2no2_ndx)   = wrk(:ncol) * depvel(:ncol,xho2no2_ndx) * q(:ncol,plev,xho2no2_ndx)
        end if
     endif
+     !lke-TS1
+    if( phenooh_dd ) then
+       if( map(phenooh_ndx) == 0 ) then
+          depvel(:ncol,phenooh_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,phenooh_ndx)   = wrk(:ncol) * depvel(:ncol,phenooh_ndx) * q(:ncol,plev,phenooh_ndx)
+       end if
+    endif
+    if( benzooh_dd ) then
+       if( map(benzooh_ndx) == 0 ) then
+          depvel(:ncol,benzooh_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,benzooh_ndx)   = wrk(:ncol) * depvel(:ncol,benzooh_ndx) * q(:ncol,plev,benzooh_ndx)
+       end if
+    endif
+    if( c6h5ooh_dd ) then
+       if( map(c6h5ooh_ndx) == 0 ) then
+          depvel(:ncol,c6h5ooh_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,c6h5ooh_ndx)   = wrk(:ncol) * depvel(:ncol,c6h5ooh_ndx) * q(:ncol,plev,c6h5ooh_ndx)
+       end if
+    endif
+    if( bzooh_dd ) then
+       if( map(bzooh_ndx) == 0 ) then
+          depvel(:ncol,bzooh_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,bzooh_ndx)   = wrk(:ncol) * depvel(:ncol,bzooh_ndx) * q(:ncol,plev,bzooh_ndx)
+       end if
+    endif
+    if( xylolooh_dd ) then
+       if( map(xylolooh_ndx) == 0 ) then
+          depvel(:ncol,xylolooh_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,xylolooh_ndx)   = wrk(:ncol) * depvel(:ncol,xylolooh_ndx) * q(:ncol,plev,xylolooh_ndx)
+       end if
+    endif
+    if( xylenooh_dd ) then
+       if( map(xylenooh_ndx) == 0 ) then
+          depvel(:ncol,xylenooh_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,xylenooh_ndx)   = wrk(:ncol) * depvel(:ncol,xylenooh_ndx) * q(:ncol,plev,xylenooh_ndx)
+       end if
+    endif
+    if( terpooh_dd ) then
+       if( map(terpooh_ndx) == 0 ) then
+          depvel(:ncol,terpooh_ndx) = depvel(:ncol,isopooh_ndx)
+          dflx(:ncol,terpooh_ndx)   = wrk(:ncol) * tmp(:ncol) * q(:ncol,plev,terpooh_ndx)
+       end if
+    end if
+    if( terp2ooh_dd ) then
+       if( map(terp2ooh_ndx) == 0 ) then
+          depvel(:ncol,terp2ooh_ndx) = depvel(:ncol,isopooh_ndx)
+          dflx(:ncol,terp2ooh_ndx)   = wrk(:ncol) * tmp(:ncol) * q(:ncol,plev,terp2ooh_ndx)
+       end if
+    end if
+    if( terprod1_dd ) then
+       if( map(terprod1_ndx) == 0 ) then
+          depvel(:ncol,terprod1_ndx) = depvel(:ncol,hyac_ndx)
+          dflx(:ncol,terprod1_ndx)   = wrk(:ncol) * depvel(:ncol,terprod1_ndx) * q(:ncol,plev,terprod1_ndx)
+       end if
+    endif
+     if( terprod2_dd ) then
+       if( map(terprod2_ndx) == 0 ) then
+          depvel(:ncol,terprod2_ndx) = depvel(:ncol,hyac_ndx)
+          dflx(:ncol,terprod2_ndx)   = wrk(:ncol) * depvel(:ncol,terprod2_ndx) * q(:ncol,plev,terprod2_ndx)
+       end if
+    endif
+    if( hmprop_dd ) then
+       if( map(hmprop_ndx) == 0 ) then
+          depvel(:ncol,hmprop_ndx) = depvel(:ncol,glyald_ndx)
+          dflx(:ncol,hmprop_ndx)   = wrk(:ncol) * depvel(:ncol,hmprop_ndx) * q(:ncol,plev,hmprop_ndx)
+       end if
+    endif
+    if( mboooh_dd ) then
+       if( map(mboooh_ndx) == 0 ) then
+          depvel(:ncol,mboooh_ndx) = depvel(:ncol,isopooh_ndx)
+          dflx(:ncol,mboooh_ndx)   = wrk(:ncol) * depvel(:ncol,mboooh_ndx) * q(:ncol,plev,mboooh_ndx)
+       end if
+    endif
+    if( hpald_dd ) then
+       if( map(hpald_ndx) == 0 ) then
+          depvel(:ncol,hpald_ndx) = depvel(:ncol,ch3ooh_ndx)
+          dflx(:ncol,hpald_ndx)   = wrk(:ncol) * depvel(:ncol,hpald_ndx) * q(:ncol,plev,hpald_ndx)
+       end if
+    endif
+    if( iepox_dd ) then
+       if( map(iepox_ndx) == 0 ) then
+          depvel(:ncol,iepox_ndx) = depvel(:ncol,hyac_ndx)
+          dflx(:ncol,iepox_ndx)   = wrk(:ncol) * depvel(:ncol,iepox_ndx) * q(:ncol,plev,iepox_ndx)
+       end if
+    endif
+    if( noa_dd ) then
+       if( map(noa_ndx) == 0 ) then
+          depvel(:ncol,noa_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,noa_ndx)   = wrk(:ncol) * depvel(:ncol,noa_ndx) * q(:ncol,plev,noa_ndx)
+       end if
+    endif
+    if( alknit_dd ) then
+       if( map(alknit_ndx) == 0 ) then
+          depvel(:ncol,alknit_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,alknit_ndx)   = wrk(:ncol) * depvel(:ncol,alknit_ndx) * q(:ncol,plev,alknit_ndx)
+       end if
+    endif
+    if( isopnita_dd ) then
+       if( map(isopnita_ndx) == 0 ) then
+          depvel(:ncol,isopnita_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,isopnita_ndx)   = wrk(:ncol) * depvel(:ncol,isopnita_ndx) * q(:ncol,plev,isopnita_ndx)
+       end if
+    endif
+    if( isopnitb_dd ) then
+       if( map(isopnitb_ndx) == 0 ) then
+          depvel(:ncol,isopnitb_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,isopnitb_ndx)   = wrk(:ncol) * depvel(:ncol,isopnitb_ndx) * q(:ncol,plev,isopnitb_ndx)
+       end if
+    endif
+    if( honitr_dd ) then
+       if( map(honitr_ndx) == 0 ) then
+          depvel(:ncol,honitr_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,honitr_ndx)   = wrk(:ncol) * depvel(:ncol,honitr_ndx) * q(:ncol,plev,honitr_ndx)
+       end if
+    endif
+    if( isopnooh_dd ) then
+       if( map(isopnooh_ndx) == 0 ) then
+          depvel(:ncol,isopnooh_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,isopnooh_ndx)   = wrk(:ncol) * depvel(:ncol,isopnooh_ndx) * q(:ncol,plev,isopnooh_ndx)
+       end if
+    endif
+    if( nc4cho_dd ) then
+       if( map(nc4cho_ndx) == 0 ) then
+          depvel(:ncol,nc4cho_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,nc4cho_ndx)   = wrk(:ncol) * depvel(:ncol,nc4cho_ndx) * q(:ncol,plev,nc4cho_ndx)
+       end if
+    endif
+    if( nc4ch2oh_dd ) then
+       if( map(nc4ch2oh_ndx) == 0 ) then
+          depvel(:ncol,nc4ch2oh_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,nc4ch2oh_ndx)   = wrk(:ncol) * depvel(:ncol,nc4ch2oh_ndx) * q(:ncol,plev,nc4ch2oh_ndx)
+       end if
+    endif
+    if( terpnit_dd ) then
+       if( map(terpnit_ndx) == 0 ) then
+          depvel(:ncol,terpnit_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,terpnit_ndx)   = wrk(:ncol) * depvel(:ncol,terpnit_ndx) * q(:ncol,plev,terpnit_ndx)
+       end if
+    endif
+    if( nterpooh_dd ) then
+       if( map(nterpooh_ndx) == 0 ) then
+          depvel(:ncol,nterpooh_ndx) = depvel(:ncol,h2o2_ndx)
+          dflx(:ncol,nterpooh_ndx)   = wrk(:ncol) * depvel(:ncol,nterpooh_ndx) * q(:ncol,plev,nterpooh_ndx)
+       end if
+    endif
+
 
   end subroutine drydep_table
 
@@ -1569,7 +1588,7 @@ contains
     integer :: k, num_max, k_max
     integer :: num_seas(5)
     integer :: plon, plat
-    integer :: ierr
+    integer :: ierr, ndx
 
     real(r8)              :: spc_mass
     real(r8)              :: diff_min, target_lat
@@ -1587,6 +1606,7 @@ contains
     real(r8), allocatable :: lat_lai(:)
     real(r8), allocatable :: clat(:)
     character(len=32) :: test_name
+    character(len=4) :: tag_name
     type(file_desc_t) :: piofile
     type(var_desc_t) :: vid
     logical :: do_soilw
@@ -1688,53 +1708,69 @@ contains
     hcn_ndx     = get_spc_ndx( 'HCN')
     ch3cn_ndx   = get_spc_ndx( 'CH3CN')
 
-  ! for the cotags kludge..
-      cohc_ndx     = get_spc_ndx( 'COhc' )
-      come_ndx     = get_spc_ndx( 'COme' )
-      co01_ndx     = get_spc_ndx( 'CO01' )
-      co02_ndx     = get_spc_ndx( 'CO02' )
-      co03_ndx     = get_spc_ndx( 'CO03' )
-      co04_ndx     = get_spc_ndx( 'CO04' )
-      co05_ndx     = get_spc_ndx( 'CO05' )
-      co06_ndx     = get_spc_ndx( 'CO06' )
-      co07_ndx     = get_spc_ndx( 'CO07' )
-      co08_ndx     = get_spc_ndx( 'CO08' )
-      co09_ndx     = get_spc_ndx( 'CO09' )
-      co10_ndx     = get_spc_ndx( 'CO10' )
-      co11_ndx     = get_spc_ndx( 'CO11' )
-      co12_ndx     = get_spc_ndx( 'CO12' )
-      co13_ndx     = get_spc_ndx( 'CO13' )
-      co14_ndx     = get_spc_ndx( 'CO14' )
-      co15_ndx     = get_spc_ndx( 'CO15' )
-      co16_ndx     = get_spc_ndx( 'CO16' )
-      co17_ndx     = get_spc_ndx( 'CO17' )
-      co18_ndx     = get_spc_ndx( 'CO18' )
-      co19_ndx     = get_spc_ndx( 'CO19' )
-      co20_ndx     = get_spc_ndx( 'CO20' )
-      co21_ndx     = get_spc_ndx( 'CO21' )
-      co22_ndx     = get_spc_ndx( 'CO22' )
-      co23_ndx     = get_spc_ndx( 'CO23' )
-      co24_ndx     = get_spc_ndx( 'CO24' )
-      co25_ndx     = get_spc_ndx( 'CO25' )
-      co26_ndx     = get_spc_ndx( 'CO26' )
-      co27_ndx     = get_spc_ndx( 'CO27' )
-      co28_ndx     = get_spc_ndx( 'CO28' )
-      co29_ndx     = get_spc_ndx( 'CO29' )
-      co30_ndx     = get_spc_ndx( 'CO30' )
-      co31_ndx     = get_spc_ndx( 'CO31' )
-      co32_ndx     = get_spc_ndx( 'CO32' )
-      co33_ndx     = get_spc_ndx( 'CO33' )
-      co34_ndx     = get_spc_ndx( 'CO34' )
-      co35_ndx     = get_spc_ndx( 'CO35' )
-      co36_ndx     = get_spc_ndx( 'CO36' )
-      co37_ndx     = get_spc_ndx( 'CO37' )
-      co38_ndx     = get_spc_ndx( 'CO38' )
-      co39_ndx     = get_spc_ndx( 'CO39' )
-      co40_ndx     = get_spc_ndx( 'CO40' )
-      co41_ndx     = get_spc_ndx( 'CO41' )
-      co42_ndx     = get_spc_ndx( 'CO42' )
+!lke-TS1
+    phenooh_ndx  = get_spc_ndx( 'PHENOOH')
+    benzooh_ndx  = get_spc_ndx( 'BENZOOH')
+    c6h5ooh_ndx  = get_spc_ndx( 'C6H5OOH')
+    bzooh_ndx    = get_spc_ndx( 'BZOOH')
+    xylolooh_ndx = get_spc_ndx( 'XYLOLOOH')
+    xylenooh_ndx = get_spc_ndx( 'XYLENOOH')
+    terp2ooh_ndx = get_spc_ndx( 'TERP2OOH')
+    terprod1_ndx = get_spc_ndx( 'TERPROD1')
+    terprod2_ndx = get_spc_ndx( 'TERPROD2')
+    hmprop_ndx   = get_spc_ndx( 'HMPROP')
+    mboooh_ndx   = get_spc_ndx( 'MBOOOH')
+    hpald_ndx    = get_spc_ndx( 'HPALD')
+    iepox_ndx    = get_spc_ndx( 'IEPOX')
+    noa_ndx      = get_spc_ndx( 'NOA')
+    alknit_ndx   = get_spc_ndx( 'ALKNIT')
+    isopnita_ndx = get_spc_ndx( 'ISOPNITA')
+    isopnitb_ndx = get_spc_ndx( 'ISOPNITB')
+    honitr_ndx   = get_spc_ndx( 'HONITR')
+    isopnooh_ndx = get_spc_ndx( 'ISOPNOOH')
+    nc4cho_ndx   = get_spc_ndx( 'NC4CHO')
+    nc4ch2oh_ndx = get_spc_ndx( 'NC4CH2OH')
+    terpnit_ndx  = get_spc_ndx( 'TERPNIT')
+    nterpooh_ndx = get_spc_ndx( 'NTERPOOH')
+    phenooh_dd   = has_drydep( 'PHENOOH')
+    benzooh_dd   = has_drydep( 'BENZOOH')
+    c6h5ooh_dd   = has_drydep( 'C6H5OOH')
+    bzooh_dd     = has_drydep( 'BZOOH')
+    xylolooh_dd  = has_drydep( 'XYLOLOOH')
+    xylenooh_dd  = has_drydep( 'XYLENOOH')
+    terp2ooh_dd  = has_drydep( 'TERP2OOH')
+    terprod1_dd  = has_drydep( 'TERPROD1')
+    terprod2_dd  = has_drydep( 'TERPROD2')
+    hmprop_dd    = has_drydep( 'HMPROP')
+    mboooh_dd    = has_drydep( 'MBOOOH')
+    hpald_dd     = has_drydep( 'HPALD')
+    iepox_dd     = has_drydep( 'IEPOX')
+    noa_dd       = has_drydep( 'NOA')
+    alknit_dd    = has_drydep( 'ALKNIT')
+    isopnita_dd  = has_drydep( 'ISOPNITA')
+    isopnitb_dd  = has_drydep( 'ISOPNITB')
+    honitr_dd    = has_drydep( 'HONITR')
+    isopnooh_dd  = has_drydep( 'ISOPNOOH')
+    nc4cho_dd    = has_drydep( 'NC4CHO')
+    nc4ch2oh_dd  = has_drydep( 'NC4CH2OH')
+    terpnit_dd   = has_drydep( 'TERPNIT')
+    nterpooh_dd  = has_drydep( 'NTERPOOH')
+!
+    cohc_ndx     = get_spc_ndx( 'COhc' )
+    come_ndx     = get_spc_ndx( 'COme' )
 
-      o3s_ndx      = get_spc_ndx( 'O3S' )
+    tag_cnt=0
+    cotag_ndx(:)=-1
+    do i = 1,NTAGS
+       write(tag_name,'(a2,i2.2)') 'CO',i
+       ndx = get_spc_ndx(tag_name)
+       if (ndx>0) then
+          tag_cnt = tag_cnt+1
+          cotag_ndx(tag_cnt) = ndx
+       endif
+    enddo
+
+    o3s_ndx      = get_spc_ndx( 'O3S' )
 
     do i=1,nddvels
        if ( mapping(i) > 0 ) then
@@ -1853,7 +1889,7 @@ contains
        ierr = pio_inq_varid( piofile, 'PCT_WETLAND', vid )
        ierr = pio_get_var( piofile, vid, wetland )
 
-       call pio_closefile( piofile )
+       call cam_pio_closefile( piofile )
 
        !---------------------------------------------------------------------------
        ! scale vegetation, urban, lake, and wetland to fraction
@@ -1933,7 +1969,7 @@ contains
     ierr = pio_inq_varid( piofile, 'season_wes', vid )
     ierr = pio_get_var( piofile, vid, wk_lai )
 
-    call pio_closefile( piofile )
+    call cam_pio_closefile( piofile )
 
 
     if(dycore_is('UNSTRUCTURED') ) then
@@ -2006,7 +2042,6 @@ contains
 
   !-------------------------------------------------------------------------------------
   subroutine get_landuse_and_soilw_from_file(do_soilw)
-    use cam_pio_utils, only : cam_pio_openfile
     use ncdio_atm, only : infld
     logical, intent(in) :: do_soilw
     logical :: readvar
@@ -2019,15 +2054,24 @@ contains
     if(lexist) then
        call cam_pio_openfile(piofile, locfn, PIO_NOWRITE)
 
-       call infld('fraction_landuse', piofile, 'ncol','class',' ',1,pcols,1,n_land_type, begchunk,endchunk, &
-            fraction_landuse, readvar, 'PHYS')
-
-       if(do_soilw) then
-          call infld('soilw', piofile, 'ncol','month',' ',1,pcols,1,12, begchunk,endchunk, &
-               soilw_3d, readvar, 'PHYS')
+       call infld('fraction_landuse', piofile, 'ncol','class',1,pcols,1,n_land_type, begchunk,endchunk, &
+            fraction_landuse, readvar, gridname='physgrid')
+       if (.not. readvar) then
+          write(iulog,*)'**************************************'
+          write(iulog,*)'get_landuse_and_soilw_from_file: INFO:'
+          write(iulog,*)' fraction_landuse not read from file: '
+          write(iulog,*)' ', trim(locfn)
+          write(iulog,*)' setting all values to zero'
+          write(iulog,*)'**************************************'
+          fraction_landuse = 0._r8
        end if
 
-       call pio_closefile(piofile)
+       if(do_soilw) then
+          call infld('soilw', piofile, 'ncol','month',1,pcols,1,12, begchunk,endchunk, &
+               soilw_3d, readvar, gridname='physgrid')
+       end if
+
+       call cam_pio_closefile(piofile)
     else
        call endrun('Unstructured grids require drydep_srf_file ')
     end if
@@ -2041,9 +2085,9 @@ contains
                          wetland, vegetation_map, soilw_map, do_soilw )
 
     use mo_constants, only : r2d
-    use scamMod, only : latiop,loniop,scmlat,scmlon,use_camiop
+    use scamMod, only : latiop,loniop,scmlat,scmlon,scm_cambfb_mode
     use shr_scam_mod  , only: shr_scam_getCloseLatLon  ! Standardized system subroutines
-    use filenames, only: ncdata
+    use cam_initfiles, only: initial_file_get_id
     use dycore, only : dycore_is
     use phys_grid, only : scatter_field_to_chunk
     implicit none
@@ -2071,7 +2115,7 @@ contains
     integer :: latidx,lonidx
 
     integer, parameter           :: veg_ext = 20
-    type(file_desc_t)            :: piofile
+    type(file_desc_t), pointer   :: piofile
     integer                      :: i, j, ii, jj, jl, ju, i_ndx, n
     integer, dimension(plon+1)   :: ind_lon
     integer, dimension(plat+1)  :: ind_lat
@@ -2093,7 +2137,6 @@ contains
 
     logical, parameter :: has_npole = .true.
     integer :: ploniop,platiop
-    character(len=shr_kind_cl) :: ncdata_loc
     real(r8) :: tmp_frac_lu(plon,n_land_type,plat), tmp_soilw_3d(plon,12,plat)
 
     if(dycore_is('UNSTRUCTURED') ) then
@@ -2111,11 +2154,9 @@ contains
     ju = plon
 
     if (single_column) then
-       if (use_camiop) then
-          call getfil (ncdata, ncdata_loc)
-          call cam_pio_openfile (piofile, trim(ncdata_loc), PIO_NOWRITE)
+       if (scm_cambfb_mode) then
+          piofile => initial_file_get_id()
           call shr_scam_getCloseLatLon(piofile%fh,scmlat,scmlon,closelat,closelon,latidx,lonidx)
-          call pio_closefile ( piofile)
           ploniop=size(loniop)
           platiop=size(latiop)
        else 
@@ -2932,6 +2973,10 @@ contains
                       wrk(:) = wrk(:) + lnd_frc(:)/(dep_ra(:ncol,lt,lchnk) + dep_rb(:ncol,lt,lchnk) + resc(:))
                    endwhere
                 end if
+
+                !  JFL - increase in dry deposition of SO2 to improve bias over US/Europe
+                wrk(:) = wrk(:) * 2._r8
+
              case( 'SO4' )
                 where( fr_lnduse(:ncol,lt) )
                    wrk(:) = wrk(:) + lnd_frc(:)/(dep_ra(:ncol,lt,lchnk) + rds(:,lt))
@@ -3147,7 +3192,7 @@ contains
     !------------------------------------------------------------------
     !	... close file
     !------------------------------------------------------------------
-    call pio_closefile( piofile )
+    call cam_pio_closefile( piofile )
 
   end subroutine soilw_inti
   

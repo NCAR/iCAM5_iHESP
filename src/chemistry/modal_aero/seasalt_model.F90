@@ -4,7 +4,7 @@
 module seasalt_model
   use shr_kind_mod,   only: r8 => shr_kind_r8, cl => shr_kind_cl
   use ppgrid,         only: pcols, pver
-  use modal_aero_data,only: ntot_amode
+  use modal_aero_data,only: ntot_amode, nslt=>nSeaSalt
 
   implicit none
   private
@@ -17,45 +17,55 @@ module seasalt_model
   public :: seasalt_emis
   public :: seasalt_active
 
-  integer, parameter :: nslt = max(3,ntot_amode-3)
-  integer, parameter :: nnum = nslt
-  integer, parameter :: seasalt_nbin = nslt
-  integer, parameter :: seasalt_nnum = nnum
+  integer, protected :: seasalt_nbin ! = nslt
+  integer, protected :: seasalt_nnum ! = nnum
 
-#if  ( defined MODAL_AERO_7MODE )
-  character(len=6),parameter :: seasalt_names(nslt+nnum) = &
-       (/ 'ncl_a1', 'ncl_a2', 'ncl_a4', 'ncl_a6', 'num_a1', 'num_a2', 'num_a4', 'num_a6' /)
-#elif( defined MODAL_AERO_3MODE || defined MODAL_AERO_4MODE )
-  character(len=6),parameter :: seasalt_names(nslt+nnum) = &
-       (/ 'ncl_a1', 'ncl_a2', 'ncl_a3', 'num_a1', 'num_a2', 'num_a3'/)
-#endif
-
-  integer :: seasalt_indices(nslt+nnum)
+  character(len=6), protected, allocatable :: seasalt_names(:)
+  integer, protected, allocatable :: seasalt_indices(:)
 
   logical :: seasalt_active = .false.
+
+  real(r8):: emis_scale
 
 contains
   
   !=============================================================================
   !=============================================================================
-  subroutine seasalt_init
+  subroutine seasalt_init(seasalt_emis_scale)
     use sslt_sections, only: sslt_sections_init
     use constituents,  only: cnst_get_ind
+    use rad_constituents, only: rad_cnst_get_info
 
-    integer :: m
+    real(r8), intent(in) :: seasalt_emis_scale
+    integer :: m, l, nspec, ndx
+    character(len=32) :: spec_name
+    
+    seasalt_nbin = nslt
+    seasalt_nnum = nslt
+    allocate(seasalt_names(2*nslt))
+    allocate(seasalt_indices(2*nslt))
 
-    do m = 1, seasalt_nbin
-       call cnst_get_ind(seasalt_names(m), seasalt_indices(m),abort=.false.)
-    enddo
-    do m = 1, seasalt_nnum
-       call cnst_get_ind(seasalt_names(seasalt_nbin+m), seasalt_indices(seasalt_nbin+m),abort=.false.)
+    ndx=0
+    do m = 1, ntot_amode
+       call rad_cnst_get_info(0, m, nspec=nspec)
+       do l = 1, nspec
+          call rad_cnst_get_info(0, m, l, spec_name=spec_name )
+          if (spec_name(:3) == 'ncl') then
+             ndx=ndx+1
+             seasalt_names(ndx) = spec_name
+             seasalt_names(nslt+ndx) = 'num_'//spec_name(5:)
+             call cnst_get_ind(seasalt_names(     ndx), seasalt_indices(     ndx))
+             call cnst_get_ind(seasalt_names(nslt+ndx), seasalt_indices(nslt+ndx))
+          endif
+       enddo
     enddo
 
     seasalt_active = any(seasalt_indices(:) > 0)
-
     if (.not.seasalt_active) return
 
     call sslt_sections_init()
+
+    emis_scale = seasalt_emis_scale
 
   end subroutine seasalt_init
 
@@ -77,15 +87,16 @@ contains
     integer  :: mn, mm, ibin, isec, i
     real(r8) :: fi(ncol,nsections)
 
-#if  ( defined MODAL_AERO_7MODE )
-    real(r8), parameter :: emis_scale = 1.62_r8
-    real(r8), parameter :: sst_sz_range_lo (nslt) = (/ 0.08e-6_r8, 0.02e-6_r8, 0.3e-6_r8,  1.0e-6_r8 /)  ! accu, aitken, fine, coarse
-    real(r8), parameter :: sst_sz_range_hi (nslt) = (/ 0.3e-6_r8,  0.08e-6_r8, 1.0e-6_r8, 10.0e-6_r8 /)
-#elif( defined MODAL_AERO_3MODE || defined MODAL_AERO_4MODE )
-    real(r8), parameter :: emis_scale = 1.35_r8 
-    real(r8), parameter :: sst_sz_range_lo (nslt) =  (/ 0.08e-6_r8,  0.02e-6_r8,  1.0e-6_r8 /)  ! accu, aitken, coarse
-    real(r8), parameter :: sst_sz_range_hi (nslt) =  (/ 1.0e-6_r8,   0.08e-6_r8, 10.0e-6_r8 /)
-#endif
+    real(r8) :: sst_sz_range_lo (nslt)
+    real(r8) :: sst_sz_range_hi (nslt)
+
+    if (nslt==4) then
+       sst_sz_range_lo (:) = (/ 0.08e-6_r8, 0.02e-6_r8, 0.3e-6_r8,  1.0e-6_r8 /) ! accu, aitken, fine, coarse
+       sst_sz_range_hi (:) = (/ 0.3e-6_r8,  0.08e-6_r8, 1.0e-6_r8, 10.0e-6_r8 /)
+    else if (nslt==3) then
+       sst_sz_range_lo (:) =  (/ 0.08e-6_r8,  0.02e-6_r8,  1.0e-6_r8 /)  ! accu, aitken, coarse
+       sst_sz_range_hi (:) =  (/ 1.0e-6_r8,   0.08e-6_r8, 10.0e-6_r8 /)
+    endif
 
     fi(:ncol,:nsections) = fluxes( srf_temp, u10cubed, ncol )
 

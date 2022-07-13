@@ -6,7 +6,6 @@ module gcr_ionization
   use tracer_data,    only : trfld,trfile
   use cam_logfile,    only : iulog
   use physics_buffer, only : physics_buffer_desc
-  use cam_history,    only : outfld, addfld, phys_decomp
   use physics_types,  only : physics_state
   use ppgrid,         only : begchunk, endchunk
   use ppgrid,         only : pcols, pver
@@ -17,13 +16,13 @@ module gcr_ionization
   public :: gcr_ionization_readnl
   public :: gcr_ionization_init
   public :: gcr_ionization_adv
-  public :: gcr_ionization_noxhox
+  public :: gcr_ionization_ionpairs
 
   type(trfld), pointer :: fields(:)
   type(trfile), save :: file
 
   character(len=32)  :: specifier(1) = 'prod'
-  character(len=256) :: filename = ''
+  character(len=256) :: filename = 'NONE'
   character(len=256) :: filelist = ''
   character(len=256) :: datapath = ''
   character(len=32)  :: datatype = 'SERIAL'
@@ -115,7 +114,7 @@ contains
     fixed_tod = gcr_ionization_fixed_tod
 
     ! Turn on galactic cosmic rays if user has specified an input dataset.
-    if (len_trim(filename) > 0 ) has_gcr_ionization = .true.
+    if (len_trim(filename) > 0 .and. filename.ne.'NONE') has_gcr_ionization = .true.
 
   end subroutine gcr_ionization_readnl
 
@@ -129,8 +128,6 @@ contains
     file%in_pbuf(:) = .false.
     call trcdata_init( specifier, filename, filelist, datapath, fields, file, &
                        rmv_file, cycle_yr, fixed_ymd, fixed_tod, datatype )
-
-    call addfld('GCRION','/cm3/sec', pver, 'I', 'GCR ionizaton rate', phys_decomp )
 
   end subroutine gcr_ionization_init
 
@@ -148,7 +145,7 @@ contains
 
   !-------------------------------------------------------------------
   !-------------------------------------------------------------------
-  subroutine gcr_ionization_get( ncol, lchnk, ionpairs )
+  subroutine gcr_ionization_ionpairs( ncol, lchnk, ionpairs )
 
     integer, intent(in) :: lchnk
     integer, intent(in) :: ncol
@@ -159,38 +156,8 @@ contains
     if (.not.has_gcr_ionization) return
 
     ionpairs(:ncol,:) = fields(1)%data(:ncol,:,lchnk)
-    call outfld( 'GCRION', ionpairs(:ncol,:), ncol, lchnk )
 
-  end subroutine gcr_ionization_get
+  end subroutine gcr_ionization_ionpairs
 
-  !-------------------------------------------------------------------
-  !-------------------------------------------------------------------
-  subroutine gcr_ionization_noxhox( ncol, lchnk, zmid, gcr_nox, gcr_hox )
-    use spehox,  only : hox_prod_factor
-
-    integer, intent(in) :: ncol, lchnk
-    real(r8), intent(in) :: zmid(:,:)
-
-    real(r8), intent(out) :: gcr_nox(:,:)
-    real(r8), intent(out) :: gcr_hox(:,:)
-
-    real(r8) :: hoxprod_factor(pver)
-    real(r8) :: ionpairs(pcols,pver)
-    integer :: i
-
-    gcr_nox(:,:) = 0._r8
-    gcr_hox(:,:) = 0._r8
-
-    if (.not.has_gcr_ionization) return
-    call  gcr_ionization_get( ncol, lchnk, ionpairs )
-
-    gcr_nox(:ncol,:) = ionpairs(:ncol,:)
-
-    do i = 1,ncol
-       hoxprod_factor(:pver) = hox_prod_factor( ionpairs(i,:pver), zmid(i,:pver) )
-       gcr_hox(i,:pver) = hoxprod_factor(:pver) * ionpairs(i,:pver)
-    end do
-
-  end subroutine gcr_ionization_noxhox
 
 end module gcr_ionization

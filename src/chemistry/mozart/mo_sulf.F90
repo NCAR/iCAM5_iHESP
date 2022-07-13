@@ -30,7 +30,7 @@
       logical :: read_sulf = .false.
 
       character(len=16)  :: fld_name = 'SULFATE'
-      character(len=256) :: filename = ' '
+      character(len=256) :: filename = 'NONE'
       character(len=256) :: filelist = ' '
       character(len=256) :: datapath = ' '
       character(len=32)  :: datatype = 'CYCLICAL'
@@ -39,7 +39,7 @@
       integer            :: fixed_ymd = 0
       integer            :: fixed_tod = 0
 
-      logical :: has_sulf = .false.
+      logical :: has_sulf_file = .false.
 
       contains 
 
@@ -130,7 +130,7 @@ subroutine sulf_readnl(nlfile)
    fixed_tod  = sulf_fixed_tod
 
    ! Turn on prescribed volcanics if user has specified an input dataset.
-   if (len_trim(filename) > 0 ) has_sulf = .true.
+   if (len_trim(filename) > 0 .and. filename.ne.'NONE') has_sulf_file = .true.
 
 end subroutine sulf_readnl
 
@@ -148,7 +148,7 @@ end subroutine sulf_readnl
       use mo_chem_utls,  only : get_spc_ndx, get_rxt_ndx
       use interpolate_data, only : lininterp_init, lininterp, lininterp_finish, interp_type
       use tracer_data,   only : trcdata_init
-      use cam_history,   only : addfld, phys_decomp
+      use cam_history,   only : addfld
 
       implicit none
 
@@ -168,9 +168,10 @@ end subroutine sulf_readnl
       ndxs(3) = get_rxt_ndx( 'usr_NO2_aer' )
       ndxs(4) = get_rxt_ndx( 'usr_HO2_aer' )
       ndxs(5) = get_rxt_ndx( 'het1' )
-      so4_ndx = get_spc_ndx('SO4')
+      so4_ndx = get_spc_ndx( 'SO4' )
+      if ( so4_ndx < 1 ) so4_ndx = get_spc_ndx( 'so4_a1' )
 
-      read_sulf = any( ndxs > 0) .and. (so4_ndx < 0)
+      read_sulf = any( ndxs > 0) .and. (so4_ndx < 0) .and. has_sulf_file
 
       if ( .not. read_sulf ) return
 
@@ -179,7 +180,7 @@ end subroutine sulf_readnl
       call trcdata_init( (/ fld_name /), filename, filelist, datapath, fields, file, &
            rmv_file, cycle_yr, fixed_ymd, fixed_tod, datatype)
 
-      call addfld('SULFATE','VMR', pver, 'I', 'sulfate data', phys_decomp )
+      call addfld('SULFATE', (/ 'lev' /), 'I','VMR', 'sulfate data' )
 
       end subroutine sulf_inti
 

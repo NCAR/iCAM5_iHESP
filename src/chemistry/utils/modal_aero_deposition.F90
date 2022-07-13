@@ -19,9 +19,9 @@ module modal_aero_deposition
 
 use shr_kind_mod,     only: r8 => shr_kind_r8
 use camsrfexch,       only: cam_out_t     
-use constituents,     only: pcnst, cnst_get_ind
-use ppgrid,           only: pcols
+use constituents,     only: cnst_get_ind, pcnst
 use cam_abortutils,   only: endrun
+use rad_constituents, only: rad_cnst_get_info
 
 implicit none
 private
@@ -33,98 +33,99 @@ public :: &
    set_srf_wetdep
 
 ! Private module data
-integer :: idx_bc1  = -1
-integer :: idx_pom1 = -1
-integer :: idx_soa1 = -1
-integer :: idx_soa2 = -1
-integer :: idx_dst1 = -1
-integer :: idx_dst3 = -1
-integer :: idx_ncl3 = -1
-integer :: idx_so43 = -1
-integer :: idx_bc4  = -1
-integer :: idx_pom4 = -1
-
-logical :: bin_fluxes = .false.
 
 logical :: initialized = .false.
+integer :: bcphi_ndx( pcnst ) = -1
+integer :: bcpho_ndx( pcnst ) = -1
+integer :: ocphi_ndx( pcnst ) = -1
+integer :: ocpho_ndx( pcnst ) = -1
+integer :: crse_dust_ndx( pcnst ) = -1
+integer :: fine_dust_ndx( pcnst ) = -1
+integer :: bcphi_cnt = 0
+integer :: ocphi_cnt = 0
+integer :: bcpho_cnt = 0
+integer :: ocpho_cnt = 0
+integer :: crse_dust_cnt = 0
+integer :: fine_dust_cnt = 0
 
 !==============================================================================
 contains
 !==============================================================================
 
-subroutine modal_aero_deposition_init(bc1_ndx,pom1_ndx,soa1_ndx,soa2_ndx,dst1_ndx, &
-                            dst3_ndx,ncl3_ndx,so43_ndx,num3_ndx,bc4_ndx,pom4_ndx)
+subroutine modal_aero_deposition_init( bcphi_indices, bcpho_indices, ocphi_indices, &
+                                ocpho_indices, fine_dust_indices, crse_dust_indices )
 
-! set aerosol indices for re-mapping surface deposition fluxes:
-! *_a1 = accumulation mode
-! *_a2 = aitken mode
-! *_a3 = coarse mode
+  ! set aerosol indices for re-mapping surface deposition fluxes:
+  ! *_a1 = accumulation mode
+  ! *_a2 = aitken mode
+  ! *_a3 = coarse mode
+  
+  ! can be initialized with user specified indices
+  ! if called from aerodep_flx module (for prescribed modal aerosol fluxes) then these indices are specified
+  integer, optional, intent(in) :: bcphi_indices(:)     ! hydrophilic black carbon
+  integer, optional, intent(in) :: bcpho_indices(:)     ! hydrophobic black carbon
+  integer, optional, intent(in) :: ocphi_indices(:)     ! hydrophilic organic carbon
+  integer, optional, intent(in) :: ocpho_indices(:)     ! hydrophobic organic carbon 
+  integer, optional, intent(in) :: fine_dust_indices(:) ! fine dust
+  integer, optional, intent(in) :: crse_dust_indices(:) ! coarse dust
 
-   ! can be initialized with user specified indices
-   ! if called from aerodep_flx module (for prescribed modal aerosol fluxes) then these indices are specified
+  ! local vars
+  integer :: i, pcnt, scnt
 
-   integer, optional, intent(in) :: bc1_ndx,pom1_ndx,soa1_ndx,soa2_ndx,dst1_ndx,dst3_ndx,ncl3_ndx,so43_ndx,num3_ndx
-   integer, optional, intent(in) :: bc4_ndx,pom4_ndx
+  character(len=16), parameter :: fine_dust_modes(2) =  (/ 'accum           ', 'fine_dust       '/)
+  character(len=16), parameter :: crse_dust_modes(2) =  (/ 'coarse          ', 'coarse_dust     '/)
+  character(len=16), parameter :: hydrophilic_carbon_modes(1) = (/'accum           '/)
+  character(len=16), parameter :: hydrophobic_carbon_modes(3) = (/'aitken          ',  'coarse          ', 'primary_carbon  '/)
 
-   ! if already initialized abort the run
-   if (initialized) then
-     call endrun('modal_aero_deposition_init is already initialized')
-   endif
+  ! if already initialized abort the run
+  if (initialized) then
+     call endrun('modal_aero_deposition is already initialized')
+  endif
 
-   if (present(bc1_ndx)) then
-      idx_bc1  = bc1_ndx
-   else
-      call cnst_get_ind('bc_a1',  idx_bc1)
-   endif
-   if (present(pom1_ndx)) then
-      idx_pom1 = pom1_ndx
-   else
-      call cnst_get_ind('pom_a1', idx_pom1)
-   endif
-   if (present(soa1_ndx)) then
-      idx_soa1 = soa1_ndx
-   else
-      call cnst_get_ind('soa_a1', idx_soa1)
-   endif
-   if (present(soa2_ndx)) then
-      idx_soa2 = soa2_ndx
-   else
-      call cnst_get_ind('soa_a2', idx_soa2)
-   endif
-   if (present(dst1_ndx)) then
-      idx_dst1 = dst1_ndx
-   else
-      call cnst_get_ind('dst_a1', idx_dst1,abort=.false.)
-   endif
-   if (present(dst3_ndx)) then
-      idx_dst3 = dst3_ndx
-   else
-      call cnst_get_ind('dst_a3', idx_dst3,abort=.false.)
-   endif
-   if (present(ncl3_ndx)) then
-      idx_ncl3 = ncl3_ndx
-   else
-      call cnst_get_ind('ncl_a3', idx_ncl3,abort=.false.)
-   endif
-   if (present(so43_ndx)) then
-      idx_so43 = so43_ndx
-   else
-      call cnst_get_ind('so4_a3', idx_so43,abort=.false.)
-   endif
-   if (present(bc4_ndx)) then
-      idx_bc4 = bc4_ndx
-   else
-      call cnst_get_ind('bc_a4', idx_bc4,abort=.false.)
-   endif
-   if (present(pom4_ndx)) then
-      idx_pom4 = pom4_ndx
-   else
-      call cnst_get_ind('pom_a4', idx_pom4,abort=.false.)   
-   endif
+  if (present(bcphi_indices)) then
+     bcphi_cnt = size(bcphi_indices)
+     bcphi_ndx(1:bcphi_cnt) = bcphi_indices (1:bcphi_cnt)
+  else
+     call get_indices( type='black-c', modes=hydrophilic_carbon_modes, indices=bcphi_ndx, count=bcphi_cnt )
+  endif
+  if (present(bcpho_indices)) then
+     bcpho_cnt = size(bcpho_indices)
+     bcpho_ndx(1:bcpho_cnt) = bcpho_indices (1:bcpho_cnt)
+  else
+     call get_indices( type='black-c', modes=hydrophobic_carbon_modes, indices=bcpho_ndx, count=bcpho_cnt )
+  endif
 
-!  for 7 mode bin_fluxes will be false
-   bin_fluxes = idx_dst1>0 .and. idx_dst3>0 .and.idx_ncl3>0 .and. idx_so43>0
-   initialized = .true.
+  if (present(ocphi_indices)) then
+     ocphi_cnt = size(ocphi_indices)
+     ocphi_ndx(1:ocphi_cnt) = ocphi_indices (1:ocphi_cnt)
+  else
+     call get_indices( type='s-organic', modes=hydrophilic_carbon_modes, indices=ocphi_ndx, count=pcnt )
+     call get_indices( type='p-organic', modes=hydrophilic_carbon_modes, indices=ocphi_ndx(pcnt+1:), count=scnt )
+     ocphi_cnt = pcnt+scnt
+  endif
+  if (present(ocpho_indices)) then
+     ocpho_cnt = size(ocpho_indices)
+     ocpho_ndx(1:ocpho_cnt) = ocpho_indices (1:ocpho_cnt)
+  else
+     call get_indices( type='s-organic', modes=hydrophobic_carbon_modes, indices=ocpho_ndx, count=pcnt )
+     call get_indices( type='p-organic', modes=hydrophobic_carbon_modes, indices=ocpho_ndx(pcnt+1:), count=scnt )
+     ocpho_cnt = pcnt+scnt
+  endif
+
+  if (present(fine_dust_indices)) then
+     fine_dust_cnt = size(fine_dust_indices)
+     fine_dust_ndx(1:fine_dust_cnt) = fine_dust_indices(1:fine_dust_cnt)
+  else
+     call get_indices( type='dust', modes=fine_dust_modes, indices=fine_dust_ndx, count=fine_dust_cnt )
+  endif
+  if (present(crse_dust_indices)) then
+     crse_dust_cnt = size(crse_dust_indices)
+     crse_dust_ndx(1:crse_dust_cnt) = crse_dust_indices(1:crse_dust_cnt)
+  else
+     call get_indices( type='dust', modes=crse_dust_modes, indices=crse_dust_ndx, count=crse_dust_cnt )
+  endif
+
+  initialized = .true.
 
 end subroutine modal_aero_deposition_init
 
@@ -139,11 +140,13 @@ subroutine set_srf_wetdep(aerdepwetis, aerdepwetcw, cam_out)
    type(cam_out_t), intent(inout) :: cam_out     ! cam export state
 
    ! Local variables:
-   integer :: i
+   integer :: i, ispec, idx
    integer :: ncol                      ! number of columns
+
+   real(r8) :: bcphiwet_sum, ocphiwet_sum
    !----------------------------------------------------------------------------
 
-   if (.not.bin_fluxes) return
+  if (.not.initialized) call endrun('set_srf_wetdep: modal_aero_deposition has not been initialized')
 
    ncol = cam_out%ncol
 
@@ -157,30 +160,42 @@ subroutine set_srf_wetdep(aerdepwetis, aerdepwetcw, cam_out)
    do i = 1, ncol
 
       ! black carbon fluxes
-      if (idx_bc1>0) &
-         cam_out%bcphiwet(i) = cam_out%bcphiwet(i) -(aerdepwetis(i,idx_bc1)+aerdepwetcw(i,idx_bc1))
-      if (idx_bc4>0) &
-         cam_out%bcphiwet(i) = cam_out%bcphiwet(i) -(aerdepwetis(i,idx_bc4)+aerdepwetcw(i,idx_bc4))
+      do ispec=1,bcphi_cnt
+         cam_out%bcphiwet(i) = cam_out%bcphiwet(i) &
+                             - (aerdepwetis(i,bcphi_ndx(ispec))+aerdepwetcw(i,bcphi_ndx(ispec)))
+      enddo
+      do ispec=1,bcpho_cnt
+         cam_out%bcphiwet(i) = cam_out%bcphiwet(i) &
+                             - (aerdepwetis(i,bcpho_ndx(ispec))+aerdepwetcw(i,bcpho_ndx(ispec)))
+      enddo
 
       ! organic carbon fluxes
-      if (idx_soa1>0) &
-         cam_out%ocphiwet(i) = cam_out%ocphiwet(i) -(aerdepwetis(i,idx_soa1)+aerdepwetcw(i,idx_soa1))
-      if (idx_soa2>0) &
-         cam_out%ocphiwet(i) = cam_out%ocphiwet(i) -(aerdepwetis(i,idx_soa2)+aerdepwetcw(i,idx_soa2))
-      if (idx_pom1>0) &
-         cam_out%ocphiwet(i) = cam_out%ocphiwet(i) -(aerdepwetis(i,idx_pom1)+aerdepwetcw(i,idx_pom1))
-      if (idx_pom4>0) &
-         cam_out%ocphiwet(i) = cam_out%ocphiwet(i) -(aerdepwetis(i,idx_pom4)+aerdepwetcw(i,idx_pom4))
+      do ispec=1,ocphi_cnt
+         cam_out%ocphiwet(i) = cam_out%ocphiwet(i) &
+                             - (aerdepwetis(i,ocphi_ndx(ispec))+aerdepwetcw(i,ocphi_ndx(ispec)))
+      enddo
+      do ispec=1,ocpho_cnt
+         cam_out%ocphiwet(i) = cam_out%ocphiwet(i) &
+                             - (aerdepwetis(i,ocpho_ndx(ispec))+aerdepwetcw(i,ocpho_ndx(ispec)))
+      enddo
 
       ! dust fluxes
-      !
-      ! bulk bin1 (fine) dust deposition equals accumulation mode deposition:
-      cam_out%dstwet1(i) = -(aerdepwetis(i,idx_dst1)+aerdepwetcw(i,idx_dst1))
-      
-      !  A. Simple: Assign all coarse-mode dust to bulk size bin 3:
+      cam_out%dstwet1(i) = 0._r8
       cam_out%dstwet2(i) = 0._r8
-      cam_out%dstwet3(i) = -(aerdepwetis(i,idx_dst3)+aerdepwetcw(i,idx_dst3))
+      cam_out%dstwet3(i) = 0._r8
       cam_out%dstwet4(i) = 0._r8
+
+      ! bulk bin1 (fine) dust deposition equals accumulation mode deposition:
+      do ispec=1,fine_dust_cnt
+         cam_out%dstwet1(i) = cam_out%dstwet1(i) &
+                            -(aerdepwetis(i,fine_dust_ndx(ispec))+aerdepwetcw(i,fine_dust_ndx(ispec)))
+      enddo
+
+      !  Assign all coarse-mode dust to bulk size bin 3:
+      do ispec=1,crse_dust_cnt
+         cam_out%dstwet3(i) = cam_out%dstwet3(i) &
+                            -(aerdepwetis(i,crse_dust_ndx(ispec))+aerdepwetcw(i,crse_dust_ndx(ispec)))
+      enddo
 
       ! in rare cases, integrated deposition tendency is upward
       if (cam_out%bcphiwet(i) .lt. 0._r8) cam_out%bcphiwet(i) = 0._r8
@@ -203,10 +218,12 @@ subroutine set_srf_drydep(aerdepdryis, aerdepdrycw, cam_out)
    type(cam_out_t), intent(inout) :: cam_out     ! cam export state
 
    ! Local variables:
-   integer :: i
+   integer :: i, ispec, idx
    integer :: ncol                      ! number of columns
+   real(r8):: bcphidry_sum, ocphidry_sum, ocphodry_sum
    !----------------------------------------------------------------------------
-   if (.not.bin_fluxes) return
+
+   if (.not.initialized) call endrun('set_srf_drydep: modal_aero_deposition has not been initialized')
 
    ncol = cam_out%ncol
 
@@ -222,31 +239,40 @@ subroutine set_srf_drydep(aerdepdryis, aerdepdrycw, cam_out)
    do i = 1, ncol
 
       ! black carbon fluxes
-      if (idx_bc1>0) &
-           cam_out%bcphidry(i) = cam_out%bcphidry(i) + aerdepdryis(i,idx_bc1)+aerdepdrycw(i,idx_bc1)
-      if (idx_bc4>0) &
-           cam_out%bcphodry(i) = cam_out%bcphodry(i) + aerdepdryis(i,idx_bc4)+aerdepdrycw(i,idx_bc4)
+      do ispec=1,bcphi_cnt
+         cam_out%bcphidry(i) = cam_out%bcphidry(i) &
+                             + (aerdepdryis(i,bcphi_ndx(ispec))+aerdepdrycw(i,bcphi_ndx(ispec)))
+      enddo
+      do ispec=1,bcpho_cnt
+         cam_out%bcphodry(i) = cam_out%bcphodry(i) &
+                             + (aerdepdryis(i,bcpho_ndx(ispec))+aerdepdrycw(i,bcpho_ndx(ispec)))
+      enddo
 
       ! organic carbon fluxes
-      if (idx_pom1>0) &
-           cam_out%ocphidry(i) = cam_out%ocphidry(i) + aerdepdryis(i,idx_pom1)+aerdepdrycw(i,idx_pom1)
-      if( idx_pom4>0) &
-           cam_out%ocphodry(i) = cam_out%ocphodry(i) + aerdepdryis(i,idx_pom4)+aerdepdrycw(i,idx_pom4)
-      if (idx_soa1>0) &
-           cam_out%ocphidry(i) = cam_out%ocphidry(i) + aerdepdryis(i,idx_soa1)+aerdepdrycw(i,idx_soa1)
-      if (idx_soa2>0) &
-           cam_out%ocphodry(i) = cam_out%ocphodry(i) + aerdepdryis(i,idx_soa2)+aerdepdrycw(i,idx_soa2)
+      do ispec=1,ocphi_cnt
+         cam_out%ocphidry(i) = cam_out%ocphidry(i) &
+                             + (aerdepdryis(i,ocphi_ndx(ispec))+aerdepdrycw(i,ocphi_ndx(ispec)))
+      enddo
+      do ispec=1,ocpho_cnt
+         cam_out%ocphodry(i) = cam_out%ocphodry(i) &
+                             + (aerdepdryis(i,ocpho_ndx(ispec))+aerdepdrycw(i,ocpho_ndx(ispec)))
+      enddo
 
       ! dust fluxes
-      !
-      ! bulk bin1 (fine) dust deposition equals accumulation mode deposition:
-      cam_out%dstdry1(i) = aerdepdryis(i,idx_dst1)+aerdepdrycw(i,idx_dst1)
-      
-      ! Two options for partitioning deposition into bins 2-4:
-      !  A. Simple: Assign all coarse-mode dust to bulk size bin 3:
+      cam_out%dstdry1(i) = 0._r8
       cam_out%dstdry2(i) = 0._r8
-      cam_out%dstdry3(i) = aerdepdryis(i,idx_dst3)+aerdepdrycw(i,idx_dst3)
+      cam_out%dstdry3(i) = 0._r8
       cam_out%dstdry4(i) = 0._r8
+      ! bulk bin1 (fine) dust deposition equals accumulation mode deposition:
+      do ispec=1,fine_dust_cnt
+         cam_out%dstdry1(i) = cam_out%dstdry1(i) &
+                            + (aerdepdryis(i,fine_dust_ndx(ispec))+aerdepdrycw(i,fine_dust_ndx(ispec)))
+      enddo
+      !  Assign all coarse-mode dust to bulk size bin 3:
+      do ispec=1,crse_dust_cnt
+         cam_out%dstdry3(i) = cam_out%dstdry3(i) &
+                            + (aerdepdryis(i,crse_dust_ndx(ispec))+aerdepdrycw(i,crse_dust_ndx(ispec)))
+      enddo
 
       ! in rare cases, integrated deposition tendency is upward
       if (cam_out%bcphidry(i) .lt. 0._r8) cam_out%bcphidry(i) = 0._r8
@@ -259,7 +285,46 @@ subroutine set_srf_drydep(aerdepdryis, aerdepdrycw, cam_out)
 
 end subroutine set_srf_drydep
 
+!==============================================================================
+subroutine get_indices( type, modes, indices, count )
 
+  character(len=*), intent(in) :: type
+  character(len=*), intent(in) :: modes(:)
+  integer, intent(out) :: indices(:)
+  integer, intent(out) :: count
+
+  integer :: l, n, ndx, nmodes, nspec
+  character(len=32) :: spec_type, spec_name, mode_type
+
+  call rad_cnst_get_info(0, nmodes=nmodes)
+
+  count = 0
+  indices(:) = -1
+
+  if (nmodes==7) return ! historically turned off for mam7
+
+  do n = 1, nmodes
+
+     call rad_cnst_get_info(0, n, mode_type=mode_type, nspec=nspec)
+
+     if ( any(modes==trim(mode_type)) ) then
+
+        do l = 1,nspec
+           call rad_cnst_get_info(0, n, l, spec_type=spec_type, spec_name=spec_name)
+           call cnst_get_ind(spec_name, ndx, abort=.false.)
+           if (ndx>0) then
+              if (trim(spec_type) == trim(type)) then
+                 count = count+1
+                 indices(count) = ndx
+              endif
+           endif
+        enddo
+
+     endif
+
+  enddo
+
+end subroutine get_indices
 !==============================================================================
 
 end module modal_aero_deposition

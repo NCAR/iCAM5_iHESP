@@ -3,6 +3,7 @@
 
       use shr_kind_mod,      only : r8 => shr_kind_r8
       use cam_logfile,       only : iulog
+      use physics_buffer,    only : pbuf_get_index, pbuf_get_field
 
       implicit none
 
@@ -22,19 +23,19 @@
 
       integer :: id_co2, id_o2, id_o3, id_o2_1d, id_o2_1s, id_o1d, id_h2o, id_o, id_h
       logical :: has_hrates
+      integer :: ele_temp_ndx, ion_temp_ndx
 
       contains
    
       subroutine init_hrates( )
         use mo_chem_utls, only : get_spc_ndx
-        use cam_history,  only : addfld, phys_decomp
-        use ppgrid,       only : pver
+        use cam_history,  only : addfld
         use ref_pres,     only : ptop_ref, psurf_ref
 
 
         implicit none
 
-        integer :: ids(9)
+        integer :: ids(9), err
         character(len=128) :: attr  ! netcdf variable attribute
 
         id_co2   = get_spc_ndx( 'CO2' )
@@ -53,32 +54,35 @@
 
         if (.not. has_hrates) return
 
-        call addfld( 'CPAIR', 'J/K/kg', pver, 'I', 'specific heat cap air', phys_decomp )
-        call addfld( 'QRS_AUR', 'K/s', pver, 'I', 'total auroral heating rate', phys_decomp )
-        call addfld( 'QRS_CO2NIR', 'K/s', pver, 'I', 'co2 nir heating rate', phys_decomp )
-        call addfld( 'QTHERMAL', 'K/s', pver, 'I', 'non-euv photolysis heating rate', phys_decomp )
-        call addfld( 'QRS_MLT', 'K/s', pver, 'I', 'Total heating rate (unmerged with tropospheric RT heating)', phys_decomp )
+        call addfld( 'CPAIR',      (/ 'lev' /), 'I', 'J/K/kg', 'specific heat cap air' )
+        call addfld( 'QRS_AUR',    (/ 'lev' /), 'I', 'K/s', 'total auroral heating rate' )
+        call addfld( 'QRS_CO2NIR', (/ 'lev' /), 'I', 'K/s', 'co2 nir heating rate' )
+        call addfld( 'QTHERMAL',   (/ 'lev' /), 'I', 'K/s', 'non-euv photolysis heating rate' )
+        call addfld( 'QRS_MLT',    (/ 'lev' /), 'I', 'K/s', 'Total heating rate (unmerged with tropospheric RT heating)' )
 
         attr = 'O2 + hv -> O1D + O3P solar heating rate < 200nm'
-        call addfld( 'QRS_SO2A', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_SO2A',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'O2 + hv -> O3P + O3P solar heating rate < 200nm'
-        call addfld( 'QRS_SO2B', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_SO2B',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'O3 + hv -> O1D + O2_1S solar heating rate < 200nm'
-        call addfld( 'QRS_SO3A', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_SO3A',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'O3 + hv -> O3P + O2 solar heating rate < 200nm'
-        call addfld( 'QRS_SO3B', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_SO3B',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'O2 + hv -> 2*O3P solar heating rate > 200nm'
-        call addfld( 'QRS_LO2B', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_LO2B',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'O3 + hv -> O1D + O2_1S solar heating rate > 200nm'
-        call addfld( 'QRS_LO3A', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_LO3A',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'O3 + hv -> O3P + O2 solar heating rate > 200nm'
-        call addfld( 'QRS_LO3B', 'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_LO3B',   (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'Total O3 solar heating > 200nm'
-        call addfld( 'QRS_LO3',  'K/s ', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_LO3',    (/ 'lev' /), 'I',  'K/s', trim(attr) )
         attr = 'total euv heating rate'
-        call addfld( 'QRS_EUV', 'K/s', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'QRS_EUV',    (/ 'lev' /), 'I', 'K/s', trim(attr) )
         attr = 'total jo2 euv photolysis rate'
-        call addfld( 'JO2_EUV', '/s', pver, 'I', trim(attr), phys_decomp )
+        call addfld( 'JO2_EUV',    (/ 'lev' /), 'I', '/s', trim(attr) )
+
+        ele_temp_ndx = pbuf_get_index('TElec',errcode=err)! electron temperature index 
+        ion_temp_ndx = pbuf_get_index('TIon',errcode=err) ! ion temperature index
 
       end subroutine init_hrates
 
@@ -114,16 +118,17 @@
       use shr_orb_mod,       only : shr_orb_decl
       use time_manager,      only : get_curr_calday
       use cam_control_mod,   only : lambm0, eccen, mvelpp, obliqr
-      use mo_constants,      only : r2d
+      use mo_constants,      only : r2d, n2min
       use short_lived_species,only: get_short_lived_species
       use physics_buffer,    only : physics_buffer_desc
       use phys_control,      only : waccmx_is
+      use orbit,             only : zenith
 
 !-----------------------------------------------------------------------
 !        ... dummy arguments
 !-----------------------------------------------------------------------
       integer,             intent(in)  ::  ncol                  ! number columns in chunk
-      type(physics_state), intent(in)  ::  state                 ! physics state structure
+      type(physics_state),target, intent(in)  ::  state                 ! physics state structure
       real(r8),            intent(in)  ::  asdir(pcols)          ! shortwave, direct albedo
       integer,             intent(in)  ::  bot_mlt_lev           ! lowest model level where MLT heating is needed
       real(r8),            intent(out) ::  qrs_tot(pcols,pver)   ! total heating (K/s)
@@ -163,9 +168,6 @@
       real(r8)     ::  euv_hrate(ncol,pver)                          ! chunk euv thermal heating rate
       real(r8)     ::  aur_hrate(ncol,pver)                          ! chunk auroral heating rate
       real(r8)     ::  co2_hrate(ncol,pver)                          ! chunk co2 nir heating rate
-      real(r8)     ::  o2mmr(ncol,pver)                              ! chunk o2 concentration (kg/kg)
-      real(r8)     ::  ommr(ncol,pver)                               ! chunk o concentration (kg/kg)
-      real(r8)     ::  fac1(pver)                                    ! work array
       real(r8)     ::  colo3(pver)                                   ! vertical o3 column density
       real(r8)     ::  zarg(pver)                                    ! vertical height array
       real(r8)     ::  parg(pver)                                    ! vertical pressure array (hPa)
@@ -192,6 +194,17 @@
       real(r8)     ::  calday                                        ! day of year
       real(r8)     ::  delta                                         ! solar declination (radians)
       logical      ::  do_diag
+
+      real(r8), pointer :: ele_temp_fld(:,:) ! electron temperature pointer
+      real(r8), pointer :: ion_temp_fld(:,:) ! ion temperature pointer
+
+      if ( ele_temp_ndx>0 .and. ion_temp_ndx>0 ) then
+         call pbuf_get_field(pbuf, ele_temp_ndx, ele_temp_fld)
+         call pbuf_get_field(pbuf, ion_temp_ndx, ion_temp_fld)
+      else
+         ele_temp_fld => state%t
+         ion_temp_fld => state%t
+      endif
 
       qrs_tot(:ncol,:) = 0._r8
       if (.not. has_hrates) return
@@ -256,7 +269,7 @@
 !-----------------------------------------------------------------------      
 !        ... xform from mmr to vmr
 !-----------------------------------------------------------------------      
-      call mmr2vmr( mmr, vmr, mbar, ncol )
+      call mmr2vmr( mmr(:ncol,:,:), vmr(:ncol,:,:), mbar(:ncol,:), ncol )
 !-----------------------------------------------------------------------      
 !        ... xform water vapor from mmr to vmr
 !-----------------------------------------------------------------------      
@@ -291,9 +304,9 @@
          end do
       end do
       call setrxt_hrates( reaction_rates, state%t, invariants(1,1,indexm), ncol, kbot_hrates )
-      call usrrxt_hrates( reaction_rates, state%t, state%t, state%t, invariants, &
-                          h2ovmr, state%pmid, invariants(:,:,indexm), ncol, kbot_hrates )
-      call adjrxt( reaction_rates, invariants, invariants(1,1,indexm), ncol )
+      call usrrxt_hrates( reaction_rates, state%t, ele_temp_fld, ion_temp_fld, &
+                          h2ovmr, invariants(:,:,indexm), ncol, kbot_hrates )
+      call adjrxt( reaction_rates, invariants, invariants(1,1,indexm), ncol,pver )
       
 !-----------------------------------------------------------------------      
 !     	... set cp array
@@ -351,6 +364,9 @@ column_loop : &
             o2_line(:)  = vmr(i,:,id_o2)
             co2_line(:) = vmr(i,:,id_co2)
             n2_line(:)  = 1._r8 - (o_line(:) + o2_line(:) + vmr(i,:,id_h))
+            where( n2_line(:) < n2min ) 
+               n2_line = n2min
+            end where
             o3_line(:)  = vmr(i,:,id_o3)
             occ(:)      = o_line(:) * invariants(i,:,indexm)
             o2cc(:)     = o2_line(:) * invariants(i,:,indexm)
@@ -415,13 +431,9 @@ column_loop : &
 !-----------------------------------------------------------------------      
 !     	... auroral ion production
 !-----------------------------------------------------------------------      
-      do k = 1,pver
-         o2mmr(:ncol,k) = mmr(:ncol,k,id_o2)
-         ommr(:ncol,k)  = mmr(:ncol,k,id_o)
-      end do
-      call aurora( state%t, o2mmr, ommr, mbar, rlats, &
+      call aurora( state%t, mbar, rlats, &
                    aur_hrate, cpair, state%pmid, lchnk, calday, &
-                   ncol, rlons )
+                   ncol, rlons, pbuf )
       do k = 1,pver
          aur_hrate(:,k)  = aur_hrate(:,k)/invariants(:,k,indexm)
       end do

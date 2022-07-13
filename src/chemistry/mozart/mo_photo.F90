@@ -13,6 +13,7 @@ module mo_photo
   use spmd_utils,       only : masterproc
   use cam_logfile,      only : iulog
   use phys_control,     only : waccmx_is
+  use solar_parms_data, only : f107=>solar_parms_f107, f107a=>solar_parms_f107a
 
   implicit none
 
@@ -73,10 +74,13 @@ module mo_photo
   integer :: jhno3a_ndx, jno3a_ndx, jpana_ndx, jmpana_ndx, jho2no2a_ndx 
   integer :: jonitra_ndx
 
+  integer :: jppi_ndx, jepn1_ndx, jepn2_ndx, jepn3_ndx, jepn4_ndx, jepn6_ndx
+  integer :: jepn7_ndx, jpni1_ndx, jpni2_ndx, jpni3_ndx, jpni4_ndx, jpni5_ndx
   logical :: do_jeuv = .false.
   logical :: do_jshort = .false.
+#ifdef DEBUG
   logical :: do_diag = .false.
-
+#endif
   integer :: ion_rates_idx = -1
 
 contains
@@ -97,7 +101,7 @@ contains
   !----------------------------------------------------------------------
   !----------------------------------------------------------------------
   subroutine photo_inti( xs_coef_file, xs_short_file, xs_long_file, rsf_file, &
-       euvacdat_file, photon_file, electron_file, &
+       photon_file, electron_file, &
        exo_coldens_file, tuv_xsect_file, o2_xsect_file, xactive_prates )
     !----------------------------------------------------------------------
     !	... initialize photolysis module
@@ -117,12 +121,11 @@ contains
     use mo_jlong,      only : jlong_init
     use seasalt_model, only : sslt_names=>seasalt_names, sslt_ncnst=>seasalt_nbin
     use mo_jshort,     only : jshort_init
-    use mo_jeuv,       only : jeuv_init
-    use dyn_grid,      only : get_dyn_grid_parm
+    use mo_jeuv,       only : jeuv_init, neuv
     use phys_grid,     only : get_ncols_p, get_rlat_all_p    
-    use solar_data,    only : has_spectrum
+    use solar_irrad_data,only : has_spectrum
     use photo_bkgrnd,  only : photo_bkgrnd_init
-    use cam_history,   only : addfld,phys_decomp
+    use cam_history,   only : addfld
 
     implicit none
 
@@ -137,7 +140,6 @@ contains
     ! waccm 
     character(len=*), intent(in) :: xs_coef_file
     character(len=*), intent(in) :: xs_short_file
-    character(len=*), intent(in) :: euvacdat_file
     character(len=*), intent(in) :: photon_file
     character(len=*), intent(in) :: electron_file
 
@@ -147,18 +149,16 @@ contains
     real(r8), parameter   :: hPa2Pa = 100._r8
     integer           :: k, n
     type(file_desc_t) :: ncid
-    type(var_desc_t)  :: vidO2, vidO3, vid
+    type(var_desc_t)  :: vid
     type(interp_type) :: lat_wgts
     integer           :: dimid
     integer           :: nlat
     integer           :: ntimes
     integer           :: astat
-    integer           :: gndx
     integer           :: ndx
     integer           :: spc_ndx
     integer           :: ierr
     integer           :: c, ncols
-    integer           :: plev, plevp
     integer, allocatable :: dates(:)
     real(r8)              :: pinterp
     real(r8), allocatable :: lats(:)
@@ -188,13 +188,10 @@ contains
     ! how to determine if shrt calc is needed ?? -- use top level pressure => waccm = true ? false
 
     if ( .not. has_spectrum ) then
-       write(iulog,*) 'photo_inti: solar_data file needs to contain irradiance spectrum'
+       write(iulog,*) 'photo_inti: solar_irrad_data file needs to contain irradiance spectrum'
        call endrun('photo_inti: ERROR -- solar irradiance spectrum is missing')
     endif
     
-    plev = get_dyn_grid_parm('plev')
-    plevp = get_dyn_grid_parm('plevp')
-
     !----------------------------------------------------------------------
     !	... allocate indexers
     !----------------------------------------------------------------------
@@ -210,7 +207,7 @@ contains
        call endrun
     end if
     sht_indexer(:) = 0
-    allocate( euv_indexer(phtcnt),stat=astat )
+    allocate( euv_indexer(neuv),stat=astat )
     if( astat /= 0 ) then
        write(iulog,*) 'photo_inti: Failed to allocate euv_indexer; error = ',astat
        call endrun
@@ -245,7 +242,19 @@ contains
     jho2no2_ndx  = get_rxt_ndx( 'jho2no2' )
     jonitr_ndx = get_rxt_ndx( 'jonitr' )
 
-
+    jppi_ndx = get_rxt_ndx( 'jppi' )
+    jepn1_ndx = get_rxt_ndx( 'jepn1' )
+    jepn2_ndx = get_rxt_ndx( 'jepn2' )
+    jepn3_ndx = get_rxt_ndx( 'jepn3' )
+    jepn4_ndx = get_rxt_ndx( 'jepn4' )
+    jepn6_ndx = get_rxt_ndx( 'jepn6' )
+    jepn7_ndx = get_rxt_ndx( 'jepn7' )
+    jpni1_ndx = get_rxt_ndx( 'jpni1' )
+    jpni2_ndx = get_rxt_ndx( 'jpni2' )
+    jpni3_ndx = get_rxt_ndx( 'jpni3' )
+    jpni4_ndx = get_rxt_ndx( 'jpni4' )
+    ! added to v02
+    jpni5_ndx = get_rxt_ndx( 'jpni5' )
     ox_ndx     = get_spc_ndx( 'OX' )
     if( ox_ndx < 1 ) then
        ox_ndx  = get_spc_ndx( 'O3' )
@@ -279,7 +288,7 @@ contains
 
     do_jshort = o_ndx>0 .and. o2_ndx>0 .and. (o3_ndx>0.or.o3_inv_ndx>0) .and. n2_ndx>0 .and. no_ndx>0
     
-    call jeuv_init( euvacdat_file, photon_file, electron_file, euv_indexer )
+    call jeuv_init( photon_file, electron_file, euv_indexer )
     do_jeuv = any(euv_indexer(:)>0)
 
     !----------------------------------------------------------------------
@@ -297,12 +306,12 @@ contains
        call jlong_init( xs_long_file, rsf_file, lng_indexer )
        if (do_jeuv) then
           call photo_bkgrnd_init()
-          call addfld('Qbkgndtot','cm-3 sec-1', pver, 'A', 'background ionization rate ', phys_decomp )
-          call addfld('Qbkgnd_o1','cm-3 sec-1', pver, 'A', 'background ionization rate ', phys_decomp )
-          call addfld('Qbkgnd_o2','cm-3 sec-1', pver, 'A', 'background ionization rate ', phys_decomp )
-          call addfld('Qbkgnd_n2','cm-3 sec-1', pver, 'A', 'background ionization rate ', phys_decomp )
-          call addfld('Qbkgnd_n1','cm-3 sec-1', pver, 'A', 'background ionization rate ', phys_decomp )
-          call addfld('Qbkgnd_no','cm-3 sec-1', pver, 'A', 'background ionization rate ', phys_decomp )
+          call addfld('Qbkgndtot', (/ 'lev' /), 'A','cm-3 sec-1', 'background ionization rate ' )
+          call addfld('Qbkgnd_o1', (/ 'lev' /), 'A','cm-3 sec-1', 'background ionization rate ' )
+          call addfld('Qbkgnd_o2', (/ 'lev' /), 'A','cm-3 sec-1', 'background ionization rate ' )
+          call addfld('Qbkgnd_n2', (/ 'lev' /), 'A','cm-3 sec-1', 'background ionization rate ' )
+          call addfld('Qbkgnd_n1', (/ 'lev' /), 'A','cm-3 sec-1', 'background ionization rate ' )
+          call addfld('Qbkgnd_no', (/ 'lev' /), 'A','cm-3 sec-1', 'background ionization rate ' )
        endif
        if (do_jshort) then
           call jshort_init( xs_coef_file, xs_short_file, sht_indexer )
@@ -313,7 +322,7 @@ contains
     !----------------------------------------------------------------------
     !        ... check that each photorate is in short or long datasets
     !----------------------------------------------------------------------
-    if( any( (abs(sht_indexer(:)) + abs(lng_indexer(:)) + abs(euv_indexer(:))) == 0 ) ) then
+    if( any( ( abs(sht_indexer(:)) + abs(lng_indexer(:)) ) == 0 ) ) then
        write(iulog,*) ' '
        write(iulog,*) 'photo_inti: the following photorate(s) are not in'
        write(iulog,*) '            either the short or long datasets'
@@ -558,11 +567,17 @@ contains
              end do
           end if
 #ifdef DEBUG
-          write(iulog,*) '-----------------------------------'
-          write(iulog,*) 'photo_inti: diagnostics'
-          write(iulog,*) 'ki, delp = ',ki,delp
-          write(iulog,*) 'pinterp,levs(ki-1:ki) = ',pinterp,levs(ki-1:ki)
-          write(iulog,*) '-----------------------------------'
+          if (masterproc) then
+             write(iulog,*) '-----------------------------------'
+             write(iulog,*) 'photo_inti: diagnostics'
+             write(iulog,*) 'ki, delp = ',ki,delp
+             if (ki>1) then
+                write(iulog,*) 'pinterp,levs(ki-1:ki) = ',pinterp,levs(ki-1:ki)
+             else
+                write(iulog,*) 'pinterp,levs(ki) = ',pinterp,levs(ki)
+             end if
+             write(iulog,*) '-----------------------------------'
+          endif
 #endif
        end if
     end if has_abs_columns
@@ -581,7 +596,7 @@ contains
     use mo_jshort,   only : nsht => nj, jshort
     use mo_jlong,    only : nlng => numj, jlong
     use mo_jeuv,     only : neuv, jeuv, nIonRates
-    use physics_buffer, only : physics_buffer_desc, pbuf_set_field, pbuf_get_field
+    use physics_buffer, only : physics_buffer_desc, pbuf_get_field
     use photo_bkgrnd, only : photo_bkgrnd_calc
     use cam_history, only : outfld
     use infnan,      only : nan, assignment(=)
@@ -614,9 +629,8 @@ contains
 !-----------------------------------------------------------------
     real(r8), parameter :: Pa2mb         = 1.e-2_r8       ! pascals to mb
 
-    integer ::  i, k, m, n                 ! indicies
+    integer ::  i, k, m                    ! indicies
     integer ::  astat
-    integer ::  indxIR                     ! pbuf index for ionization rates
     real(r8) ::  sza
     real(r8) ::  alias_factor
     real(r8) ::  fac1(pver)                ! work space for j(no) calc
@@ -628,7 +642,6 @@ contains
     real(r8) ::  lwc_line(pver)            ! vertical lwc array
     real(r8) ::  eff_alb(pver)             ! effective albedo from cloud modifications
     real(r8) ::  cld_mult(pver)            ! clould multiplier
-    real(r8) ::  tmp(ncol,pver)            ! wrk array
     real(r8), allocatable ::  lng_prates(:,:) ! photorates matrix (1/s)
     real(r8), allocatable ::  sht_prates(:,:) ! photorates matrix (1/s)
     real(r8), allocatable ::  euv_prates(:,:) ! photorates matrix (1/s)
@@ -647,7 +660,7 @@ contains
     real(r8), pointer     :: ionRates(:,:,:)        ! Pointer to ionization rates for O+,O2+,N+,N2+,NO+ in pbuf (s-1 from modules mo_jeuv and mo_jshort)
 
     integer :: n_jshrt_levs, p1, p2
-    real(r8) :: ideltaZkm, factor
+    real(r8) :: ideltaZkm
 
     real(r8) :: qbktot(ncol,pver)
     real(r8) :: qbko1(ncol,pver)
@@ -779,6 +792,21 @@ contains
 
           zarg(p1:p2) = zmid(i,:pver)
 
+         if ( ptop_ref > 10._r8 ) then
+            if (jppi_ndx > 0 )  photos(i,:,jppi_ndx) = photos(i,:,jppi_ndx) +  esfact * 0.42_r8
+            if (jepn1_ndx > 0 ) photos(i,:,jepn1_ndx) = photos(i,:,jepn1_ndx) + esfact * 1.4_r8
+            if (jepn2_ndx > 0 ) photos(i,:,jepn2_ndx) = photos(i,:,jepn2_ndx) + esfact * 3.8e-1_r8
+            if (jepn3_ndx > 0 ) photos(i,:,jepn3_ndx) = photos(i,:,jepn3_ndx) + esfact * 4.7e-2_r8
+            if (jepn4_ndx > 0 ) photos(i,:,jepn4_ndx) = photos(i,:,jepn4_ndx) + esfact * 1.1_r8
+            if (jepn6_ndx > 0 ) photos(i,:,jepn6_ndx) = photos(i,:,jepn6_ndx) + esfact * 8.0e-4_r8
+            if (jepn7_ndx > 0 ) photos(i,:,jepn7_ndx) = photos(i,:,jepn7_ndx) + esfact * 5.2e-2_r8
+            if (jpni1_ndx > 0 ) photos(i,:,jpni1_ndx) = photos(i,:,jpni1_ndx) + esfact * 0.47_r8
+            if (jpni2_ndx > 0 ) photos(i,:,jpni2_ndx) = photos(i,:,jpni2_ndx) + esfact * 0.24_r8
+            if (jpni3_ndx > 0 ) photos(i,:,jpni3_ndx) = photos(i,:,jpni3_ndx) + esfact * 0.15_r8
+            if (jpni4_ndx > 0 ) photos(i,:,jpni4_ndx) = photos(i,:,jpni4_ndx) + esfact * 6.2e-3_r8
+            ! added to v02
+            if (jpni5_ndx > 0 ) photos(i,:,jpni5_ndx) = photos(i,:,jpni5_ndx) + esfact * 1.0_r8 
+        endif
           if (do_jshort) then
              if ( ptop_ref > 10._r8 ) then
                 !-----------------------------------------------------------------
@@ -835,9 +863,9 @@ contains
              !	... euv photorates do not include cloud effects ??
              !-----------------------------------------------------------------
              call jeuv( pver, sza, o_den, o2_den, n2_den,  zarg, euv_prates )
-             do m = 1,phtcnt
+             do m = 1,neuv
                 if( euv_indexer(m) > 0 ) then
-                   photos(i,:,m) = esfact * euv_prates(:,euv_indexer(m))
+                   photos(i,:,euv_indexer(m)) = esfact * euv_prates(:,m)
                 endif
              enddo
           endif
@@ -896,7 +924,7 @@ contains
           ! include background ionization ...
           ! outside daylight block so this is applied in all columns
           !-----------------------------------------------------------------
-          call photo_bkgrnd_calc( o_den, o2_den, n2_den, no_den, zint(i,:),&
+          call photo_bkgrnd_calc( f107, o_den, o2_den, n2_den, no_den, zint(i,:),&
                     photos(i,:,:), qbko1_out=qbko1(i,:), qbko2_out=qbko2(i,:), &
                     qbkn2_out=qbkn2(i,:), qbkn1_out=qbkn1(i,:), qbkno_out=qbkno(i,:) )
        endif
@@ -941,14 +969,14 @@ contains
     !-----------------------------------------------------------------
 
     use ppgrid,       only : pver, pverp
-    use chem_mods,    only : ncol_abs => nabscol, phtcnt, pcnstm1 => gas_pcnst
+    use chem_mods,    only : ncol_abs => nabscol, pcnstm1 => gas_pcnst, phtcnt
     use chem_mods,    only : pht_alias_mult
-    use mo_params,    only : kz, kw
+    use mo_params,    only : kw
     use mo_wavelen,   only : nw
     use mo_photoin,   only : photoin
     use mo_tuv_inti,  only : nlng
     use time_manager, only : get_curr_date
-    use dust_model,   only : ndst => dust_nbin
+    use dust_model,   only : dust_nbin
     use phys_grid,    only : get_rlat_all_p, get_rlon_all_p
 
     implicit none
@@ -971,7 +999,7 @@ contains
     real(r8), intent(in)    :: relhum(ncol,pver)            ! relative humidity
     real(r8), intent(in)    :: cwat(ncol,pver)              ! cloud water (kg/kg)
     real(r8), intent(in)    :: cldfr(ncol,pver)             ! cloud fraction
-    real(r8), intent(in)    :: dust_vmr(ncol,pver,ndst)     ! dust concentration (mol/mol)
+    real(r8), intent(in)    :: dust_vmr(ncol,pver,dust_nbin)! dust concentration (mol/mol)
     real(r8), intent(inout) :: photos(ncol,pver,phtcnt)     ! photodissociation rates (1/s)
     real(r8), intent(out)   :: dt_diag(pcols,8)              ! od diagnostics
     real(r8), intent(out)   :: fracday(pcols)                ! fraction of day
@@ -987,7 +1015,6 @@ contains
     integer  ::  m                      ! index
     integer  ::  ndx                    ! index
     integer  ::  spc_ndx                ! index
-    integer  ::  file                   ! index
     integer  ::  yr, mon, day, tod      ! time of day (seconds past 0Z)
     integer  ::  ncdate                 ! current date(yyyymmdd)
 
@@ -1059,8 +1086,10 @@ contains
     ncdate = yr*10000 + mon*100 + day
     ut   = real(tod)/3600._r8
 #ifdef DEBUG
-    write(iulog,*) 'photo: nj = ',nlng
-    write(iulog,*) 'photo: esfact = ',esfact
+    if (masterproc) then
+       write(iulog,*) 'photo: nj = ',nlng
+       write(iulog,*) 'photo: esfact = ',esfact
+    endif
 #endif
     col_loop : do i = 1,ncol
 daylight : &
@@ -1144,7 +1173,7 @@ secant_in_bounds : &
                 aerso4(pverp:2:-1) = 0._r8
              end if
              aerso4(1)            = aerso4(2)
-             if ( ndst == 4 ) then
+             if ( dust_nbin == 4 ) then
                 do ndx = 1,4
                    aerds(ndx,pverp:2:-1) = dust_vmr(i,:,ndx)
                 end do
@@ -1385,7 +1414,7 @@ secant_in_bounds : &
     !---------------------------------------------------------------
 
     use chem_mods, only : nfs, ncol_abs=>nabscol, indexm
-    use chem_mods, only : nabscol, gas_pcnst, indexm, nfs
+    use chem_mods, only : nabscol, gas_pcnst, indexm
     use chem_mods, only : gas_pcnst
 
     implicit none
@@ -1411,12 +1440,10 @@ secant_in_bounds : &
     !---------------------------------------------------------------
     real(r8), parameter :: xfactor = 2.8704e21_r8/(9.80616_r8*1.38044_r8)
     integer :: k, kl, spc_ndx
-    integer :: ku(ncol)
-    real(r8)    :: dp(ncol)
     real(r8)    :: tint_vals(2)
     real(r8)    :: o2_exo_col(ncol)
     real(r8)    :: o3_exo_col(ncol)
-    integer :: lat, i
+    integer :: i
  
     !---------------------------------------------------------------
     !        ... assign column density at the upper boundary
@@ -1467,7 +1494,6 @@ secant_in_bounds : &
           end if
 #ifdef DEBUG
           write(iulog,*) '-----------------------------------'
-          write(iulog,*) 'set_ub_col: diagnostics @ lat = ',lat
           write(iulog,*) 'o2_exo_col'
           write(iulog,'(1p,5g15.7)') o2_exo_col(:)
           write(iulog,*) 'o3_exo_col'
@@ -1544,12 +1570,10 @@ secant_in_bounds : &
     !---------------------------------------------------------------
     !     	... local variables
     !---------------------------------------------------------------
-    integer  :: i, k, ki, kl
-    integer  :: ku(ncol)                               ! interpolation index
+    integer  :: i, ki, kl
     real(r8) :: pinterp
     real(r8) :: delp
     real(r8) :: tint_vals(2)
-    real(r8) :: dp(ncol)                               ! pressure interpolation factor
 
     do i = 1,ncol
        pinterp = ptop(i)
@@ -1612,7 +1636,7 @@ secant_in_bounds : &
     !---------------------------------------------------------------
     !        the local variables
     !---------------------------------------------------------------
-    integer  ::   i, k, km1, m      ! long, alt indicies
+    integer  :: k, km1, m      ! long, alt indicies
 
     !---------------------------------------------------------------
     !        note: xfactor = 10.*r/(k*g) in cgs units.
@@ -1637,11 +1661,10 @@ secant_in_bounds : &
   end subroutine setcol
 
   subroutine photo_timestep_init( calday )
-    use time_manager,   only : is_end_curr_day
     use euvac,          only : euvac_set_etf
-    use mo_solar_parms, only : solar_parms_get
     use mo_jshort,      only : jshort_timestep_init
     use mo_jlong,       only : jlong_timestep_init
+    use solar_euv_data, only : solar_euv_data_active
 
     !-----------------------------------------------------------------------------
     !	... setup the time interpolation
@@ -1658,12 +1681,9 @@ secant_in_bounds : &
     !	... local variables
     !-----------------------------------------------------------------------------
     integer :: m
-    real(r8) :: f107
-    real(r8) :: f107a
 
     if ( do_jeuv ) then
-       if( is_end_curr_day() ) then
-          call solar_parms_get( f107_s = f107, f107a_s = f107a )
+       if (.not.solar_euv_data_active) then
           call euvac_set_etf( f107, f107a )
        end if
     endif
@@ -1688,10 +1708,12 @@ secant_in_bounds : &
           dels = (calday - days(m)) / (days(m+1) - days(m))
        end if
 #ifdef DEBUG
-       write(iulog,*) '-----------------------------------'
-       write(iulog,*) 'photo_timestep_init: diagnostics'
-       write(iulog,*) 'calday, last, next, dels = ',calday,last,next,dels
-       write(iulog,*) '-----------------------------------'
+       if (masterproc) then
+          write(iulog,*) '-----------------------------------'
+          write(iulog,*) 'photo_timestep_init: diagnostics'
+          write(iulog,*) 'calday, last, next, dels = ',calday,last,next,dels
+          write(iulog,*) '-----------------------------------'
+       endif
 #endif
     end if
 
@@ -1712,7 +1734,7 @@ secant_in_bounds : &
   !--------------------------------------------------------------------------
   !--------------------------------------------------------------------------
   subroutine set_xnox_photo( photos, ncol )
-    use chem_mods,    only : ncol_abs => nabscol, phtcnt, pcnstm1 => gas_pcnst, nfs
+    use chem_mods,    only : phtcnt
     implicit none
     integer, intent(in)     :: ncol
     real(r8), intent(inout) :: photos(ncol,pver,phtcnt)     ! photodissociation rates (1/s)

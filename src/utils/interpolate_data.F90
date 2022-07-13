@@ -15,7 +15,7 @@ module interpolate_data
 ! Public Methods:
 !
 
-  public :: interp_type, lininterp, vertinterp, vertinterpZT, bilin, get_timeinterp_factors
+  public :: interp_type, lininterp, vertinterp, bilin, get_timeinterp_factors
   public :: lininterp_init, lininterp_finish
   type interp_type
      real(r8), pointer :: wgts(:)
@@ -896,93 +896,7 @@ contains
 
 !=========================================================================================
 
-  subroutine vertinterp(ncol, ncold, nlev, pmid, pout, arrin, arrout)
-
-    !-----------------------------------------------------------------------
-    !
-    ! Purpose:
-    ! Vertically interpolate input array to output pressure level
-    ! Copy values at boundaries.
-    !
-    ! Method:
-    !
-    ! Author:
-    !
-    !-----------------------------------------------------------------------
-
-    implicit none
-    !------------------------------Arguments--------------------------------
-    integer , intent(in)  :: ncol              ! column dimension
-    integer , intent(in)  :: ncold             ! declared column dimension
-    integer , intent(in)  :: nlev              ! vertical dimension
-    real(r8), intent(in)  :: pmid(ncold,nlev)  ! input level pressure levels
-    real(r8), intent(in)  :: pout              ! output pressure level
-    real(r8), intent(in)  :: arrin(ncold,nlev) ! input  array
-    real(r8), intent(out) :: arrout(ncold)     ! output array (interpolated)
-    !--------------------------------------------------------------------------
-
-    !---------------------------Local variables-----------------------------
-    integer i,k               ! indices
-    integer kupper(ncold)     ! Level indices for interpolation
-    real(r8) dpu              ! upper level pressure difference
-    real(r8) dpl              ! lower level pressure difference
-    logical found(ncold)      ! true if input levels found
-    logical error             ! error flag
-    !-----------------------------------------------------------------
-    !-----------------------------------------------------------------
-    !
-    ! Initialize index array and logical flags
-    !
-    do i=1,ncol
-       found(i)  = .false.
-       kupper(i) = 1
-    end do
-    error = .false.
-    !
-    ! Store level indices for interpolation.
-    ! If all indices for this level have been found,
-    ! do the interpolation
-    !
-    do k=1,nlev-1
-       do i=1,ncol
-          if ((.not. found(i)) .and. pmid(i,k)<pout .and. pout<=pmid(i,k+1)) then
-             found(i) = .true.
-             kupper(i) = k
-          end if
-       end do
-    end do
-    !
-    ! If we've fallen through the k=1,nlev-1 loop, we cannot interpolate and
-    ! must extrapolate from the bottom or top data level for at least some
-    ! of the longitude points.
-    !
-    do i=1,ncol
-       if (pout <= pmid(i,1)) then
-          arrout(i) = arrin(i,1)
-       else if (pout >= pmid(i,nlev)) then
-          arrout(i) = arrin(i,nlev)
-       else if (found(i)) then
-          dpu = pout - pmid(i,kupper(i))
-          dpl = pmid(i,kupper(i)+1) - pout
-          arrout(i) = (arrin(i,kupper(i)  )*dpl + arrin(i,kupper(i)+1)*dpu)/(dpl + dpu)
-       else
-          error = .true.
-       end if
-    end do
-    !
-    ! Error check
-    !
-    if (error) then
-       call endrun ('VERTINTERP: ERROR FLAG')
-    end if
-
-    return
-  end subroutine vertinterp
-
-
-!=========================================================================================
-
-subroutine vertinterpZT(ncol, ncold, nlev, pin, pout, arrin, arrout, &
+subroutine vertinterp(ncol, ncold, nlev, pin, pout, arrin, arrout, &
                       extrapolate, ln_interp, ps, phis, tbot)
 
    ! Vertically interpolate input array to output pressure level.  The
@@ -1005,16 +919,17 @@ subroutine vertinterpZT(ncol, ncold, nlev, pin, pout, arrin, arrout, &
    real(r8), intent(in)  :: arrin(ncold,nlev) ! input  array
    real(r8), intent(out) :: arrout(ncold)     ! output array (interpolated)
 
-   character(len=1), intent(in) :: extrapolate ! either 'T' or 'Z'
-   logical,          intent(in) :: ln_interp   ! set true to interolate
+   character(len=1), optional, intent(in) :: extrapolate ! either 'T' or 'Z'
+   logical,          optional, intent(in) :: ln_interp   ! set true to interolate
                                                          ! in ln(pressure)
-   real(r8),         intent(in) :: ps(ncold)   ! surface pressure
-   real(r8),         intent(in) :: phis(ncold) ! surface geopotential
-   real(r8),         intent(in) :: tbot(ncold) ! temperature at bottom level
+   real(r8),         optional, intent(in) :: ps(ncold)   ! surface pressure
+   real(r8),         optional, intent(in) :: phis(ncold) ! surface geopotential
+   real(r8),         optional, intent(in) :: tbot(ncold) ! temperature at bottom level
    
    !---------------------------Local variables-----------------------------
    real(r8) :: alpha
    logical  :: linear_interp
+   logical  :: do_extrapolate_T, do_extrapolate_Z
 
    integer  :: i,k              ! indices
    integer  :: kupper(ncold)    ! Level indices for interpolation
@@ -1026,27 +941,33 @@ subroutine vertinterpZT(ncol, ncold, nlev, pin, pout, arrin, arrout, &
 
    alpha = 0.0065_r8*rair*rga
 
-!   if (present(extrapolate)) then
-!      if (extrapolate /= 'T' .and. extrapolate /= 'Z') then
-!         call endrun ('VERTINTERP: extrapolate must be T or Z')
-!      end if
-!      if (.not. present(ps)) then
-!         call endrun ('VERTINTERP: ps required for extrapolation')
-!      end if
-!      if (.not. present(phis)) then
-!         call endrun ('VERTINTERP: phis required for extrapolation')
-!      end if
-!      if (extrapolate == 'Z') then
-!         if (.not. present(tbot)) then
-!            call endrun ('VERTINTERP: extrapolate must be T or Z')
-!         end if
-!      end if
-!   end if
+   do_extrapolate_T = .false.
+   do_extrapolate_Z = .false.
+   if (present(extrapolate)) then
+
+      if (extrapolate == 'T') do_extrapolate_T = .true.
+      if (extrapolate == 'Z') do_extrapolate_Z = .true.
+
+      if (.not. do_extrapolate_T .and. .not. do_extrapolate_Z) then
+         call endrun ('VERTINTERP: extrapolate must be T or Z')
+      end if
+      if (.not. present(ps)) then
+         call endrun ('VERTINTERP: ps required for extrapolation')
+      end if
+      if (.not. present(phis)) then
+         call endrun ('VERTINTERP: phis required for extrapolation')
+      end if
+      if (do_extrapolate_Z) then
+         if (.not. present(tbot)) then
+            call endrun ('VERTINTERP: extrapolate must be T or Z')
+         end if
+      end if
+   end if
 
    linear_interp = .true.
-!   if (present(ln_interp)) then
+   if (present(ln_interp)) then
       if (ln_interp) linear_interp = .false.
-!   end if
+   end if
 
    do i = 1, ncol
       found(i)  = .false.
@@ -1073,11 +994,11 @@ subroutine vertinterpZT(ncol, ncold, nlev, pin, pout, arrin, arrout, &
 
       else if (pout >= pin(i,nlev)) then
 
-         if (extrapolate == 'T') then
+         if (do_extrapolate_T) then
             ! use ECMWF algorithm to extrapolate T
             arrout(i) = extrapolate_T()
 
-         else if (extrapolate == 'Z') then
+         else if (do_extrapolate_Z) then
             ! use ECMWF algorithm to extrapolate Z
             arrout(i) = extrapolate_Z()
 
@@ -1193,7 +1114,7 @@ contains
 
    end function extrapolate_Z
 
-end subroutine vertinterpZT
+end subroutine vertinterp
 
 !=========================================================================================
 

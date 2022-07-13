@@ -32,18 +32,13 @@ contains
 
     use mo_chem_utls, only : get_spc_ndx, get_inv_ndx
     use spmd_utils,   only : masterproc
-    use cam_history,  only : addfld,phys_decomp
-    use cam_history,  only : add_default
-    use ppgrid,       only : pver
     use phys_control, only : phys_getopts
     use sox_cldaero_mod, only : sox_cldaero_init
 
     implicit none
 
-    logical :: history_aerosol   ! Output aerosol diagnostics
 
     call phys_getopts( &
-         history_aerosol_out = history_aerosol, &
          prog_modal_aero_out=modal_aerosols )
 
     cloud_borne = modal_aerosols
@@ -128,11 +123,6 @@ contains
        return
     end if
 
-    call addfld( 'XPH_LWC','kg/kg   ',pver, 'A', 'pH value multiplied by lwc', phys_decomp)
-    if ( history_aerosol ) then    
-       call add_default ('XPH_LWC', 1, ' ') 
-    endif
-
     call sox_cldaero_init()
 
   end subroutine sox_inti
@@ -154,7 +144,15 @@ contains
        xhnm,   &
        invariants, &
        qcw,    &
-       qin     &
+       qin,    &
+       xphlwc, &
+       aqso4,  &
+       aqh2so4,&
+       aqso4_h2o2, &
+       aqso4_o3,   &
+       yph_in,  &
+       aqso4_h2o2_3d, &
+       aqso4_o3_3d &
        )
 
     !-----------------------------------------------------------------------      
@@ -172,12 +170,11 @@ contains
     !           (d) PREDICTION
     !-----------------------------------------------------------------------      
     !
-    use ppgrid,    only : pcols, pver
-    use chem_mods, only : gas_pcnst, nfs
+    use ppgrid,       only : pcols, pver
+    use chem_mods,    only : gas_pcnst, nfs
     use chem_mods,    only : adv_mass
     use physconst,    only : mwdry, gravit
     use mo_constants, only : pi
-    use cam_history,  only : outfld
     use sox_cldaero_mod, only : sox_cldaero_update, sox_cldaero_create_obj, sox_cldaero_destroy_obj
     use cldaero_mod,     only : cldaero_conc_t
 
@@ -202,6 +199,16 @@ contains
     real(r8),         intent(in)    :: invariants(:,:,:)
     real(r8), target, intent(inout) :: qcw(:,:,:)        ! cloud-borne aerosol (vmr)
     real(r8),         intent(inout) :: qin(:,:,:)        ! transported species ( vmr )
+    real(r8),         intent(out)   :: xphlwc(:,:)       ! pH value multiplied by lwc
+
+    real(r8),         intent(out)   :: aqso4(:,:)                   ! aqueous phase chemistry
+    real(r8),         intent(out)   :: aqh2so4(:,:)                 ! aqueous phase chemistry
+    real(r8),         intent(out)   :: aqso4_h2o2(:)                ! SO4 aqueous phase chemistry due to H2O2 (kg/m2)
+    real(r8),         intent(out)   :: aqso4_o3(:)                  ! SO4 aqueous phase chemistry due to O3 (kg/m2)
+    real(r8),         intent(in), optional :: yph_in                ! ph value
+    real(r8),         intent(out), optional :: aqso4_h2o2_3d(:, :)  ! 3D SO4 aqueous phase chemistry due to H2O2 (kg/m2)
+    real(r8),         intent(out), optional :: aqso4_o3_3d(:, :)    ! 3D SO4 aqueous phase chemistry due to O3 (kg/m2)
+
 
     !-----------------------------------------------------------------------      
     !      ... Local variables
@@ -229,7 +236,6 @@ contains
 
     !
     real(r8) :: xdelso4hp(ncol,pver)
-    real(r8) :: xphlwc(ncol,pver)
 
     integer  :: k, i, iter, file
     real(r8) :: wrk, delta
@@ -498,21 +504,27 @@ contains
              !-----------------------------------------------------------------
              do iter = 1,itermax
 
-                if (iter == 1) then
-                   ! 1st iteration ph = lower bound value
-                   yph_lo = 2.0_r8
-                   yph_hi = yph_lo
-                   yph = yph_lo
-                else if (iter == 2) then
-                   ! 2nd iteration ph = upper bound value
-                   yph_hi = 7.0_r8
-                   yph = yph_hi
+                if (.not. present(yph_in)) then
+                   if (iter == 1) then
+                      ! 1st iteration ph = lower bound value
+                      yph_lo = 2.0_r8
+                      yph_hi = yph_lo
+                      yph = yph_lo
+                   else if (iter == 2) then
+                      ! 2nd iteration ph = upper bound value
+                      yph_hi = 7.0_r8
+                      yph = yph_hi
+                   else
+                      ! later iteration ph = mean of the two bracketing values
+                      yph = 0.5_r8*(yph_lo + yph_hi)
+                   end if
                 else
-                   ! later iteration ph = mean of the two bracketing values
-                   yph = 0.5_r8*(yph_lo + yph_hi)
+                   yph = yph_in
                 end if
+
                 ! calc current [H+] from ph
                 xph(i,k) = 10.0_r8**(-yph)
+
 
                 !-----------------------------------------------------------------
                 !        ... hno3
@@ -848,7 +860,8 @@ contains
 
     call sox_cldaero_update( &
          ncol, lchnk, loffset, dtime, mbar, pdel, press, tfld, cldnum, cldfrc, cfact, cldconc%xlwc, &
-         xdelso4hp, xh2so4, xso4, xso4_init, nh3g, hno3g, xnh3, xhno3, xnh4c,  xno3c, xmsa, xso2, xh2o2, qcw, qin )
+         xdelso4hp, xh2so4, xso4, xso4_init, nh3g, hno3g, xnh3, xhno3, xnh4c,  xno3c, xmsa, xso2, xh2o2, qcw, qin, &
+         aqso4, aqh2so4, aqso4_h2o2, aqso4_o3, aqso4_h2o2_3d=aqso4_h2o2_3d, aqso4_o3_3d=aqso4_o3_3d )
     
     xphlwc(:,:) = 0._r8
     do k = 1, pver
@@ -858,7 +871,6 @@ contains
           endif
        end do
     end do
-    call outfld( 'XPH_LWC', xphlwc(:ncol,:), ncol , lchnk )
 
     call sox_cldaero_destroy_obj(cldconc)
 

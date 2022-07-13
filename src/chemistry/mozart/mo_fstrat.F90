@@ -51,7 +51,6 @@ module mo_fstrat
   logical :: sim_has_nox
   integer :: dtime               ! model time step (s)
   logical :: has_fstrat(gas_pcnst)
-  real(r8), parameter :: mb2pa = 100._r8
 
 contains
 
@@ -74,7 +73,6 @@ contains
     use chem_mods,    only : gas_pcnst
     use mo_chem_utls, only : get_spc_ndx, get_inv_ndx
     use constituents, only : pcnst
-    use dyn_grid,     only : get_dyn_grid_parm
     use interpolate_data, only : interp_type, lininterp_init, lininterp
     implicit none
 
@@ -84,6 +82,7 @@ contains
     !------------------------------------------------------------------
     !	... local variables
     !------------------------------------------------------------------
+    real(r8), parameter :: mb2pa = 100._r8
 
     integer :: i, j, nchar
     integer :: spcno, lev, month, ierr
@@ -108,7 +107,7 @@ contains
 
     !-----------------------------------------------------------------------
     !       ... get species indicies
-    !-----------------------------------------------------------------------
+    !-----------------------------------------------------------------------    
     no_ndx      = get_spc_ndx( 'NO' )
     no2_ndx     = get_spc_ndx( 'NO2' )
     sim_has_nox = no_ndx > 0 .or. no2_ndx > 0
@@ -274,9 +273,9 @@ contains
           table_synoz_ndx = i
        end if
        map(i) = 0
-       do j = 1,gas_pcnst
+       do j = 1,gas_pcnst 
           if( trim(ub_species_names(i)) == trim(solsym(j)) ) then
-             if( has_fstrat(j) ) then
+             if( has_fstrat(j) ) then 
                 map(i) = j
                 if( masterproc ) write(iulog,*) 'fstrat_inti: '//trim(solsym(j))//' is fixed in stratosphere'
                 exit
@@ -292,7 +291,7 @@ contains
              end if
              do j = 1,gas_pcnst
                 if( trim(wrk_name) == trim(solsym(j)) ) then
-                   if( has_fstrat(j) ) then
+                   if( has_fstrat(j) ) then 
                       if( masterproc ) write(iulog,*) 'fstrat_inti: '//trim(solsym(j))//' is fixed in stratosphere'
                       map(i) = j
                       exit
@@ -365,9 +364,6 @@ contains
 
                    call lininterp(mr_ub_in(:,spcno, month, lev), ub_nlat, mr_ub(:,spcno,month,lev,c), &
                         ncols, lat_wgts)
-
-                   !                call regrid_1d( mr_ub_in(:,spcno,month,lev), mr_ub(:,spcno,month,lev), gndx, &
-                   !                     do_lat=.true.,to_lat_min=1, to_lat_max=plat )
 #ifdef DEBUG
                    if( lev == 25 .and. month == 1 .and. spcno == 1 ) then
                       write(iulog,*) 'mr_ub_in='
@@ -376,9 +372,6 @@ contains
                       write(iulog,'(10f7.1)') mr_ub(:,spcno,month,lev,c)*1.e9_r8
                    end if
 #endif
-                   !                mr_ub(1,spcno,month,lev) = mr_ub(2,spcno,month,lev)
-                   !                mr_ub(plat,spcno,month,lev) = mr_ub(plat-1,spcno,month,lev)
-
                 end if
 
              end do
@@ -463,7 +456,6 @@ contains
     real(r8) ::  pint_vals(2)
     real(r8), allocatable :: table_ox(:)
     logical  ::  found_trop
-    integer  :: lat
 
     if (.not. any(has_fstrat(:))) return
 
@@ -563,7 +555,7 @@ contains
                      + dels*(mr_ub(i,m,next,2:ub_nlevs-1,lchnk) &
                      - mr_ub(i,m,last,2:ub_nlevs-1,lchnk))
 #ifdef UB_DEBUG
-                write(iulog,*) 'set_fstrat_vals: table_ox @ lat = ',lat
+                write(iulog,*) 'set_fstrat_vals: table_ox @ i = ',i
                 write(iulog,'(1p5g15.7)') table_ox(:)
                 write(iulog,*) ' '
 #endif
@@ -579,7 +571,7 @@ contains
 #endif
                 call rebin( ub_nlevs-2, km, ub_plevse, pint(i,:km+1), table_ox, vmr(i,:km,map(m)) )
 #ifdef UB_DEBUG
-                write(iulog,*) 'set_fstrat_vals: ub o3 @ lat = ',lat
+                write(iulog,*) 'set_fstrat_vals: ub o3 @ i = ',i
                 write(iulog,'(1p5g15.7)') vmr(i,:km,map(m))
 #endif
              end do
@@ -638,9 +630,9 @@ contains
        end do
 #ifdef DEBUG
        if( levrelax /= ltrop(i) ) then
-          write(iulog,*) 'warning -- raised ubc: ',lat,i, &
-          ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/mb2pa),'mb -->', &
-          levrelax,nint(pmid(i,levrelax)/mb2pa),'mb'
+          write(iulog,*) 'warning -- raised ubc: ',i,        &
+             ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/100._r8),'mb -->', &
+             levrelax,nint(pmid(i,levrelax)/100._r8),'mb'
        end if
 #endif
        level_loop2 : do k = kmax(i)+1,levrelax
@@ -711,7 +703,7 @@ contains
                 endif
              enddo
           endif
-
+ 
           !--------------------------------------------------------
           ! 	... special assignments if synoz is present
           !           update ox, o3s, o3inert in the stratosphere
@@ -822,7 +814,6 @@ contains
     real(r8) ::  delp(ncol,zlower)
     real(r8) ::  pint_vals(2)
     logical  ::  found_trop
-    integer  ::  lat
 
     h2o_overwrite : if( h2o_ndx > 0 .and. table_h2o_ndx > 0 ) then
        !--------------------------------------------------------
@@ -920,9 +911,9 @@ contains
           end do
 #ifdef DEBUG
           if( levrelax /= ltrop(i) ) then
-             write(iulog,*) 'warning -- raised ubc: ',lat,i, &
-             ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/100._r8),'mb -->', &
-             levrelax,nint(pmid(i,levrelax)/100._r8),'mb'
+             write(iulog,*) 'warning -- raised ubc: ',i,          &
+                ltrop(i)-1,nint(pmid(i,ltrop(i)-1)/100._r8),'mb -->', &
+                levrelax,nint(pmid(i,levrelax)/100._r8),'mb'
           end if
 #endif
           do k = kmax(i)+1,levrelax

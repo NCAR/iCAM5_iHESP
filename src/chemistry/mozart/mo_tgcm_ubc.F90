@@ -12,7 +12,7 @@
         use cam_logfile,      only: iulog
 
         use tracer_data,      only : trfld,trfile,MAXTRCRS
-        use cam_history,      only : addfld, phys_decomp
+        use cam_history,      only : addfld, horiz_only
 
         implicit none
 
@@ -38,9 +38,7 @@
         !------------------------------------------------------------------
         use tracer_data, only : trcdata_init
 
-        use ppgrid,          only : pcols, begchunk, endchunk
-        use constituents,    only : cnst_get_ind, cnst_name
-        use physics_buffer, only : physics_buffer_desc
+        use constituents,    only : cnst_get_ind
 
         !------------------------------------------------------------------
         !	... dummy args
@@ -75,7 +73,7 @@
                  ubc_from_tgcm(vid) = .true.
                  map(ii) = vid              ! elements in map array correspond to elements in specifier
                  ubc_name(ii) = trim(species(i))//'_tgcm'
-                 call addfld( ubc_name(ii), 'kg/kg', 1, 'I', 'upper boundary mmr', phys_decomp )
+                 call addfld( ubc_name(ii), horiz_only, 'I', 'kg/kg', 'upper boundary mmr' )
               end if
            end if
         enddo
@@ -140,7 +138,7 @@
         real(r8), parameter ::  h2o_ubc_vmr = 2.e-8_r8            ! fixed ub h2o concentration (kg/kg)
         real(r8), parameter ::  ch4_ubc_vmr = 2.e-10_r8           ! fixed ub ch4 concentration (kg/kg)
 
-        integer  :: m,n,i
+        integer  :: m,n
 
         if (ub_nspecies > 0) then
            do m = 1,ub_nspecies

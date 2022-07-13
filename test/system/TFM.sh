@@ -24,7 +24,7 @@ get_dir_abspath () {
     echo $(cd $1 && pwd)
 }
 
-cam_top_dir=$(get_dir_abspath ${CAM_SCRIPTDIR}/../..)
+cam_top_dir=$(get_dir_abspath ${CAM_SCRIPTDIR}/..)
 cesm_top_dir=$(get_dir_abspath $cam_top_dir/../../..)
 
 rc=0
@@ -91,7 +91,7 @@ EOF
 fi
 
 if [ "$rc" -eq 0 ]; then
-    echo "No problems found in svn:mergeinfo in this working copy."
+    echo "No problems found in svn:mergeinfo in this working copy ($cesm_top_dir)."
 fi
 
 exit $rc

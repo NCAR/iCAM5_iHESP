@@ -12,7 +12,7 @@ module convect_deep
 !
 !---------------------------------------------------------------------------------
    use shr_kind_mod, only: r8=>shr_kind_r8
-   use ppgrid,       only: pver, pcols, pverp, begchunk, endchunk
+   use ppgrid,       only: pver, pcols, pverp
    use cam_logfile,  only: iulog
 
    implicit none
@@ -91,16 +91,18 @@ subroutine convect_deep_register
   select case ( deep_scheme )
   case('ZM') !    Zhang-McFarlane (default)
      call zm_conv_register
+
+  case('off', 'UNICON') ! Off needs to setup the following fields
+   call pbuf_add_field('ICWMRDP',    'physpkg',dtype_r8,(/pcols,pver/),icwmrdp_idx)
+   call pbuf_add_field('RPRDDP',     'physpkg',dtype_r8,(/pcols,pver/),rprddp_idx)
+   call pbuf_add_field('NEVAPR_DPCU','physpkg',dtype_r8,(/pcols,pver/),nevapr_dpcu_idx)
+   call pbuf_add_field('PREC_DP',    'physpkg',dtype_r8,(/pcols/),     prec_dp_idx)
+   call pbuf_add_field('SNOW_DP',    'physpkg',dtype_r8,(/pcols/),     snow_dp_idx)
+
   end select
 
-  call pbuf_add_field('ICWMRDP',    'physpkg',dtype_r8,(/pcols,pver/),icwmrdp_idx)
-  call pbuf_add_field('RPRDDP',     'physpkg',dtype_r8,(/pcols,pver/),rprddp_idx)
-  call pbuf_add_field('NEVAPR_DPCU','physpkg',dtype_r8,(/pcols,pver/),nevapr_dpcu_idx)
-  call pbuf_add_field('PREC_DP',    'physpkg',dtype_r8,(/pcols/),     prec_dp_idx)
-  call pbuf_add_field('SNOW_DP',   'physpkg',dtype_r8,(/pcols/),      snow_dp_idx)
-
   ! If gravity waves from deep convection are on, output this field.
-  if (use_gw_convect_dp) then
+  if (use_gw_convect_dp .and. deep_scheme == 'ZM') then
      call pbuf_add_field('TTEND_DP','physpkg',dtype_r8,(/pcols,pver/),ttend_dp_idx)
   end if
 
@@ -116,7 +118,7 @@ subroutine convect_deep_init(pref_edge)
 ! Purpose:  declare output fields, initialize variables needed by convection
 !----------------------------------------
 
-  use cam_history,    only: phys_decomp, addfld                          
+  use cam_history,    only: addfld                          
   use pmgrid,         only: plevp
   use spmd_utils,     only: masterproc
   use zm_conv_intr,   only: zm_conv_init
@@ -138,9 +140,18 @@ subroutine convect_deep_init(pref_edge)
      call zm_conv_init(pref_edge)
   case('UNICON')
      if (masterproc) write(iulog,*)'convect_deep: deep convection done by UNICON'
+  case('SPCAM')
+     if (masterproc) write(iulog,*)'convect_deep: deep convection done by SPCAM'
+     return
   case default
      if (masterproc) write(iulog,*)'WARNING: convect_deep: no deep convection scheme. May fail.'
   end select
+
+  icwmrdp_idx     = pbuf_get_index('ICWMRDP')
+  rprddp_idx      = pbuf_get_index('RPRDDP')
+  nevapr_dpcu_idx = pbuf_get_index('NEVAPR_DPCU')
+  prec_dp_idx     = pbuf_get_index('PREC_DP')
+  snow_dp_idx     = pbuf_get_index('SNOW_DP')
 
   cldtop_idx = pbuf_get_index('CLDTOP')
   cldbot_idx = pbuf_get_index('CLDBOT')
@@ -150,7 +161,7 @@ subroutine convect_deep_init(pref_edge)
   pblh_idx   = pbuf_get_index('pblh')
   tpert_idx  = pbuf_get_index('tpert')
 
-  call addfld ('ICWMRDP  ', 'kg/kg   ', pver, 'A', 'Deep Convection in-cloud water mixing ratio '            ,phys_decomp)
+  call addfld ('ICWMRDP', (/ 'lev' /), 'A', 'kg/kg', 'Deep Convection in-cloud water mixing ratio ' )
 
 end subroutine convect_deep_init
 !=========================================================================================
@@ -158,26 +169,20 @@ end subroutine convect_deep_init
 
 subroutine convect_deep_tend( &
      mcon    ,cme     ,          &
-     dlf     ,pflx    ,zdu      , &
-     rliq    , &
+     pflx    ,zdu      , &
+     rliq    ,rice     , &
      ztodt   , &
-     state   ,ptend   ,landfrac ,&
-     pbuf    ,wtdlf )
+     state   ,ptend   ,landfrac ,pbuf)
 
 
    use physics_types, only: physics_state, physics_ptend, physics_tend, physics_ptend_init
    
    use cam_history,    only: outfld
-   use constituents,   only: pcnst, cnst_name
+   use constituents,   only: pcnst
    use zm_conv_intr,   only: zm_conv_tend
    use cam_history,    only: outfld
    use physconst,      only: cpair
-   use physics_buffer, only: physics_buffer_desc, pbuf_get_field, pbuf_get_index
-
- !Water tracers:
-    use water_tracer_vars, only: trace_water, wtrc_ntype, wtrc_srfpcp_indices
-    use water_types,    only: iwtvap, iwtcvrain, iwtcvsnow
-
+   use physics_buffer, only: physics_buffer_desc, pbuf_get_field
 
 ! Arguments
    type(physics_state), intent(in ) :: state   ! Physics state variables
@@ -190,19 +195,12 @@ subroutine convect_deep_tend( &
       
 
    real(r8), intent(out) :: mcon(pcols,pverp)  ! Convective mass flux--m sub c
-   real(r8), intent(out) :: dlf(pcols,pver)    ! scattrd version of the detraining cld h2o tend
    real(r8), intent(out) :: pflx(pcols,pverp)  ! scattered precip flux at each level
    real(r8), intent(out) :: cme(pcols,pver)    ! cmf condensation - evaporation
    real(r8), intent(out) :: zdu(pcols,pver)    ! detraining mass flux
 
    real(r8), intent(out) :: rliq(pcols) ! reserved liquid (not yet in cldliq) for energy integrals
-
-   !Water tracers:
-   real(r8), intent(out) :: wtdlf(pcols,pver,wtrc_ntype(iwtvap))   !Detraining tracer liquid
-   integer                         :: wtpcidx                      !Physics Buffer index
-   integer                         :: wtsnidx                      !Physics Buffer index
-   real(r8), pointer, dimension(:) :: wtprec                       !Tracer surface rain 
-   real(r8), pointer, dimension(:) :: wtsnow                       !Tracer surface snow
+   real(r8), intent(out) :: rice(pcols) ! reserved ice (not yet in cldice) for energy integrals
 
    real(r8), pointer :: prec(:)   ! total precipitation
    real(r8), pointer :: snow(:)   ! snow from ZM convection 
@@ -234,14 +232,11 @@ subroutine convect_deep_tend( &
   case('off', 'UNICON', 'CLUBB_SGS') ! in UNICON case the run method is called from convect_shallow_tend
     zero = 0     
     mcon = 0
-    dlf = 0
     pflx = 0
     cme = 0
     zdu = 0
     rliq = 0
-
-    !water tracers: 
-    wtdlf(:,:,:) = 0
+    rice = 0
 
     call physics_ptend_init(ptend, state%psetcols, 'convect_deep')
 
@@ -267,25 +262,16 @@ subroutine convect_deep_tend( &
     fracis = 0
     evapcdp = 0
 
-    !Water tracers
-    do i=1,wtrc_ntype(iwtcvrain)
-      call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtcvrain,i), wtprec)
-      call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtcvsnow,i), wtsnow)
-      wtprec(:) = 0._r8 !assign values
-      wtsnow(:) = 0._r8
-    end do
-
   case('ZM') !    1 ==> Zhang-McFarlane (default)
      call pbuf_get_field(pbuf, pblh_idx,  pblh)
      call pbuf_get_field(pbuf, tpert_idx, tpert)
 
      call zm_conv_tend( pblh    ,mcon    ,cme     , &
-          tpert   ,dlf     ,pflx    ,zdu      , &
-          rliq    , &
+          tpert   ,pflx    ,zdu      , &
+          rliq    ,rice    , &
           ztodt   , &
           jctop, jcbot , &
-          state   ,ptend   ,landfrac ,pbuf , &
-          wtdlf )
+          state   ,ptend   ,landfrac, pbuf)
 
   end select
 
@@ -297,7 +283,6 @@ subroutine convect_deep_tend( &
   end if
 
   call outfld( 'ICWMRDP ', ql  , pcols, state%lchnk )
-
 
 end subroutine convect_deep_tend
 !=========================================================================================

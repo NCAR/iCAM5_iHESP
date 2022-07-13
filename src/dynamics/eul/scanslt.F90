@@ -75,8 +75,8 @@ module scanslt
 !
 ! Private data
 !
-   integer, parameter  :: pmap = 20000 
-!                    ! max dimension of evenly spaced vert. 
+   integer, parameter  :: pmap = 20000
+!                    ! max dimension of evenly spaced vert.
 !                    ! grid used by SLT code to map the departure pts into true
 !                    ! model levels.
 !
@@ -105,16 +105,16 @@ contains
 !
 
 subroutine scanslt_alloc()
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Allocate some scanslt data
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use infnan,       only: nan, assignment(=)
 
    allocate (lammp(plon,plev,beglat:endlat))
@@ -131,32 +131,30 @@ end subroutine scanslt_alloc
 !
 !-----------------------------------------------------------------------
 !
-subroutine scanslt_initial( adv_state, etamid, gravit_in, gw, detam, cwava )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+subroutine scanslt_initial( adv_state, etamid, gravit_in, detam, cwava )
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! SLT initialization for Eulerian dynamics
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use commap,       only: clat
    use prognostics,  only: ps, n3
-   use rgrid,        only: nlon
    use time_manager, only: is_first_step
-   use hycoef,       only: hyai, hybi, ps0
+   use hycoef,       only: hyam, hybm, hyai, hybi, ps0
    use eul_control_mod, only : pdela
 !
 ! Input arguments
 !
-   real(r8), intent(inout) :: etamid(plev)  ! vertical coords at midpoints
+   real(r8), intent(out) :: etamid(plev)  ! vertical coords at midpoints
    real(r8), intent(in) :: gravit_in        ! Gravitational constant
 !
 ! Output arguments
 !
-   real(r8), intent(out) :: gw(plat)               ! Gaussian weights
    real(r8), intent(out) :: detam(plev)            ! intervals between vert full levs.
    real(r8), intent(out) :: cwava(plat)            ! weight applied to global integrals
    type(advection_state), intent(out) :: adv_state ! Advection state data
@@ -169,22 +167,23 @@ subroutine scanslt_initial( adv_state, etamid, gravit_in, gw, detam, cwava )
    real(r8) :: pmid(plon,plev)    ! pressure at model levels
    real(r8) :: pint(plon,plevp)   ! pressure at interfaces
    real(r8) :: pdel(plon,plev)    ! pressure difference between
+   real(r8) :: gw(plat)           ! Gaussian weights needed for SCAM grdini call
 !
 ! Allocate memory for scanslt variables
 !
    call adv_state_alloc( adv_state )
-!
-! Eta at interfaces
-!
-   do k=1,plevp
+
+   do k = 1, plev
+      etamid(k) = hyam(k) + hybm(k)
       etaint(k) = hyai(k) + hybi(k)
    end do
+   etaint(plevp) = hyai(plevp) + hybi(plevp)
 !
 ! For SCAM compute pressure levels to use for eta interface
 !
    if (single_column) then
       lat = beglat
-      call plevs0(nlon(lat), plon, plev, ps(1,lat,n3), pint, pmid, pdel)
+      call plevs0(plon, plon, plev, ps(1,lat,n3), pint, pmid, pdel)
       etamid(:) = pmid(lat,:)
       etaint(:) = pint(lat,:)
       if ( any(etamid == 0.0_r8) ) call endrun('etamid == 0')
@@ -211,10 +210,10 @@ subroutine scanslt_initial( adv_state, etamid, gravit_in, gw, detam, cwava )
 !
 ! Set current time pressure arrays for model levels etc.
 !
-         call plevs0(nlon(lat), plon, plev, ps(1,lat,n3), pint, pmid, pdel)
+         call plevs0(plon, plon, plev, ps(1,lat,n3), pint, pmid, pdel)
 
          do k=1,plev
-            do i=1,nlon(lat)
+            do i=1,plon
                if (single_column) then
                   sigmp(i,k,lat) = pmid(i,k)
                else
@@ -245,22 +244,21 @@ end subroutine scanslt_initial
 !
 
 subroutine scanslt_run(adv_state, ztodt   ,etadot   ,detam, etamid, cwava )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Driving routine for semi-lagrangian transport.
-! 
-! Method: 
+!
+! Method:
 ! The latitude loop in this routine is multitasked.
-! 
-! Author: 
+!
+! Author:
 ! Original version:  J. Rosinski
 ! Standardized:      J. Rosinski, June 1992
 ! Reviewed:          D. Williamson, P. Rasch, August 1992
 ! Reviewed:          D. Williamson, P. Rasch,  March 1996
 !
 !-----------------------------------------------------------------------
-   use rgrid,       only: nlon
    use physconst,   only: ra
    use prognostics, only: hadv
    use time_manager, only: get_nstep
@@ -284,7 +282,7 @@ subroutine scanslt_run(adv_state, ztodt   ,etadot   ,detam, etamid, cwava )
 !
 ! In/Output arguments
 !
-   real(r8), intent(inout) :: detam(plev)     ! delta eta at levels 
+   real(r8), intent(inout) :: detam(plev)     ! delta eta at levels
                                               ! needs intent(out) because of SCAM
    real(r8), intent(inout) :: cwava(plat)     ! weight for global water vapor int.
                                               ! needs intent(out) because of SCAM
@@ -335,7 +333,7 @@ subroutine scanslt_run(adv_state, ztodt   ,etadot   ,detam, etamid, cwava )
                lam     ,phi     ,dphi    ,gw      ,sinlam  , &
                coslam  ,lbasdy  ,lbasdz  ,lbassd  ,lbasiy  , &
                detam   ,detai   ,kdpmpf  ,kdpmph  ,cwava   )
-!     
+!
 ! Initial guess for trajectory midpoints in spherical coords.
 ! nstep = 0:  use arrival points as initial guess for trajectory midpoints.
 ! nstep > 0:  use calculated trajectory midpoints from previous time
@@ -352,7 +350,7 @@ subroutine scanslt_run(adv_state, ztodt   ,etadot   ,detam, etamid, cwava )
 !
 #if ( defined SPMD )
 !
-! Communicate boundary information 
+! Communicate boundary information
 !
       call t_barrierf ('sync_bndexch', mpicom)
       call t_startf ('bndexch')
@@ -398,7 +396,7 @@ subroutine scanslt_run(adv_state, ztodt   ,etadot   ,detam, etamid, cwava )
                   phi     ,dphi    ,etamid  ,etaint  ,detam   , &
                   detai   ,lbasdy  ,lbasdz  ,lbassd  ,lbasiy  , &
                   kdpmpf  ,kdpmph  ,lammp(1,1,lat), phimp(1,1,lat), sigmp(1,1,lat), &
-                  qfcst(1,1,1,lat) ,adv_state, nlon(lat), hadv, nlonex  )
+                  qfcst(1,1,1,lat) ,adv_state, plon, hadv, nlonex  )
    end do
    call t_stopf ('sltb1')
 !
@@ -414,16 +412,16 @@ end subroutine scanslt_run
 !-----------------------------------------------------------------------
 !
 subroutine scanslt_final( adv_state )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! SLT finalization for Eulerian dynamics
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
 !
 ! Arguments
 !
@@ -437,16 +435,16 @@ end subroutine scanslt_final
 !
 
 subroutine ad_coupling( adv_state )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Copy advection data into dynamics state.
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use prognostics, only: u3, v3, qminus, n3m1
 !
 ! Arguments
@@ -478,20 +476,19 @@ end subroutine ad_coupling
 !
 
 subroutine da_coupling( cwava, adv_state )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Copy dynamics data into advection state
 ! Also find the total moisture mass before SLT.
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use prognostics, only: u3, v3, qminus, n3m1, ps, n3m2, q3, pdeld
    use commap,      only: w
-   use rgrid,       only: nlon
    use qmassa,      only: qmassarun
 
 !
@@ -526,7 +523,7 @@ subroutine da_coupling( cwava, adv_state )
 !
 ! Only pdel is needed inside SLT.  pint and pmid are not.
 !
-      call plevs0 (nlon(lat),plon,plev,ps(1,lat,n3m2), pint, pmid, pdel)
+      call plevs0 (plon,plon,plev,ps(1,lat,n3m2), pint, pmid, pdel)
 !
 ! Calculate mass of moisture in field being advected by slt. (hw1lat)
 !
@@ -534,7 +531,7 @@ subroutine da_coupling( cwava, adv_state )
 !  q3     is plon,plev,pcnst,beglat:endlat,ptimelevs
 !  qminus is plon,plev,pcnst,beglat:endlat
       call qmassarun (cwava(lat),w(irow) ,qminus(1,1,1,lat),pdel    , &
-                   hw1lat(1,lat),nlon(lat), q3(1,1,1,lat,n3m2), lat, pdeld(:,:,lat,n3m2 ))
+                   hw1lat(1,lat),plon, q3(1,1,1,lat,n3m2), lat, pdeld(:,:,lat,n3m2 ))
    end do
 
 #ifdef OUTER_OMP
@@ -560,16 +557,16 @@ end subroutine da_coupling
 !
 
 subroutine adv_state_alloc( adv_state )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Allocate advection state data
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
    use infnan,       only: posinf, assignment(=)
 !
 ! Arguments
@@ -590,16 +587,16 @@ end subroutine adv_state_alloc
 !
 
 subroutine adv_state_dealloc( adv_state )
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! De-allocate advection state data
-! 
-! Author: 
+!
+! Author:
 !
 ! Erik Kluzek
 !
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
 !
 ! Arguments
 !
@@ -620,23 +617,22 @@ subroutine grdini(pmap    ,etamid  ,etaint  ,gravit  ,dlam    , &
                   coslam  ,lbasdy  ,lbasdz  ,lbassd  ,lbasiy  , &
                   detam   ,detai   ,kdpmpf  ,kdpmph  ,cwava   )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Initialize model and extended grid parameters
 ! Initialize weights for Lagrange cubic derivative estimates
 ! Initialize weights for Lagrange cubic interpolant
-! 
-! Method: 
-! 
-! Author: 
+!
+! Method:
+!
+! Author:
 ! Original version:  J. Olson
 ! Standardized:      J. Rosinski, June 1992
 ! Reviewed:          D. Williamson, P. Rasch, August 1992
 ! Reviewed:          D. Williamson, P. Rasch, March 1996
 !
 !-----------------------------------------------------------------------
-   use rgrid,      only: nlon
    use vrtmap_mod, only: vrtmap
 !------------------------------Parameters-------------------------------
 !
@@ -698,10 +694,10 @@ subroutine grdini(pmap    ,etamid  ,etaint  ,gravit  ,dlam    , &
 !  detai   Increment between model interfaces ("half" levels).
 !  kdpmpf  Array of indicies of the model full levels which are mapped
 !          into an artificial evenly spaced vertical grid.  Used to aid
-!          in search for vertical position of departure point 
+!          in search for vertical position of departure point
 !  kdpmph  Array of indicies of the model half levels which are mapped
 !          into an artificial evenly spaced vertical grid.  Used to aid
-!          in search for vertical position of departure point 
+!          in search for vertical position of departure point
 !  cwava   1./(plon*gravit)
 !
 !---------------------------Local variables-----------------------------
@@ -717,48 +713,48 @@ subroutine grdini(pmap    ,etamid  ,etaint  ,gravit  ,dlam    , &
 !-----------------------------------------------------------------------
    if (single_column) then
 
-   dlam(:)=0._r8
-   lam(:,:)=0._r8
-   phi(:)=0._r8
-   dphi(:)=0._r8
-   sinlam(:,:)=0._r8
-   coslam(:,:)=0._r8
-   detai(:)=0._r8
-   kdpmpf(:)=0._r8
-   kdpmph(:)=0._r8
-   gw(:)=1._r8
-   call basdz(plev    ,etamid  ,lbasdz  )
-   call basdz(plevp   ,etaint  ,lbassd  )
+      dlam(:)=0._r8
+      lam(:,:)=0._r8
+      phi(:)=0._r8
+      dphi(:)=0._r8
+      sinlam(:,:)=0._r8
+      coslam(:,:)=0._r8
+      detai(:)=0._r8
+      kdpmpf(:)=0._r8
+      kdpmph(:)=0._r8
+      gw(:)=1._r8
+      call basdz(plev    ,etamid  ,lbasdz  )
+      call basdz(plevp   ,etaint  ,lbassd  )
 
    else
-!
-! Initialize extended horizontal grid coordinates.
-!
-   call grdxy(dlam    ,lam     ,phi     ,gw      ,sinlam  , &
-      coslam  )
-!
-! Basis functions for computing Lagrangian cubic derivatives
-! on unequally spaced latitude and vertical grids.
-!
-   call basdy(phi     ,lbasdy  )
+      !
+      ! Initialize extended horizontal grid coordinates.
+      !
+      call grdxy(dlam    ,lam     ,phi     ,gw      ,sinlam  , &
+         coslam  )
+      !
+      ! Basis functions for computing Lagrangian cubic derivatives
+      ! on unequally spaced latitude and vertical grids.
+      !
+      call basdy(phi     ,lbasdy  )
 
-   call basdz(plev    ,etamid  ,lbasdz  )
-   call basdz(plevp   ,etaint  ,lbassd  )
+      call basdz(plev    ,etamid  ,lbasdz  )
+      call basdz(plevp   ,etaint  ,lbassd  )
 
 
-!
-! Basis functions for computing weights for Lagrangian cubic
-! interpolation on unequally spaced latitude grids.
-!
-   call basiy(phi     ,lbasiy  )
-!
-! Compute interval lengths in latitudinal grid
-!
-   do j = 1,platd-1
-      dphi(j) = phi(j+1) - phi(j)
-   end do
+      !
+      ! Basis functions for computing weights for Lagrangian cubic
+      ! interpolation on unequally spaced latitude grids.
+      !
+      call basiy(phi     ,lbasiy  )
+      !
+      ! Compute interval lengths in latitudinal grid
+      !
+      do j = 1,platd-1
+         dphi(j) = phi(j+1) - phi(j)
+      end do
 
-endif
+   endif
 !
 ! Compute interval lengths in vertical grids.
 !
@@ -790,7 +786,7 @@ if (single_column) then
    cwava = 1._r8
 else
    do j=1,plat
-      cwava(j) = 1._r8/(nlon(j)*gravit)
+      cwava(j) = 1._r8/(plon*gravit)
    end do
 endif
 !
@@ -804,18 +800,18 @@ end subroutine grdini
 subroutine grdxy(dlam    ,lam     ,phi     ,w       ,sinlam  , &
                  coslam  )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Define the "extended" grid used in the semi-Lagrangian transport
 ! scheme.  The longitudes are equally spaced and the latitudes are
 ! Gaussian.  The global grid is extended to include "wraparound" points
 ! on all sides.
-! 
-! Method: 
-! 
+!
+! Method:
+!
 ! Author: J. Olson
-! 
+!
 !-----------------------------------------------------------------------
   use gauaw_mod, only: gauaw
 !------------------------------Parameters-------------------------------
@@ -926,24 +922,23 @@ subroutine sltb1(pmap      ,jcen    ,jgc     ,dt      ,ra      , &
                  kdpmph    ,lammp   ,phimp   ,sigmp   ,fbout   , &
                  adv_state ,nlon    ,hadv    ,nlonex  )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Drive the slt algorithm on a given latitude slice in the extended
 ! data arrays using information from the entire latitudinal extent
 ! of the arrays.
-! 
-! Method: 
+!
+! Method:
 ! Compute departure points and corresponding indices.
 ! Poleward of latitude phigs (radians), perform the computation in
 ! local geodesic coordinates.
 ! Equatorward of latitude phigs, perform the computation in global
 ! spherical coordinates
-! 
+!
 ! Author: J. Olson
-! 
+!
 !-----------------------------------------------------------------------
-  use prognostics, only: ptimelevels
 
 #include <parslt.h>
 
@@ -990,7 +985,7 @@ subroutine sltb1(pmap      ,jcen    ,jgc     ,dt      ,ra      , &
 !  pmap    Dimension of kdpmpX arrays
 !  jcen    Latitude index in extended grid corresponding to lat slice
 !          being forecasted.
-!  jgc     Latitude index in model    grid corresponding to lat slice 
+!  jgc     Latitude index in model    grid corresponding to lat slice
 !          being forecasted.
 !  dt      Time interval that parameterizes the parcel trajectory.
 !  ra      Reciprocal of radius of earth.
@@ -1000,9 +995,9 @@ subroutine sltb1(pmap      ,jcen    ,jgc     ,dt      ,ra      , &
 !  uxr     x-derivatives of u at the right (east) edge of given interval
 !  vxr     x-derivatives of v at the right (east) edge of given interval
 !  wb      z-velocity component (eta-dot).
-!  fxl     x-derivatives at the left  edge of each interval containing 
+!  fxl     x-derivatives at the left  edge of each interval containing
 !          the departure point.
-!  fxr     x-derivatives at the right edge of each interval containing 
+!  fxr     x-derivatives at the right edge of each interval containing
 !          the departure point.
 !  lam     Longitude values for the extended grid.
 !  phib    Latitude  values for the extended grid.
@@ -1078,7 +1073,7 @@ subroutine sltb1(pmap      ,jcen    ,jgc     ,dt      ,ra      , &
      call hrintp(pcnst   ,pcnst   ,adv_state%qminus, fxl     ,fxr     , &
               lam     ,phib    ,dphib   ,lbasdy  ,lamdp   ,                    &
               phidp   ,idp     ,jdp     ,jcen    ,plimdr  ,                    &
-              fint    ,fyb     ,fyt     ,fhr     ,nlon    ,                    &   
+              fint    ,fyb     ,fyt     ,fhr     ,nlon    ,                    &
               nlonex  )
 
      do m = 1,pcnst
@@ -1097,6 +1092,7 @@ else
       do k = 1,plev
          do i = 1,nlon
             fhr(i,k,m) = adv_state%qminus(i1+i-1,k,m,jcen)
+            hadv(i,k,m,jgc) = 0._r8
          end do
       end do
    end do
@@ -1139,18 +1135,18 @@ end subroutine sltb1
 !
 
 subroutine vrtdep(pmap    ,dt      ,iterdp  ,wb      ,wst     , &
-                  wsb     ,sig     ,sigh    ,dsigh   ,kdpmpf  , & 
+                  wsb     ,sig     ,sigh    ,dsigh   ,kdpmpf  , &
                   kdpmph  ,sigmp   ,sigdp   ,kdp     ,nlon    )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Compute vertical departure point and departure point index.
-! 
-! Method: 
-! 
+!
+! Method:
+!
 ! Author: J. Olson
-! 
+!
 !-----------------------------------------------------------------------
 !------------------------------Arguments--------------------------------
   integer , intent(in) :: nlon                ! longitude dimension
@@ -1183,10 +1179,10 @@ subroutine vrtdep(pmap    ,dt      ,iterdp  ,wb      ,wst     , &
 !  dsigh   Increment in half-index sigma levels.
 !  kdpmpf  Array of indices of the model full levels which are mapped
 !          into an artificial evenly spaced vertical grid.  Used to aid
-!          in search for vertical position of departure point 
+!          in search for vertical position of departure point
 !  kdpmph  Array of indices of the model half levels which are mapped
 !          into an artificial evenly spaced vertical grid.  Used to aid
-!          in search for vertical position of departure point 
+!          in search for vertical position of departure point
 !  sigmp   Sigma value at the trajectory midpoint for each gridpoint
 !          in a vertical slice from the global grid.  On entry sigmp is
 !          an initial guess.
@@ -1265,16 +1261,16 @@ end subroutine vrtdep
 
 subroutine vdplim(pkdim   ,sig     ,sigdp   ,nlon    )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Restrict vertical departure points to be between the top and bottom
 ! sigma levels of the "full-" or "half-" level grid
-! 
-! Method: 
-! 
+!
+! Method:
+!
 ! Author: J. Olson
-! 
+!
 !-----------------------------------------------------------------------
 !---------------------- Arguments --------------------------------------
   integer , intent(in)    :: nlon               ! longitude dimension
@@ -1315,26 +1311,26 @@ end subroutine vdplim
 subroutine sltini(dlam,    sinlam,  coslam,  uxl,     uxr, &
                   vxl,     vxr,     qxl,     qxr,     adv_state )
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
+!-----------------------------------------------------------------------
+!
+! Purpose:
 ! Prepare the extended arrays for use in the SLT routines
 !
 !   1)  Fill latitude extensions.
 !   2)  Fill longitude extensions.
 !   3)  Compute x-derivatives
-! 
-! Method: 
+!
+! Method:
 ! Computational note: The latitude loop in this routine is multitasked
-! 
-! Author: 
+!
+! Author:
 ! Original version:  J. Olson
 ! Standardized:      J. Rosinski, June 1992
 ! Reviewed:          D. Williamson, P. Rasch, August 1992
 ! Reviewed:          D. Williamson, P. Rasch, March 1996
 !
 !-----------------------------------------------------------------------
-   use prognostics,  only: ptimelevels
+
 !-----------------------------------------------------------------------
 #include <parslt.h>
 !---------------------------Local parameters----------------------------
@@ -1342,7 +1338,7 @@ subroutine sltini(dlam,    sinlam,  coslam,  uxl,     uxr, &
    integer puvpts            ! number of u/v pts in lat slice
    integer pqpts             ! number of constituent pts in lat slice
 !
-   parameter(puvpts = plond*plev, pqpts  = plond*plev*pcnst) 
+   parameter(puvpts = plond*plev, pqpts  = plond*plev*pcnst)
 !-----------------------------------------------------------------------
 !
 ! Input arguments
@@ -1350,14 +1346,14 @@ subroutine sltini(dlam,    sinlam,  coslam,  uxl,     uxr, &
    real(r8), intent(in) :: dlam(platd)          ! increment in x-direction
    real(r8), intent(in) :: sinlam(plond,platd)  ! sin(lamda)
    real(r8), intent(in) :: coslam(plond,platd)  ! cos(lamda)
-   real(r8), intent(inout) :: uxl (plond,plev,      beglatex:endlatex) 
-   real(r8), intent(inout) :: uxr (plond,plev,      beglatex:endlatex)  
-   real(r8), intent(inout) :: vxl (plond,plev,      beglatex:endlatex) 
-   real(r8), intent(inout) :: vxr (plond,plev,      beglatex:endlatex)  
-   real(r8), intent(inout) :: qxl (plond,plev,pcnst,beglatex:endlatex)  
+   real(r8), intent(inout) :: uxl (plond,plev,      beglatex:endlatex)
+   real(r8), intent(inout) :: uxr (plond,plev,      beglatex:endlatex)
+   real(r8), intent(inout) :: vxl (plond,plev,      beglatex:endlatex)
+   real(r8), intent(inout) :: vxr (plond,plev,      beglatex:endlatex)
+   real(r8), intent(inout) :: qxl (plond,plev,pcnst,beglatex:endlatex)
    real(r8), intent(inout) :: qxr (plond,plev,pcnst,beglatex:endlatex)
    type(advection_state), intent(inout) :: adv_state   ! Advection data state
-!                                    
+!
 !
 !-----------------------------------------------------------------------
 !

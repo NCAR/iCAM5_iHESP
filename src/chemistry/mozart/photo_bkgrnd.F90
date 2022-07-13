@@ -9,7 +9,6 @@ module photo_bkgrnd
   use shr_kind_mod,   only : r8 => shr_kind_r8
   use mo_chem_utls,   only : get_rxt_ndx
   use ppgrid,         only : pver
-  use mo_solar_parms, only : solar_parms_get
 
   implicit none
 
@@ -35,10 +34,11 @@ contains
   !----------------------------------------------------------------------------
   ! Adds background ionization rates to WACCM's photolysis rates
   !----------------------------------------------------------------------------
-  subroutine photo_bkgrnd_calc( o_den, o2_den, n2_den, no_den, zint, rates, & 
+  subroutine photo_bkgrnd_calc(f107, o_den, o2_den, n2_den, no_den, zint, rates, & 
                                qbko1_out, qbko2_out, qbkn2_out, qbkn1_out, qbkno_out )
 
    ! arguments
+    real(r8), intent(in) :: f107
     real(r8), intent(in) :: o_den(:)           ! N density (molecules/cm^3)
     real(r8), intent(in) :: o2_den(:)          ! O2 density (molecules/cm^3)
     real(r8), intent(in) :: n2_den(:)          ! N2 density (molecules/cm^3)
@@ -68,9 +68,6 @@ contains
     real(r8) :: qbkno(pver)
 
     integer :: k
-    real(r8) :: f107
-
-    call solar_parms_get( f107_s = f107 )
 
     zmaj(1,:) = o_den(:) 
     zmaj(2,:) = o2_den(:) 
@@ -183,6 +180,7 @@ subroutine qback (zmaj,zno,zvcd,f107,nmaj,jm,qbko1,qbko2,qbkn2,qbkn1,qbkno)
   data silyano/2.0e-18_r8/
   data bn2p/0.86_r8/
   data bn1p/0.14_r8/
+
 !
 ! Calculate Lyman-alpha 121.6 nm geocoronal flux as a function of F10.7:
 !
@@ -194,12 +192,16 @@ subroutine qback (zmaj,zno,zvcd,f107,nmaj,jm,qbko1,qbko2,qbkn2,qbkn1,qbkno)
 !
 ! Calculate optical depth and ionization rates for major species:
 !
+     qbko1(j)=0._r8
+     qbko2(j)=0._r8
+     qbkn2(j)=0._r8
+     qbkn1(j)=0._r8
      do l=1,3
         tau=(sa(1,l)*zvcd(1,j)+sa(2,l)*zvcd(2,j)+sa(3,l)*zvcd(3,j))
-        qbko1(j) =       al(l)*si(1,l)*zmaj(1,j)*exp(-tau)
-        qbko2(j) =       al(l)*si(2,l)*zmaj(2,j)*exp(-tau)
-        qbkn2(j) = bn2p*(al(l)*si(3,l)*zmaj(3,j)*exp(-tau))
-        qbkn1(j) = bn1p*(al(l)*si(3,l)*zmaj(3,j)*exp(-tau))
+        qbko1(j) = qbko1(j) +       al(l)*si(1,l)*zmaj(1,j)*exp(-tau)
+        qbko2(j) = qbko2(j) +       al(l)*si(2,l)*zmaj(2,j)*exp(-tau)
+        qbkn2(j) = qbkn2(j) + bn2p*(al(l)*si(3,l)*zmaj(3,j)*exp(-tau))
+        qbkn1(j) = qbkn1(j) + bn1p*(al(l)*si(3,l)*zmaj(3,j)*exp(-tau))
      enddo
 !
 ! Calculate optical depth of Ly-alpha, and ionization rate of NO:

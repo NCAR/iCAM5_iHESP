@@ -425,6 +425,7 @@ contains
        !       ch3cocho, hoch2cho (betterton and hoffman, environ. sci. technol., 1988)
        !       ch3cho (staudinger and roberts, crit. rev. sci. technol., 1996)
        !       mvk, macr (allen et al., environ. toxicol. chem., 1998)
+       !       soag_bg(0-4), soag_ff_bb(0-4) (Hodzic et al., 2014)
        !-----------------------------------------------------------------
        xk0(:)             = 2.1e5_r8 *exp( 8700._r8*work1(:) )
        xhen_hno3(:,k)     = xk0(:) * ( 1._r8 + hno3_diss / xph0 )

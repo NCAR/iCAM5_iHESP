@@ -29,7 +29,7 @@ module cldwat
    private
    save
    public inimc, pcond          ! Public interfaces
-   public cldwat_readnl
+   public :: cldwat_init
    integer, public::  ktop      ! Level above 10 hPa
 
    real(r8),public ::  icritc               ! threshold for autoconversion of cold ice
@@ -83,6 +83,8 @@ module cldwat
    real(r8) :: cracw                ! constant used for rain accreting water
    real(r8) :: critpr               ! critical precip rate collection efficiency changes
    real(r8) :: ciautb               ! coefficient of autoconversion of ice (1/s)
+   real(r8) :: psrhmin              ! condensation threshold in polar stratosphere
+   logical  :: do_psrhmin
 
 #ifdef DEBUG
    integer, private,parameter ::  nlook = 1  ! Number of points to examine
@@ -91,68 +93,26 @@ module cldwat
    integer, private ::  lchnklook(nlook)     ! Chunk index to examine
    integer, private ::  icollook(nlook)      ! Column index to examine
 #endif
-  ! Private data
-  real(r8), parameter :: unset_r8 = huge(1.0_r8)
 
 contains
 !===============================================================================
-  subroutine cldwat_readnl(nlfile)
+subroutine cldwat_init(icritw_in, icritc_in, conke_in, r3lcrit_in, psrhmin_in, do_psrhmin_in )
 
-   use namelist_utils,  only: find_group_name
-   use units,           only: getunit, freeunit
-   use mpishorthand
+    real(r8), intent(in) :: icritw_in    !   icritw  = threshold for autoconversion of warm ice  
+    real(r8), intent(in) :: icritc_in    !   icritc  = threshold for autoconversion of cold ice  
+    real(r8), intent(in) :: conke_in     !   conke   = tunable constant for evaporation of precip
+    real(r8), intent(in) :: r3lcrit_in   !   r3lcrit = critical radius where liq conversion begins
+    real(r8), intent(in) :: psrhmin_in   ! condensation threadhold in polar stratosphere
+    logical,  intent(in) :: do_psrhmin_in
 
-   character(len=*), intent(in) :: nlfile  ! filepath for file containing namelist input
+    icritw  = icritw_in
+    icritc  = icritc_in
+    conke   = conke_in
+    r3lcrit = r3lcrit_in
+    psrhmin = psrhmin_in
+    do_psrhmin = do_psrhmin_in
 
-
-
-
-   ! Namelist variables
-   real(r8) :: cldwat_icritw  = unset_r8    !   icritw  = threshold for autoconversion of warm ice  
-   real(r8) :: cldwat_icritc  = unset_r8    !   icritc  = threshold for autoconversion of cold ice  
-   real(r8) :: cldwat_conke   = unset_r8    !   conke   = tunable constant for evaporation of precip
-   real(r8) :: cldwat_r3lcrit = unset_r8    !   r3lcrit = critical radius where liq conversion begins
-
-   ! Local variables
-   integer :: unitn, ierr
-   character(len=*), parameter :: subname = 'cldwat_readnl'
-
-   namelist /cldwat_nl/ cldwat_icritw, cldwat_icritc, cldwat_conke, cldwat_r3lcrit
-
-   !-----------------------------------------------------------------------------
-
-   if (masterproc) then
-      unitn = getunit()
-      open( unitn, file=trim(nlfile), status='old' )
-      call find_group_name(unitn, 'cldwat_nl', status=ierr)
-      if (ierr == 0) then
-         read(unitn, cldwat_nl, iostat=ierr)
-         if (ierr /= 0) then
-            call endrun(subname // ':: ERROR reading namelist')
-         end if
-      end if
-      close(unitn)
-      call freeunit(unitn)
-
-      ! set local variables
-      icritw  = cldwat_icritw 
-      icritc  = cldwat_icritc
-      conke   = cldwat_conke
-      r3lcrit = cldwat_r3lcrit
-
-   end if
-
-
-
-#ifdef SPMD
-   ! Broadcast namelist variables
-   call mpibcast(icritw,            1, mpir8,  0, mpicom)
-   call mpibcast(icritc,            1, mpir8,  0, mpicom)
-   call mpibcast(conke,             1, mpir8,  0, mpicom)
-   call mpibcast(r3lcrit,           1, mpir8,  0, mpicom)
-#endif
-
-end subroutine cldwat_readnl
+  end subroutine cldwat_init
 
 subroutine inimc( tmeltx, rhonotx, gravitx, rh2ox)
 !----------------------------------------------------------------------- 
@@ -164,7 +124,6 @@ subroutine inimc( tmeltx, rhonotx, gravitx, rh2ox)
 ! 
 !-----------------------------------------------------------------------
    use pmgrid,       only: plev, plevp
-   use dycore,       only: dycore_is, get_resolution
    use ref_pres,     only: pref_mid
 
    integer k
@@ -256,13 +215,13 @@ subroutine inimc( tmeltx, rhonotx, gravitx, rh2ox)
 
 end subroutine inimc
 
-subroutine pcond (lchnk   ,ncol    , &
+subroutine pcond (lchnk   ,ncol    ,troplev ,dlat    , &
                   tn      ,ttend   ,qn      ,qtend   ,omega   , &
                   cwat    ,p       ,pdel    ,cldn    ,fice    , fsnow, &
                   cme     ,prodprec,prodsnow,evapprec,evapsnow,evapheat, prfzheat, &     
                   meltheat,precip  ,snowab  ,deltat  ,fwaut   , &
                   fsaut   ,fracw   ,fsacw   ,fsaci   ,lctend  , &
-                  rhdfda  ,rhu00   ,seaicef, zi      ,ice2pr, liq2pr, &
+                  rhdfda  ,rhu00   ,landm   ,seaicef ,zi      ,ice2pr, liq2pr, &
                   liq2snow, snowh, rkflxprc, rkflxsnw, pracwo, psacwo, psacio)
 !----------------------------------------------------------------------- 
 ! 
@@ -284,15 +243,15 @@ subroutine pcond (lchnk   ,ncol    , &
 !-----------------------------------------------------------------------
    use wv_saturation, only: qsat, estblf, svp_to_qsat, findsp_vc
    use physconst, only: epsilo
-   use cam_control_mod, only: nlvdry
 !
 !---------------------------------------------------------------------
 !
 ! Input Arguments
 !
-   integer, intent(in) :: lchnk                 ! chunk identifier
-   integer, intent(in) :: ncol                  ! number of atmospheric columns
-
+   integer,  intent(in) :: lchnk                ! chunk identifier
+   integer,  intent(in) :: ncol                 ! number of atmospheric columns
+   integer,  intent(in) :: troplev(pcols)       ! tropopause level
+   real(r8), intent(in) :: dlat(pcols)          ! latitudes in degrees
    real(r8), intent(in) :: fice(pcols,pver)     ! fraction of cwat that is ice
    real(r8), intent(in) :: fsnow(pcols,pver)    ! fraction of rain that freezes to snow
    real(r8), intent(in) :: cldn(pcols,pver)     ! new value of cloud fraction    (fraction)
@@ -308,9 +267,10 @@ subroutine pcond (lchnk   ,ncol    , &
    real(r8), intent(in) :: lctend(pcols,pver)   ! cloud liquid water tendencies   ====wlin
    real(r8), intent(in) :: rhdfda(pcols,pver)   ! dG(a)/da, rh=G(a), when rh>u00  ====wlin
    real(r8), intent(in) :: rhu00 (pcols,pver)   ! Rhlim for cloud                 ====wlin
+   real(r8), intent(in) :: landm(pcols)         ! Land fraction ramped over water (fraction)
    real(r8), intent(in) :: seaicef(pcols)       ! sea ice fraction  (fraction)
    real(r8), intent(in) :: zi(pcols,pverp)      ! layer interfaces (m)
-    real(r8), intent(in) :: snowh(pcols)         ! Snow depth over land, water equivalent (m)
+   real(r8), intent(in) :: snowh(pcols)         ! Snow depth over land, water equivalent (m)
 !
 ! Output Arguments
 !
@@ -406,6 +366,8 @@ subroutine pcond (lchnk   ,ncol    , &
    real(r8) cwnsave(pcols,2,pver), cmesave(pcols,2,pver)
    real(r8) prodprecsave(pcols,2,pver)
    logical error_found
+
+   real(r8) :: rhu_adj(pcols,pver)   ! adjusted rhlim for dehydration 
 !
 !------------------------------------------------------------
 !
@@ -552,7 +514,9 @@ subroutine pcond (lchnk   ,ncol    , &
 ! calculation of cme has 4 scenarios
 ! ==================================
 !
-           if(relhum(i) > rhu00(i,k)) then
+           call relhum_min_adj( ncol, troplev, dlat, rhu00, rhu_adj )
+
+           if(relhum(i) > rhu_adj(i,k)) then
     
            ! 1. whole grid saturation
            ! ========================
@@ -564,7 +528,7 @@ subroutine pcond (lchnk   ,ncol    , &
               else
                  if (rhdfda(i,k) .eq. 0._r8 .and. icwc(i).eq.0._r8) then
                     write (iulog,*) ' cldwat.F90:  empty rh cloud ', i, k, lchnk
-                    write (iulog,*) ' relhum, iter ', relhum(i), l, rhu00(i,k), cldm(i), cldn(i,k)
+                    write (iulog,*) ' relhum, iter ', relhum(i), l, rhu_adj(i,k), cldm(i), cldn(i,k)
                     call endrun ()
                  endif
                   csigma(i) = 1.0_r8/(rhdfda(i,k)+cgamma(i)*icwc(i))
@@ -636,8 +600,8 @@ subroutine pcond (lchnk   ,ncol    , &
 !
 ! as a safe limit, condensation should not reduce grid mean rh below rhu00
 ! 
-           if(cme(i,k) > 0.0_r8 .and. relhum(i) > rhu00(i,k) )  &
-              cme(i,k) = min(cme(i,k), (qn(i,k)-qs(i)*rhu00(i,k))/deltat)
+           if(cme(i,k) > 0.0_r8 .and. relhum(i) > rhu_adj(i,k) )  &
+              cme(i,k) = min(cme(i,k), (qn(i,k)-qs(i)*rhu_adj(i,k))/deltat)
 !
 ! initial guess for cwm (mean cloud water over time step) if 1st iteration
 !
@@ -660,7 +624,7 @@ subroutine pcond (lchnk   ,ncol    , &
                          k       ,prprov  ,snowab,  t       ,p        , &
                          cwm     ,cldm    ,cldmax  ,fice(1,k),coef    , &
                          fwaut(1,k),fsaut(1,k),fracw(1,k),fsacw(1,k),fsaci(1,k), &
-                         seaicef, snowh, pracwo(1,k), psacwo(1,k), psacio(1,k))
+                         landm, seaicef, snowh, pracwo(1,k), psacwo(1,k), psacio(1,k))
 
 !
 ! calculate the precip rate
@@ -911,7 +875,7 @@ subroutine findmcnew (lchnk   ,ncol    , &
                       k       ,precab  ,snowab,  t       ,p       , &
                       cwm     ,cldm    ,cldmax  ,fice    ,coef    , &
                       fwaut   ,fsaut   ,fracw   ,fsacw   ,fsaci   , &
-                      seaicef ,snowh,  pracwo, psacwo, psacio )
+                      landm   ,seaicef ,snowh   ,pracwo  ,psacwo  ,psacio )
  
 !----------------------------------------------------------------------- 
 ! 
@@ -928,7 +892,6 @@ subroutine findmcnew (lchnk   ,ncol    , &
 ! 
 !-----------------------------------------------------------------------
    use phys_grid, only: get_rlat_all_p
-   use comsrf,        only: landm
 !
 ! input args
 !
@@ -943,9 +906,10 @@ subroutine findmcnew (lchnk   ,ncol    , &
    real(r8), intent(in) :: cldmax(pcols)        ! max cloud fraction above this level
    real(r8), intent(in) :: cwm(pcols)           ! condensate mixing ratio (kg/kg)
    real(r8), intent(in) :: fice(pcols)          ! fraction of cwat that is ice
+   real(r8), intent(in) :: landm(pcols)         ! Land fraction ramped over water
    real(r8), intent(in) :: seaicef(pcols)       ! sea ice fraction 
    real(r8), intent(in) :: snowab(pcols)        ! rate of snow from above (kg / (m**2 * s))
-    real(r8), intent(in) :: snowh(pcols)         ! Snow depth over land, water equivalent (m)
+   real(r8), intent(in) :: snowh(pcols)         ! Snow depth over land, water equivalent (m)
 
 ! output arguments
    real(r8), intent(out) :: coef(pcols)          ! conversion rate (1/s)
@@ -1014,7 +978,7 @@ subroutine findmcnew (lchnk   ,ncol    , &
 !      real(r8) snowmr(pcols)
 !      real(r8) vfalls
 
-   real(8) ftot
+   real(r8) ftot
 
 !     inline statement functions
    real(r8) heavy, heavym, a1, a2, heavyp, heavymp
@@ -1046,8 +1010,6 @@ subroutine findmcnew (lchnk   ,ncol    , &
       endif
    end do
 
-!cdir nodep
-!DIR$ CONCURRENT
    do ii = 1,ncols
       i = ind(ii)
 !
@@ -1100,8 +1062,6 @@ subroutine findmcnew (lchnk   ,ncol    , &
 !
    call get_rlat_all_p(lchnk, ncol, rlat)
 
-!cdir nodep
-!DIR$ CONCURRENT
    do ii = 1,ncols
       i = ind(ii)
       rhocgs = rho(i)*1.e-3_r8     ! density in cgs units
@@ -1123,7 +1083,7 @@ subroutine findmcnew (lchnk   ,ncol    , &
       ! Modify for snow depth over land
       capn = capn + (capnc-capn) * min(1.0_r8,max(0.0_r8,snowh(i)*10._r8))
       ! Ramp between polluted value over land to clean value over ocean.
-      capn = capn + (capnc-capn) * min(1.0_r8,max(0.0_r8,1.0_r8-landm(i,lchnk)))
+      capn = capn + (capnc-capn) * min(1.0_r8,max(0.0_r8,1.0_r8-landm(i)))
       ! Ramp between the resultant value and a sea ice value in the presence of ice.
       capn = capn + (capnsi-capn) * min(1.0_r8,max(0.0_r8,seaicef(i)))
 ! end jrm
@@ -1132,7 +1092,7 @@ subroutine findmcnew (lchnk   ,ncol    , &
       if ( (lat(i) == latlook(1)) .or. (lat(i) == latlook(2)) ) then
          if (i == ilook(1)) then
             write(iulog,*) ' findmcnew: lat, k, seaicef, landm, wp, capnoice, capn ', &
-                 lat(i), k, seaicef(i), landm(i,lat(i)), wp, capnoice, capn
+                 lat(i), k, seaicef(i), landm(i), wp, capnoice, capn
          endif
       endif
 #endif
@@ -1293,5 +1253,34 @@ subroutine findmcnew (lchnk   ,ncol    , &
 
    return
 end subroutine findmcnew
+
+!-----------------------------------------------------------------------------
+! Sets rhu to a different value poleward of +/- 50 deg latitude and 
+! levels above the tropopause if cldwat_polstrat_rhmin is specified
+! ** This is used only for special waccm/cam-chem cases with cam4 physics **
+!-----------------------------------------------------------------------------
+subroutine relhum_min_adj( ncol, troplev, dlat, rhu, rhu_adj )
+
+  integer,  intent(in)  :: ncol
+  integer,  intent(in)  :: troplev(:)
+  real(r8), intent(in)  :: dlat(:)        ! latitudes in degrees
+  real(r8), intent(in)  :: rhu(:,:)
+  real(r8), intent(out) :: rhu_adj(:,:)
+
+  integer :: i,k
+
+  rhu_adj(:,:) = rhu(:,:)
+  if ( .not.do_psrhmin ) return
+
+  do k = 1,pver
+     do i = 1,ncol
+        if ((k .lt. troplev(i)) .and. &
+             ( abs( dlat(i) ) .gt. 50._r8 ) ) then
+           rhu_adj(i,k) = psrhmin
+        endif
+     enddo
+  enddo
+
+end subroutine relhum_min_adj
 
 end module cldwat

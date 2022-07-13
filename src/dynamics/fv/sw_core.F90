@@ -63,7 +63,7 @@ contains
  subroutine c_sw(grid,   u,       v,      pt,       delp,               &
                  u2,     v2,                                            &
                  uc,     vc,      ptc,    delpf,    ptk,                &
-                 tiny,   iord,    jord)
+                 tiny,   iord,    jord, am_correction)
 
 ! Routine for shallow water dynamics on the C-grid
 
@@ -78,6 +78,7 @@ contains
   type (T_FVDYCORE_GRID), intent(in) :: grid
   integer, intent(in):: iord
   integer, intent(in):: jord
+  logical, intent(in):: am_correction
 
   real(r8), intent(in):: u2(grid%im,grid%jfirst-grid%ng_d:grid%jlast+grid%ng_d)
   real(r8), intent(in):: v2(grid%im,grid%jfirst-grid%ng_s:grid%jlast+grid%ng_d)
@@ -174,15 +175,13 @@ contains
     real(r8) :: ar(-grid%im/3:grid%im+grid%im/3)
     real(r8) :: a6(-grid%im/3:grid%im+grid%im/3)
 
-    real(r8) :: us, vs, un, vn
     real(r8) :: p1ke, p2ke
-    real(r8) :: uanp(grid%im), uasp(grid%im), vanp(grid%im), vasp(grid%im)
 
     logical :: ffsl(grid%jm)
     logical :: sldv(grid%jfirst-1:grid%jn2g0)
 
     integer :: i, j, im2
-    integer :: js1g1, js2g1, js2gc1, jn2gc, jn1g1, js2g0, js2gc, jn1gc
+    integer :: js2g1, js2gc1, jn2gc, jn1g1, js2g0, js2gc, jn1gc
     integer :: im, jm, jfirst, jlast, jn2g0, ng_s, ng_c, ng_d
 
 
@@ -238,7 +237,6 @@ contains
     js2g0  = max(2,jfirst)
     js2gc  = max(2,jfirst-ng_c) ! NG lats on S (starting at 2)
     jn1gc  = min(jm,jlast+ng_c) ! ng_c lats on N (ending at jm)
-    js1g1  = max(1,jfirst-1)
     js2g1  = max(2,jfirst-1)
     jn1g1  = min(jm,jlast+1)
     jn2gc  = min(jm-1,jlast+ng_c)   ! NG latitudes on N (ending at jm-1)
@@ -260,10 +258,6 @@ contains
 
         endif
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-
         do j=js2g0,jn1g1                     ! ymass needed on NS
           do i=1,im
                cry(i,j) = dtdy5*vc(i,j)
@@ -272,20 +266,25 @@ contains
         enddo
 
 ! New va definition
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-        do j=js2g1,jn2g0                     ! va needed on S (for YCC, iv==1)
-          do i=1,im
-            va(i,j) = D0_5*(cry(i,j)+cry(i,j+1))
-          enddo
-        enddo
+
+        if (am_correction) then
+           do j=js2g1,jn2g0                     ! va needed on S (for YCC, iv==1)
+              do i=1,im
+                 ! weight by cos 
+                 va(i,j) = (cry(i,j)*cose(j)+cry(i,j+1)*cose(j+1))/(cose(j)+cose(j+1)) 
+              end do
+           end do
+
+        else
+           do j=js2g1,jn2g0                     ! va needed on S (for YCC, iv==1)
+              do i=1,im
+                 va(i,j) = 0.5_r8*(cry(i,j)+cry(i,j+1))
+              end do
+           end do
+
+        end if
 
 ! SJL: Check if FFSL integer fluxes need to be computed
-
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
         do j=js2gc,jn2gc                ! ffsl needed on N*sg S*sg
           do i=1,im
             crx(i,j) = uc(i,j)*dtdx2(j)
@@ -313,9 +312,6 @@ contains
               crx(1,jfirst), ymass, cosp,                    &
               0, jfirst, jlast)
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
    do j=js2g0,jn2g0                      ! xfx not ghosted
       if( ffsl(j) ) then
          do i=1,im
@@ -342,9 +338,6 @@ contains
                 dc, im, jn2g0-js2g0+1,  &
                 wk4, crx )
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
     do j=jfirst,jlast
        do i=1,im
           ptk(i,j) = delp(i,j) + ptk(i,j)
@@ -359,9 +352,6 @@ contains
      call ycc(im, jm, fy, vc(1,jfirst-2), va(1,jfirst-1),   &
               va(1,jfirst-1), jord, 1, jfirst, jlast)
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2g1,jn2g0
 
           do i=1,im
@@ -394,9 +384,6 @@ contains
               jfirst-1, jn2g0, jfirst-1, jn2g0,               &
               jfirst-1, jn2g0, jfirst-1, jn2g0)
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2g1,jn2g0
         do i=1,im
           wk1(i,j) = dxdt(j)*fxjv(i,j) + dydt*fy(i,j)
@@ -416,9 +403,6 @@ contains
      endif
 
 ! crx redefined
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2gc1,jn1gc
             crx(1,j) = dtxe5(j)*u(im,j)
           do i=2,im
@@ -432,9 +416,6 @@ contains
           enddo
      endif
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=jfirst,jlast
         do i=1,im
              cry(i,j) = dtdy5*v(i,j)
@@ -442,9 +423,6 @@ contains
         enddo
      enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2g0,jlast
           do i=1,im
             tm2(i,j) = D0_5*(cry(i,j)+cry(i,j-1)) ! cry ghosted on S 
@@ -459,9 +437,6 @@ contains
           enddo
      endif
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2gc,jn2gc
          do i=1,im
             vort_u(i,j) = uc(i,j)*cosp(j)
@@ -474,9 +449,6 @@ contains
           enddo
      endif
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2gc1,jn1gc
 ! The computed absolute vorticity on C-Grid is assigned to vort
           vort(1,j) = fc(j) + (vort_u(1,j-1)-vort_u(1,j))*cye(j) +     &
@@ -488,9 +460,6 @@ contains
           enddo
      enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
      do j=js2gc1,jn1gc          ! ffsl needed on N*ng S*(ng-1)
           ffsl(j) = .false.
           if( cose(j) < zt_c ) then
@@ -510,18 +479,12 @@ contains
               iord, jord, fx, fy(1,jfirst), ffsl, cose,           &
               jfirst, jlast, slope, qtmp, al, ar, a6 )
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
    do j=js2g0,jn2g0
          uc(1,j) = uc(1,j) + dtdx2(j)*(wk1(im,j)-wk1(1,j)) + dycp(j)*fy(1,j)
       do i=2,im
          uc(i,j) = uc(i,j) + dtdx2(j)*(wk1(i-1,j)-wk1(i,j)) + dycp(j)*fy(i,j)
       enddo
    enddo
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
    do j=js2g0,jlast
         do i=1,im-1
            vc(i,j) = vc(i,j) + dtdy5*(wk1(i,j-1)-wk1(i,j))-dxe(j)*fx(i+1,j)
@@ -545,7 +508,8 @@ contains
                   cdxde, cdxdp,  cdyde,   cdydp,                     & !ldel2 variables
                   cdxdiv,  cdydiv, cdx4,  cdy4,  cdtau4,  &
                   ldiv2, ldiv4, ldel2, &
-                  iord,  jord,  tiny )  
+                  iord,  jord,  tiny, am_correction, &
+                  ddp, duc, vf)
 !--------------------------------------------------------------------------
 ! Routine for shallow water dynamics on the D-grid
 
@@ -596,6 +560,12 @@ contains
   real(r8), intent(inout):: cy3(grid%im,grid%jfirst:grid%jlast+1)        ! Accumulated Courant number in Y
   real(r8), intent(inout):: mfx(grid%im,grid%jfirst:grid%jlast)          ! Mass flux in X  (unghosted)
   real(r8), intent(inout):: mfy(grid%im,grid%jfirst:grid%jlast+1)        ! Mass flux in Y
+
+  ! AM correction
+  logical,  intent(in)  :: am_correction      ! logical switch for correction (generate out args)
+  real(r8), intent(out) :: ddp(grid%im,grid%jfirst:grid%jlast)
+  real(r8), intent(out) :: duc(grid%im,grid%jfirst:grid%jlast)
+  real(r8), intent(out) :: vf(grid%im,grid%jfirst-2:grid%jlast+2 )
 
 ! !DESCRIPTION:
 !
@@ -666,6 +636,7 @@ contains
   real(r8) ::  wk2div4(grid%im+1,grid%jfirst-grid%ng_s:grid%jlast+grid%ng_s) 
   
   real(r8)  wk1(grid%im,grid%jfirst-1:grid%jlast+1)
+
   real(r8)  cry(grid%im,grid%jfirst-1:grid%jlast+1)
   real(r8)   fy(grid%im,grid%jfirst-2:grid%jlast+2)!halo changed for div4
   
@@ -674,7 +645,12 @@ contains
   
   real(r8)   va(grid%im,grid%jfirst-1:grid%jlast)
   real(r8)   ub(grid%im,grid%jfirst:  grid%jlast+1)
-  
+
+  ! AM correction
+  real(r8) :: dfx(grid%im,grid%jfirst:grid%jlast)     
+  real(r8) :: dfy(grid%im,grid%jfirst-2:grid%jlast+2) 
+  real(r8) :: dvdx(grid%im,grid%jfirst-grid%ng_d:grid%jlast+grid%ng_d)
+
   real(r8)  crx(grid%im,grid%jfirst-grid%ng_d:grid%jlast+grid%ng_d)
 #if defined(FILTER_MASS_FLUXES)
   real(r8)   u2(grid%im,grid%jfirst-grid%ng_d:grid%jlast+grid%ng_d)
@@ -704,7 +680,7 @@ contains
   integer i, j
   integer js2gd, jn2g0, jn2g1, jn2gd, jn1gd
   integer jn2g2 !for extra halo for div4 
-  integer js2gs, jn2gs, jn1gs
+  integer js2gs, jn1gs
   integer im2
   
 !
@@ -763,7 +739,6 @@ contains
   jn2gd = min(jm-1,jlast+ng_d)   ! NG latitudes on S (ending at jm-1)
   jn1gd = min(jm,jlast+ng_d)     ! NG latitudes on N (ending at jm)
   js2gs = max(2,jfirst-ng_s)
-  jn2gs = min(jm-1,jlast+ng_s)
   jn1gs = min(jm,jlast+ng_s)     ! NG latitudes on N (ending at jm)
 
 ! Get C-grid U-wind at poles.
@@ -836,18 +811,12 @@ contains
 
   endif
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
   do j=js2gd,jn2gd                     ! crx needed on N*ng S*ng
      do i=1,im
         crx(i,j) = dtdx(j)*uc(i,j)
      enddo
   enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
   do j=js2gd,jn2gd                ! ffsl needed on N*ng S*ng
      ffsl(j) = .false.
      if( cosp(j) < zt_d ) then
@@ -862,9 +831,6 @@ contains
       endif
   enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
   do j=js2g0,jn1g1                       ! cry, ymass needed on N
      do i=1,im
         cry(i,j) = dtdy*vc(i,j)
@@ -872,9 +838,6 @@ contains
      enddo
   enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
   do j=js2g0,jn2g0                         ! No ghosting
      do i=1,im
         if( cry(i,j)*cry(i,j+1) > D0_0 ) then
@@ -901,9 +864,6 @@ contains
                     v2, u2 )
    call pft2d( yfx(1,js2g0), se, de, im, jn1g1-js2g0+1, &
                     v2, u2 )
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
    do j=js2g0,jn2g0
       do i=1,im-1
          ub(i,j) = xfx(i,j) - xfx(i+1,j) + (yfx(i,j)-yfx(i,j+1))*acosp(j)
@@ -912,126 +872,118 @@ contains
    enddo
 #endif
 
+   ! AM correction
+   do j = jfirst, jlast
+      do i = 1, im
+         ddp(i,j) = 0.0_r8
+         duc(i,j) = 0.0_r8
+      end do
+   end do
+
+   if (am_correction) then
+      do j = js2g0, jn2g0
+         do i = 1, im-1
+            ddp( i,j) = (xfx(i+1,j) - xfx(i ,j))
+         end do
+         ddp(im,j) = (xfx(  1,j) - xfx(im,j))
+      end do
+   end if ! am_correction
+
 ! <<< Save necessary data for large time step tracer transport >>>
-      if( nq > 0 ) then
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-          do j=js2g0,jn2g0                       ! No ghosting needed
-            do i=1,im
-              cx3(i,j) = cx3(i,j) + crx(i,j)
-              mfx(i,j) = mfx(i,j) + xfx(i,j)
-            enddo
-          enddo
-
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-          do j=js2g0,jlast                      ! No ghosting needed
-            do i=1,im
-              cy3(i,j) = cy3(i,j) + cry(i,j)
-              mfy(i,j) = mfy(i,j) + yfx(i,j)
-            enddo
-          enddo
-      endif
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-     do j=js2g0,jn2g0                         ! No ghosting needed
-        if( ffsl(j) ) then
-          do i=1,im
-             xfx(i,j) = xfx(i,j)/sign(max(abs(crx(i,j)),tiny),crx(i,j))
-          enddo
-        endif
-     enddo
-
-! Update delp
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-        do j=jfirst,jlast
-          do i=1,im
-! SAVE old delp: pressure thickness ~ "air density"
-            wk1(i,j) = delp(i,j)
-            delp(i,j) = wk1(i,j) + ub(i,j)
-          enddo
-        enddo
-
-! pt Advection
-  call tp2c(ub(1,jfirst),va(1,jfirst),pt(1,jfirst-ng_d),    &
-            crx(1,jfirst-ng_d),cry(1,jfirst),               &
-            im,jm,iord,jord,ng_d,fx,fy(1,jfirst),           &
-            ffsl, rcap, acosp,                              &
-            xfx, yfx(1,jfirst), cosp, 1, jfirst,jlast)
-
-! Update pt.
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=jfirst,jlast
+   if( nq > 0 ) then
+      do j=js2g0,jn2g0                       ! No ghosting needed
          do i=1,im
-            pt(i,j) = (pt(i,j)*wk1(i,j)+ub(i,j)) / delp(i,j)
+            cx3(i,j) = cx3(i,j) + crx(i,j)
+            mfx(i,j) = mfx(i,j) + xfx(i,j)
          enddo
       enddo
+
+      do j=js2g0,jlast                      ! No ghosting needed
+         do i=1,im
+            cy3(i,j) = cy3(i,j) + cry(i,j)
+            mfy(i,j) = mfy(i,j) + yfx(i,j)
+         enddo
+      enddo
+   endif
+   do j=js2g0,jn2g0                         ! No ghosting needed
+      if( ffsl(j) ) then
+         do i=1,im
+            xfx(i,j) = xfx(i,j)/sign(max(abs(crx(i,j)),tiny),crx(i,j))
+         enddo
+      endif
+   enddo
+
+! Update delp
+   do j=jfirst,jlast
+      do i=1,im
+         ! SAVE old delp: pressure thickness ~ "air density"
+         wk1(i,j) = delp(i,j)
+         delp(i,j) = wk1(i,j) + ub(i,j)
+      enddo
+   enddo
+
+! pt Advection
+   call tp2c(ub(1,jfirst),va(1,jfirst),pt(1,jfirst-ng_d),    &
+             crx(1,jfirst-ng_d),cry(1,jfirst),               &
+             im,jm,iord,jord,ng_d,fx,fy(1,jfirst),           &
+             ffsl, rcap, acosp,                              &
+             xfx, yfx(1,jfirst), cosp, 1, jfirst,jlast)
+
+! Update pt.
+   do j=jfirst,jlast
+      do i=1,im
+         pt(i,j) = (pt(i,j)*wk1(i,j)+ub(i,j)) / delp(i,j)
+      enddo
+   enddo
 
 ! Compute upwind biased kinetic energy at the four cell corners
 
 ! Start using ub as v (CFL) on B-grid (cell corners)
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=js2g0,jn1g1                          ! ub needed on N
-           ub(1,j) = dtdy5*(vc(1,j) + vc(im,j))  
-         do i=2,im
-            ub(i,j) = dtdy5*(vc(i,j) + vc(i-1,j))
-         enddo
+   ! ub here is average over updated C-grid points (involving 
+   ! 6 D-grid points) instead of 2 non-updated D-grid points
+   do j=js2g0,jn1g1                          ! ub needed on N
+      ub(1,j) = dtdy5*(vc(1,j) + vc(im,j))  
+      do i=2,im
+         ub(i,j) = dtdy5*(vc(i,j) + vc(i-1,j))
       enddo
+   enddo
 
-      call ytp(im, jm, fy(1,jfirst), v(1,jfirst-ng_d), ub(1,jfirst),  &
-               ub(1,jfirst), ng_d, jord, 1, jfirst, jlast)
+   call ytp(im, jm, fy(1,jfirst), v(1,jfirst-ng_d), ub(1,jfirst),  &
+            ub(1,jfirst), ng_d, jord, 1, jfirst, jlast)
 ! End using ub as v (CFL) on B-grid
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
    do j=js2g0,jn1g1                 ! ub needed on N
        do i=1,im                
           ub(i,j) = dtxe5(j)*(uc(i,j) + uc(i,j-1))
-!                        uc will be used as wrok array after this point
+!                        uc will be used as work array after this point
        enddo
    enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-  do j=js2g0,jn1g1                       ! wk1 needed on N
-          sldv(j) = .false.
-          if( cose(j) < zt_d ) then
-            do i=1,im
-              if( abs(ub(i,j)) > D1_0 ) then    ! ub ghosted on N
-                sldv(j) = .true. 
+   do j=js2g0,jn1g1                       ! wk1 needed on N
+      sldv(j) = .false.
+      if( cose(j) < zt_d ) then
+         do i=1,im
+            if( abs(ub(i,j)) > D1_0 ) then    ! ub ghosted on N
+               sldv(j) = .true. 
 #if ( !defined UNICOSMP ) || ( !defined NEC_SX )
-                exit
+               exit
 #endif
-              endif
-            enddo
-          endif
-  enddo
+            endif
+         enddo
+      endif
+   enddo
 
-  call xtpv(im,  sldv, fxjv, u, ub, iord, ub, cose,       &
-           0, slope, qtmpv, al, ar, a6,                   &
-           jfirst, jlast, js2g0, jn1g1, jm,               &
-           jfirst-1, jn1g1, jfirst-1, jn1g1,              &
-           jfirst-ng_d, jlast+ng_s, jfirst, jlast+1,      &
-           jfirst, jlast+1, jfirst-1, jn1g1) 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-  do j=js2g0,jn1g1                       ! wk1 needed on N
-     do i=1,im
-        wk1(i,j) =  txe5(j)*fxjv(i,j) + tdy5*fy(i,j)  ! fy ghosted on N
-     enddo
-  enddo
+   call xtpv(im,  sldv, fxjv, u, ub, iord, ub, cose,       &
+            0, slope, qtmpv, al, ar, a6,                   &
+            jfirst, jlast, js2g0, jn1g1, jm,               &
+            jfirst-1, jn1g1, jfirst-1, jn1g1,              &
+            jfirst-ng_d, jlast+ng_s, jfirst, jlast+1,      &
+            jfirst, jlast+1, jfirst-1, jn1g1) 
+   do j=js2g0,jn1g1                       ! wk1 needed on N
+      do i=1,im
+         wk1(i,j) =  txe5(j)*fxjv(i,j) + tdy5*fy(i,j)  ! fy ghosted on N
+      enddo
+   enddo
 
 ! Add divergence damping to vector invariant form of the momentum eqn
 ! (absolute vorticity is damped by ffsl scheme, therefore divergence damping
@@ -1041,17 +993,14 @@ contains
 ! Perform divergence damping 
 !--------------------------
 
-  if (ldiv2) then
+   if (ldiv2) then
      !
      ! standard div2 damping
      !
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-     do j=max(2,jfirst-1), jn2g1                   ! fy need on NS (below)
-        do i=1,im
+      do j=max(2,jfirst-1), jn2g1                   ! fy need on NS (below)
+         do i=1,im
            !
-           ! cosp is cosine(theta) at cell center disctretized from the identity 
+           ! cosp is cosine(theta) at cell center discretized from the identity 
            !
            !   cos(theta) = d(sin(theta))/d(theta)
            !
@@ -1059,62 +1008,48 @@ contains
            !
            !   cosp = (sine(j+1)-sine(j))/dp where dp = pi/(jm-1)
            !
-           fy(i,j) = v(i,j)*cosp(j)      ! v ghosted on NS at least
-        enddo
-     enddo
+            fy(i,j) = v(i,j)*cosp(j)      ! v ghosted on NS at least
+         enddo
+      enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif   
-     do j=js2g0,jn1g1
-        ! i=1
-        uc(1,j) = u(im,j) - u(1,j)    ! u ghosted on N at least
-        do i=2,im
-           uc(i,j) = u(i-1,j) - u(i,j)
-        enddo
-     enddo
+      do j=js2g0,jn1g1
+         ! i=1
+         uc(1,j) = u(im,j) - u(1,j)    ! u ghosted on N at least
+         do i=2,im
+            uc(i,j) = u(i-1,j) - u(i,j)
+         enddo
+      enddo
      
-     if ( jfirst == 1 ) then
-        ! j=2
-        do i=1,im
-           wk1(i,2) = wk1(i,2) - cdy(2)*fy(i, 2) + cdx(2)*uc(i,2)
-        enddo
-     endif
+      if ( jfirst == 1 ) then
+         ! j=2
+         do i=1,im
+            wk1(i,2) = wk1(i,2) - cdy(2)*fy(i, 2) + cdx(2)*uc(i,2)
+         enddo
+      endif
      
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif     
-     do j=max(3,jfirst),jn2g1         ! wk1 needed on N (after TP2D)
-        do i=1,im
-           wk1(i,j) = wk1(i,j) + cdy(j)*(fy(i,j-1) - fy(i,j))  &
-                + cdx(j)*uc(i,j)
-        enddo
-     enddo
+      do j=max(3,jfirst),jn2g1         ! wk1 needed on N (after TP2D)
+         do i=1,im
+            wk1(i,j) = wk1(i,j) + cdy(j)*(fy(i,j-1) - fy(i,j))  &
+                 + cdx(j)*uc(i,j)
+         enddo
+      enddo
      
-     if ( jlast == jm ) then
-        do i=1,im
-           wk1(i,jm) = wk1(i,jm) + cdy(jm)*fy(i,jm-1) + cdx(jm)*uc(i,jm)
-        enddo
-     endif
-  end if
-  !
-   !
-   ! js2gd = max(2,jfirst-ng_d)     ! NG latitudes on S (starting at 1)
-   ! jn2gd = min(jm-1,jlast+ng_d)   ! NG latitudes on S (ending at jm-1)
-   ! jn1gd = min(jm,jlast+ng_d)     ! NG latitudes on N (ending at jm)
-   ! js2gs = max(2,jfirst-ng_s)
-   ! jn2gs = min(jm-1,jlast+ng_s)
-   ! jn1gs = min(jm,jlast+ng_s)     ! NG latitudes on N (ending at jm)
-  if (ldiv4) then
+      if ( jlast == jm ) then
+         do i=1,im
+            wk1(i,jm) = wk1(i,jm) + cdy(jm)*fy(i,jm-1) + cdx(jm)*uc(i,jm)
+         enddo
+      endif
+   end if
+
+   if (ldiv4) then
      !
      ! filter velocity components for stability
      !
-     call pft2d(u(1,js2gd), grid%sediv4, grid%dediv4, im, jn1gs-js2gd+1, &
-          wkdiv4, wk2div4 )
-    
-     call pft2d(v(1,js2gs), grid%scdiv4, grid%dcdiv4, im, jn2gd-js2gs+1, &
-          wkdiv4, wk2div4 )
-
+      call pft2d(u(1,js2gd), grid%sediv4, grid%dediv4, im, jn1gs-js2gd+1, &
+           wkdiv4, wk2div4 )
+      
+      call pft2d(v(1,js2gs), grid%scdiv4, grid%dcdiv4, im, jn2gd-js2gs+1, &
+           wkdiv4, wk2div4 )
 
     !**************************************************************************
     !
@@ -1122,197 +1057,180 @@ contains
     !
     !**************************************************************************
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-    do j=max(2,jfirst-2), min(jm-1,grid%jlast+2)                   ! fy need on NS (below)
-      do i=1,im
-        fy(i,j) = v(i,j)*cosp(j)      ! v ghosted on NS at least
+      do j=max(2,jfirst-2), min(jm-1,grid%jlast+2)                   ! fy need on NS (below)
+         do i=1,im
+            fy(i,j) = v(i,j)*cosp(j)      ! v ghosted on NS at least
+         enddo
       enddo
-    enddo
     
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif   
-    do j=max(2,jfirst-1),min(jm,grid%jlast+2)
-      ! i=1
-      uc(1,j) = u(im,j) - u(1,j)    ! u ghosted on N at least
-      do i=2,im
-        uc(i,j) = u(i-1,j) - u(i,j)
+      do j=max(2,jfirst-1),min(jm,grid%jlast+2)
+         ! i=1
+         uc(1,j) = u(im,j) - u(1,j)    ! u ghosted on N at least
+         do i=2,im
+            uc(i,j) = u(i-1,j) - u(i,j)
+         enddo
       enddo
-    enddo
-    !
-    ! compute divergence
-    !
-    if ( jfirst == 1 ) then
-      ! j=2
-      do i=1,im
-        div(i,2) = - cdydiv(2)*fy(i, 2) + cdxdiv(2)*uc(i,2)
-      enddo
-    endif
+      !
+      ! compute divergence
+      !
+      if ( jfirst == 1 ) then
+         ! j=2
+         do i=1,im
+            div(i,2) = - cdydiv(2)*fy(i, 2) + cdxdiv(2)*uc(i,2)
+         enddo
+      endif
     
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif     
-   do j=max(3,jfirst-1),min(jm-1,grid%jlast+2)!jn2g2         ! wk1 needed on N (after TP2D)
-      do i=1,im
-        div(i,j) = cdydiv(j)*(fy(i,j-1) - fy(i,j)) + cdxdiv(j)*uc(i,j)
+      do j=max(3,jfirst-1),min(jm-1,grid%jlast+2)               ! wk1 needed on N (after TP2D)
+         do i=1,im
+            div(i,j) = cdydiv(j)*(fy(i,j-1) - fy(i,j)) + cdxdiv(j)*uc(i,j)
+         enddo
       enddo
-    enddo
     
-    if ( jlast == jm ) then
-      do i=1,im
-        div(i,jm) = cdydiv(jm)*fy(i,jm-1) + cdxdiv(jm)*uc(i,jm)
-      enddo
-    endif
+      if ( jlast == jm ) then
+         do i=1,im
+            div(i,jm) = cdydiv(jm)*fy(i,jm-1) + cdxdiv(jm)*uc(i,jm)
+         enddo
+      endif
     
-    if ( jfirst == 1 ) then
-          ! j=2
-      i=1
-      j=2
-      deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(im ,j  ))+&
-               cdy4(j) * (cosp(j)*(div(i,j+1)-div(i,j)))
-      wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
-      do i=2,im-1
-        deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
-                 cdy4(j) * (cosp(j  )*(div(i  ,j+1)-div(i         ,j)))
-        wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
-      enddo
-      i=im
-      deldiv = cdx4(j) * (div(1 ,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
-               cdy4(j) * (cosp(j  )*(div(i,j+1)-div(i,j)))
-      wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
-    endif
-    
-    do j=max(3,jfirst),jn2g1         ! wk1 needed on N (after TP2D)
-      i=1
-      deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(im ,j  ))+&
-               cdy4(j) * ( &
-                           cosp(j  )*(div(i  ,j+1)-div(i,j  ))-&
-                           cosp(j-1)*(div(i  ,j  )-div(i,j-1)))
-      wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
-      do i=2,im-1
-        deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
-                 cdy4(j) * (  &
-                             cosp(j  )*(div(i  ,j+1)-div(i         ,j  ))-&
-                             cosp(j-1)*(div(i  ,j  )-div(i         ,j-1)))
-        wk1(i,j)   = wk1(i,j) + cdtau4(j)*deldiv
-      enddo
-      i=im
-      deldiv = cdx4(j) * (div(1 ,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
-               cdy4(j) * ( &
-                             cosp(j  )*(div(i  ,j+1)-div(i,j  ))-&
-                             cosp(j-1)*(div(i  ,j  )-div(i,j-1)))
-      wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
-    enddo
+      if ( jfirst == 1 ) then
+         i=1
+         j=2
+         deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(im ,j  ))+&
+                  cdy4(j) * (cosp(j)*(div(i,j+1)-div(i,j)))
+         wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
+         do i=2,im-1
+            deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
+                     cdy4(j) * (cosp(j  )*(div(i  ,j+1)-div(i         ,j)))
+            wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
+         enddo
+         i=im
+         deldiv = cdx4(j) * (div(1 ,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
+                  cdy4(j) * (cosp(j  )*(div(i,j+1)-div(i,j)))
+         wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
+      endif
 
-    if ( jlast == jm ) then
-      i=1
-      j = jm
-      deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(im,j  ))+&
-               cdy4(j) * (-cosp(j-1)*(div(i,j)-div(i,j-1)))
-                       
-      wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
-
-      do i=2,im-1
-        deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
-                 cdy4(j) * (-cosp(j-1)*(div(i,j)-div(i,j-1)))
-        wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
+      do j=max(3,jfirst),jn2g1         ! wk1 needed on N (after TP2D)
+         i=1
+         deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(im ,j  ))+&
+                  cdy4(j) * ( &
+                  cosp(j  )*(div(i  ,j+1)-div(i,j  ))-&
+                  cosp(j-1)*(div(i  ,j  )-div(i,j-1)))
+         wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
+         do i=2,im-1
+            deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
+                     cdy4(j) * (  &
+                     cosp(j  )*(div(i  ,j+1)-div(i         ,j  ))-&
+                     cosp(j-1)*(div(i  ,j  )-div(i         ,j-1)))
+            wk1(i,j)   = wk1(i,j) + cdtau4(j)*deldiv
+         enddo
+         i=im
+         deldiv = cdx4(j) * (div(1 ,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
+                  cdy4(j) * ( &
+                  cosp(j  )*(div(i  ,j+1)-div(i,j  ))-&
+                  cosp(j-1)*(div(i  ,j  )-div(i,j-1)))
+         wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
       enddo
-      i=im
-      j=jm
-      deldiv = cdx4(j) * (div(1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
-               cdy4(j) * (-cosp(j-1)*(div(i,j)-div(i,j-1)))
-      wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
-    endif
-  end if
 
-  wku(:,:) = D0_0
-  wkv(:,:) = D0_0
-  if (ldel2) then
+      if ( jlast == jm ) then
+         i=1
+         j = jm
+         deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(im,j  ))+&
+                  cdy4(j) * (-cosp(j-1)*(div(i,j)-div(i,j-1)))
+         wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
+         do i=2,im-1
+            deldiv = cdx4(j) * (div(i+1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
+                     cdy4(j) * (-cosp(j-1)*(div(i,j)-div(i,j-1)))
+            wk1(i,j) = wk1(i,j) + cdtau4(j)*deldiv
+         enddo
+         i=im
+         j=jm
+         deldiv = cdx4(j) * (div(1,j  )-D2_0*div(i,j)+div(i-1,j  ))+&
+                  cdy4(j) * (-cosp(j-1)*(div(i,j)-div(i,j-1)))
+         wk1(i,j) = wk1(i,j) +cdtau4(j)*deldiv
+      endif
+   end if
+
+   wku(:,:) = D0_0
+   wkv(:,:) = D0_0
+   if (ldel2) then
     !**************************************************************************
     !
     ! regular del2 (Laplacian) damping
     !
     !**************************************************************************    
-    if ( jfirst == 1 ) then
-       ! j=2
-       i=1
-       j=2
-
-       wku(i,j) = cdxde(j)* (u(i+1,j  )-D2_0*u(i,j)+u(im ,j  ))+&
-                  cdyde(j)* (cosp(j  )*(u(i  ,j+1)-u(i         ,j)))
-       wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(im,j  ))+&
-                  cdydp(j) * ( &
-                           cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
-                           cose(j  )*(v(i  ,j  )        ))
-       !line above: there is no v(i,j-1) since it is on the pole
-       do i=2,im-1
-          wku(i,j) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
-                     cdyde(j) * (cosp(j  )*(u(i  ,j+1)-u(i         ,j)))
-          wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(i-1,j  ))+&
-                     cdydp(j) * ( &
-                                 cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
-                                 cose(j  )*(v(i  ,j  )        ))        
-      enddo
-      i=im
-      wku(i,j) = cdxde(j) * (u(1 ,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
-                 cdyde(j) * (cosp(j  )*(u(i  ,j+1)-u(i         ,j)))                             
-      wkv(i,j) = cdxdp(j) * (v(1,j  )-D2_0*v(i,j)+v(i-1 ,j  ))+&
-                 cdydp(j) * ( &
-                           cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
-                           cose(j  )*(v(i  ,j  )        ))
-    endif
+      if ( jfirst == 1 ) then
+         i=1
+         j=2
+         wku(i,j) = cdxde(j)* (u(i+1,j  )-D2_0*u(i,j)+u(im ,j  ))+&
+                    cdyde(j)* (cosp(j  )*(u(i  ,j+1)-u(i         ,j)))
+         wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(im,j  ))+&
+                    cdydp(j) * ( &
+                    cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
+                    cose(j  )*(v(i  ,j  )        ))
+         !line above: there is no v(i,j-1) since it is on the pole
+         do i=2,im-1
+            wku(i,j) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
+                       cdyde(j) * (cosp(j  )*(u(i  ,j+1)-u(i         ,j)))
+            wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(i-1,j  ))+&
+                       cdydp(j) * ( &
+                       cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
+                       cose(j  )*(v(i  ,j  )        ))        
+         enddo
+         i=im
+         wku(i,j) = cdxde(j) * (u(1 ,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
+                    cdyde(j) * (cosp(j  )*(u(i  ,j+1)-u(i         ,j)))                             
+         wkv(i,j) = cdxdp(j) * (v(1,j  )-D2_0*v(i,j)+v(i-1 ,j  ))+&
+                    cdydp(j) * ( &
+                    cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
+                    cose(j  )*(v(i  ,j  )        ))
+      endif
     
-    do j=max(3,jfirst),jn2g1         ! wk1 needed on N (after TP2D)
-      i=1
-      wku(i,j) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(im ,j  ))+&
-                 cdyde(j) * ( &
-                           cosp(j  )*(u(i  ,j+1)-u(i,j  ))-&
-                           cosp(j-1)*(u(i  ,j  )-u(i,j-1)))
-
-      wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(im ,j  ))+&
-                 cdydp(j) * ( &
-                           cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
-                           cose(j  )*(v(i  ,j  )-v(i,j-1)))
-      do i=2,im-1
-        wku(i,j) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
-                   cdyde(j) * (  &
-                             cosp(j  )*(u(i  ,j+1)-u(i         ,j  ))-&
-                             cosp(j-1)*(u(i  ,j  )-u(i         ,j-1)))
-
-        wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(i-1,j  ))+&
-                   cdydp(j) * (  &
-                             cose(j+1)*(v(i  ,j+1)-v(i         ,j  ))-&
-                             cose(j  )*(v(i  ,j  )-v(i         ,j-1)))
+      do j=max(3,jfirst),jn2g1         ! wk1 needed on N (after TP2D)
+         i=1
+         wku(i,j) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(im ,j  ))+&
+                    cdyde(j) * ( &
+                                 cosp(j  )*(u(i  ,j+1)-u(i,j  ))-&
+                                 cosp(j-1)*(u(i  ,j  )-u(i,j-1)))
+         wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(im ,j  ))+&
+                    cdydp(j) * ( &
+                                cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
+                                cose(j  )*(v(i  ,j  )-v(i,j-1)))
+         do i=2,im-1
+            wku(i,j) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
+                       cdyde(j) * (  &
+                                   cosp(j  )*(u(i  ,j+1)-u(i         ,j  ))-&
+                                   cosp(j-1)*(u(i  ,j  )-u(i         ,j-1)))
+            wkv(i,j) = cdxdp(j) * (v(i+1,j  )-D2_0*v(i,j)+v(i-1,j  ))+&
+                       cdydp(j) * (  &
+                                   cose(j+1)*(v(i  ,j+1)-v(i         ,j  ))-&
+                                   cose(j  )*(v(i  ,j  )-v(i         ,j-1)))
+         enddo
+         i=im
+         wku(i,j) = cdxde(j) * (u(1 ,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
+                    cdyde(j) * ( &
+                                cosp(j  )*(u(i  ,j+1)-u(i,j  ))-&
+                                cosp(j-1)*(u(i  ,j  )-u(i,j-1)))
+         wkv(i,j) = cdxdp(j) * (v(1 ,j  )-D2_0*v(i,j)+v(i-1,j  ))+&
+                    cdydp(j) * ( &
+                                cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
+                                cose(j  )*(v(i  ,j  )-v(i,j-1)))
       enddo
-      i=im
-      wku(i,j) = cdxde(j) * (u(1 ,j  )-D2_0*u(i,j)+u(i-1,j  ))+&
-                 cdyde(j) * ( &
-                             cosp(j  )*(u(i  ,j+1)-u(i,j  ))-&
-                             cosp(j-1)*(u(i  ,j  )-u(i,j-1)))
 
-      wkv(i,j) = cdxdp(j) * (v(1 ,j  )-D2_0*v(i,j)+v(i-1,j  ))+&
-                 cdydp(j) * ( &
-                             cose(j+1)*(v(i  ,j+1)-v(i,j  ))-&
-                             cose(j  )*(v(i  ,j  )-v(i,j-1)))
-    enddo
-
-    if ( jlast == jm ) then
-      i=1
-      j = jm
-      wku(i,jm) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(im,j  ))+&
-                  cdyde(j) * (-cosp(j-1)*(u(i,j)-u(i,j-1)))
-      do i=2,im-1
-         wku(i,jm) = cdxde(j) * (u(i+1,j)-D2_0*u(i,j)+u(i-1,j))+&
+      if ( jlast == jm ) then
+         i=1
+         j = jm
+         wku(i,jm) = cdxde(j) * (u(i+1,j  )-D2_0*u(i,j)+u(im,j  ))+&
                      cdyde(j) * (-cosp(j-1)*(u(i,j)-u(i,j-1)))
-      enddo
-      i=im
-      j=jm
-      wku(i,jm) = cdxde(j) * (u(1,j)-D2_0*u(i,j)+u(i-1,j))+&
-                  cdyde(j) * (-cosp(j-1)*(u(i,j)-u(i,j-1)))
-   endif
-end if
+         do i=2,im-1
+            wku(i,jm) = cdxde(j) * (u(i+1,j)-D2_0*u(i,j)+u(i-1,j))+&
+                        cdyde(j) * (-cosp(j-1)*(u(i,j)-u(i,j-1)))
+         enddo
+         i=im
+         j=jm
+         wku(i,jm) = cdxde(j) * (u(1,j)-D2_0*u(i,j)+u(i-1,j))+&
+                     cdyde(j) * (-cosp(j-1)*(u(i,j)-u(i,j-1)))
+      endif
+   end if
 
 !------------------------------------
 ! End divergence damping computation
@@ -1322,96 +1240,132 @@ end if
 ! Compute Vorticity on the D grid
 ! delpf used as work array
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=js2gd,jn1gd
-         do i=1,im
-            delpf(i,j) = u(i,j)*cose(j)   ! u ghosted on N*ng S*ng
-         enddo
+   do j=js2gd,jn1gd
+      do i=1,im
+         delpf(i,j) = u(i,j)*cose(j)   ! u ghosted on N*ng S*ng
       enddo
+   enddo
 
+   if ( jfirst-ng_d <= 1 ) then
+      c1 = D0_0
+      do i=1,im
+         c1 = c1 + delpf(i,2)
+      end do
+      c1 = -c1*rdy*rcap
+      do i=1,im
+         uc(i,1) = c1
+      enddo
+   endif
 
-      if ( jfirst-ng_d <= 1 ) then
-          c1 = D0_0
-          do i=1,im
-            c1 = c1 + delpf(i,2)
-          end do
-          c1 = -c1*rdy*rcap
-
-          do i=1,im
-            uc(i,1) = c1
-          enddo
-      endif
-
-      if ( jlast+ng_d >= jm ) then
-          c2 = D0_0
-          do i=1,im
-            c2 = c2 + delpf(i,jm)
-          end do
-          c2 = c2*rdy*rcap
-
-          do i=1,im
-            uc(i,jm) = c2
-          enddo
-      else
-
+   if ( jlast+ng_d >= jm ) then
+      c2 = D0_0
+      do i=1,im
+         c2 = c2 + delpf(i,jm)
+      end do
+      c2 = c2*rdy*rcap
+      do i=1,im
+         uc(i,jm) = c2
+      enddo
+   else
 ! This is an attempt to avoid ghosting u on N*(ng+1)
-          do i=1,im
-! DEBUG
-!            uc(i,jn2gd) = 0.0
-! testing
-             uc(i,jn2gd) = D1E30
-          enddo
-      endif
-
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=js2gd, min(jm-1,jlast+ng_d-1)
-          do i=1,im-1
-             uc(i,j) = ( delpf(i,j) - delpf(i,j+1)) * cy(j)  +         &
-                        (v(i+1,j) - v(i,j))    * rdx(j)
-          enddo
-            uc(im,j) = (delpf(im,j) - delpf(im,j+1)) *  cy(j) +        &
-                       (v(1,j) - v(im,j)) * rdx(j)
+      do i=1,im
+         uc(i,jn2gd) = D1E30
       enddo
+   endif
+
+    do j=js2gd, min(jm-1,jlast+ng_d-1)
+      do i=1,im-1
+         uc(i ,j) = ( delpf(i,j) - delpf(i ,j+1)) * cy(j)  +         &
+              (v(i+1,j) - v(i ,j)) * rdx(j)
+      enddo
+         uc(im,j) = (delpf(im,j) - delpf(im,j+1)) *  cy(j) +        &
+              (v( 1 ,j) - v(im,j)) * rdx(j)
+   enddo
 
 ! uc is relative vorticity at this point
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=max(1,jfirst-ng_d), jn1gd
-          do i=1,im
-             uc(i,j) = uc(i,j) + f0(j)
-! uc is absolute vorticity
-          enddo
+   do j=max(1,jfirst-ng_d), jn1gd
+      do i=1,im
+         uc(i,j) = uc(i,j) + f0(j)
+         ! uc is absolute vorticity
       enddo
+   enddo
 
-      call tp2d(va(1,jfirst), uc(1,jfirst-ng_d), crx(1,jfirst-ng_d),  &
-                cry(1,jfirst), im, jm, iord, jord, ng_d, fx,           &
-                fy(1,jfirst), ffsl, crx(1,jfirst),                     &
+   call tp2d(va(1,jfirst), uc(1,jfirst-ng_d), crx(1,jfirst-ng_d),  &
+             cry(1,jfirst), im, jm, iord, jord, ng_d, fx,          &
+             fy (1,jfirst), ffsl, crx(1,jfirst),                   &
+             ymass, cosp, 0, jfirst, jlast)
+
+   do j = jfirst-2, jlast+2
+      do i = 1, im
+         vf (i,j) = 0.0_r8
+      end do
+   end do
+
+      ! AM correction
+   if (am_correction) then 
+
+      if (jlast+ng_d >= jm) then 
+         do i = 1, im
+            dvdx(i,jm) = 0.0_r8
+         end do
+      else
+         do i = 1, im
+            dvdx(i,jn2gd) = 0.0_r8
+         end do
+      end if
+
+      if (jfirst-ng_d <= 1) then 
+         do i = 1, im
+            dvdx(i,1) = 0.0_r8
+         end do
+      end if
+
+      do j = js2gd, min(jm-1, jlast+ng_d-1)
+         do i = 1, im-1
+            dvdx( i,j) = (v(i+1,j) - v(i ,j)) * rdx(j)
+         end do
+            dvdx(im,j) = (v(  1,j) - v(im,j)) * rdx(j)
+      end do
+
+      call tp2d(va(1,jfirst),dvdx(1,jfirst-ng_d), crx(1,jfirst-ng_d), &
+                cry(1,jfirst), im, jm, iord, jord, ng_d,dfx,          &
+                dfy(1,jfirst), ffsl, crx(1,jfirst),                   &
                 ymass, cosp, 0, jfirst, jlast)
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=js2g0,jlast
-          do i=1,im-1
-            uc(i,j) = dtdxe(j)*(wk1(i,j)-wk1(i+1,j)) + dyce(j)*fy(i,j)+wku(i,j)
-          enddo
-           uc(im,j) = dtdxe(j)*(wk1(im,j)-wk1(1,j))  + dyce(j)*fy(im,j)+wku(im,j)
+      do j = js2g0, jlast
+         do i = 1, im
+            duc(i,j) = dyce(j)*dfy(i,j)
+         end do
+      end do
+
+      do j = js2g0, jlast
+         do i=1,im
+            vf(i,j) = dyce(j)*(fy(i,j)-dfy(i,j))
+         enddo
       enddo
 
-#if defined(INNER_OMP)
-!$omp parallel do default(shared) private(j,i)
-#endif
-      do j=js2g0,jn2g0
-          do i=1,im
-            vc(i,j) = dtdy*(wk1(i,j)-wk1(i,j+1)) - dx(j)*fx(i,j)+wkv(i,j)
-          enddo
+      do j = js2g0, jlast
+         do i = 1, im-1
+            duc( i,j) = dtdxe(j)*(wk1(i+1,j)-wk1(i ,j)) -duc( i,j) -wku( i,j)
+         end do
+            duc(im,j) = dtdxe(j)*(wk1(  1,j)-wk1(im,j)) -duc(im,j) -wku(im,j)
+      end do
+
+   end if ! am_correction
+
+   do j = js2g0, jlast
+      do i=1,im-1
+         uc(i ,j) =  dtdxe(j)*(wk1(i ,j)-wk1(i+1,j)) +dyce(j)*fy(i ,j) +wku(i ,j)
       enddo
+         uc(im,j) =  dtdxe(j)*(wk1(im,j)-wk1(  1,j)) +dyce(j)*fy(im,j) +wku(im,j)
+   enddo
+
+   do j = js2g0, jn2g0
+      do i=1,im
+         vc(i,j) = dtdy*(wk1(i,j)-wk1(i,j+1)) -dx(j)*fx(i,j) +wkv(i,j)
+      enddo
+   enddo
 
  end subroutine d_sw
 !----------------------------------------------------------------------- 
@@ -1421,7 +1375,8 @@ end if
 ! !IROUTINE: d2a2c_winds --- Interpolate winds
 !
 ! !INTERFACE:
- subroutine d2a2c_winds(grid, u, v, ua, va, uc, vc, u_cen, v_cen, reset_winds, met_rlx)
+ subroutine d2a2c_winds(grid, u, v, ua, va, uc, vc, u_cen, v_cen, &
+                        reset_winds, met_rlx, am_correction)
 
   implicit none
 
@@ -1440,6 +1395,7 @@ end if
   real(r8), intent(in):: u_cen(grid%im,grid%jfirst-grid%ng_d:grid%jlast+grid%ng_d)
   real(r8), intent(in):: v_cen(grid%im,grid%jfirst-grid%ng_s:grid%jlast+grid%ng_d)
   real(r8), intent(in):: met_rlx
+  logical,  intent(in):: am_correction
 
 ! !DESCRIPTION:
 !
@@ -1467,6 +1423,11 @@ end if
   real(r8), pointer:: coslon(:)
   real(r8), pointer:: sinl5(:)
   real(r8), pointer:: cosl5(:)
+
+  ! AM correction
+  real(r8), pointer:: cosp(:)
+  real(r8), pointer:: acosp(:)
+  real(r8), pointer:: cose(:)
 
   integer :: i, j, im2
   integer :: im, jm, jfirst, jlast, ng_s, ng_c, ng_d
@@ -1501,6 +1462,11 @@ end if
   coslon => grid%coslon
   sinl5  => grid%sinl5
   cosl5  => grid%cosl5
+
+  ! AM correction
+  cosp   => grid%cosp
+  acosp  => grid%acosp
+  cose   => grid%cose
 
 ! Get D-grid V-wind at the poles.
 
@@ -1587,12 +1553,19 @@ end if
           va(im,j) = v(im,j) + v(1,j)
     enddo
 
-    do j=js2gd,jn2gsm1  ! WS: should be safe since u defined to jn2gs
-       do i=1,im
-          ua(i,j) = u(i,j) + u(i,j+1)
-       enddo
-    enddo
-
+    if (am_correction) then
+       do j = js2gd, jn2gsm1
+          do i = 1, im
+             ua(i,j) =(u(i,j)*cose(j) + u(i,j+1)*cose(j+1))/cosp(j) ! curl free -> curl free
+          end do
+       end do
+    else
+       do j = js2gd, jn2gsm1  ! WS: should be safe since u defined to jn2gs
+          do i = 1, im
+             ua(i,j) = u(i,j) + u(i,j+1)                          ! solid body -> solid body
+          end do
+       end do
+    end if
 !
 ! reset cell center winds to the offline meteorlogy data
 !
@@ -1658,21 +1631,26 @@ end if
 
 ! A -> C
         do j=js1gc,jn1gc       ! uc needed N*ng_c S*ng_c, ua defined at poles
-! i=1
             uc(1,j) = D0_25*(ua(1,j)+ua(im,j))
-
-
           do i=2,im
-
             uc(i,j) = D0_25*(ua(i,j)+ua(i-1,j))
           enddo
         enddo
 
-        do j=js2g2,jn1g2       ! vc needed N*2, S*2 (for ycc), va defined at poles
-          do i=1,im
-            vc(i,j) = D0_25*(va(i,j)+va(i,j-1))  ! va needed N*2 S*3
-          enddo
-        enddo
+        if (am_correction) then
+           do j = js2g2, jn1g2       ! vc needed N*2, S*2 (for ycc), va defined at poles
+              do i = 1, im
+                 vc(i,j) = D0_25*(va(i,j)*cosp(j) + va(i,j-1)*cosp(j-1))/cose(j) ! div free -> div free
+              end do
+           end do
+        else
+           do j = js2g2, jn1g2
+              do i = 1, im
+                 vc(i,j) = D0_25*(va(i,j) + va(i,j-1))
+              end do
+           end do
+        end if
+
         if ( jfirst==1 ) then
            do i=1,im
               vc(i,1) = D0_0   ! Needed to avoid undefined values in VC

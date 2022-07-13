@@ -6,8 +6,8 @@ subroutine hordif(k,ztdt)
 ! 
 ! Method: 
 ! Horizontal diffusion of z,d,t,q
-! 1. implicit del**2 form above level kmnhd4
-! 2. implicit del**4 form at level kmnhd4 and below
+! 1. implicit del**2 form above level kmnhdn
+! 2. implicit del**N form at level kmnhdn and below
 ! 3. courant number based truncation at level kmxhdc and above
 ! 4. increased del**2 coefficient at level kmxhd2 and above
 !
@@ -60,17 +60,16 @@ subroutine hordif(k,ztdt)
    real(r8) two
 !
 !-----------------------------------------------------------------------
-!DIR$ NOSTREAM
    two=2._r8
 !
 ! Set the horizontal diffusion factors for each wavenumer at this level
-! depending on: whether del^2 or del^4 diffusion is to be applied; and 
+! depending on: whether del^2 or del^N diffusion is to be applied; and 
 ! whether the courant number limit is to be applied.
 !
-   if (k .ge. kmnhd4) then        ! Del^4 diffusion factors
+   if (k .ge. kmnhdn) then        ! Del^N diffusion factors
       do n=1,pnmax
-         hdiftq(n,k) = hdfst4(n)
-         hdifzd(n,k) = hdfsd4(n)
+         hdiftq(n,k) = hdfstn(n)
+         hdifzd(n,k) = hdfsdn(n)
       end do
 !
 ! Spectrally truncate selected levels (if courant number too large)
@@ -78,8 +77,8 @@ subroutine hordif(k,ztdt)
       if (k.le. kmxhdc .and. nindex(k).le.pnmax) then
          dfac = 1000._r8
          do n=nindex(k),pnmax
-            hdiftq(n,k) = dfac*hdfst4(n)
-            hdifzd(n,k) = dfac*hdfsd4(n)
+            hdiftq(n,k) = dfac*hdfstn(n)
+            hdifzd(n,k) = dfac*hdfsdn(n)
          end do
       end if
    else                      ! Del^2 diffusion factors

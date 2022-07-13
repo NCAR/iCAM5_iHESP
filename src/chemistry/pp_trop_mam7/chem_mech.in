@@ -34,10 +34,11 @@
  so4_a7 -> SO4
  nh4_a7 -> NH4, 
  num_a7 -> H
+ H2O
       End Solution
 
       Fixed
- M, N2, O2, H2O, O3, OH, NO3, HO2
+ M, N2, O2, O3, OH, NO3, HO2
       End Fixed
 
       Col-int
@@ -61,6 +62,7 @@
         dst_a5, so4_a5, nh4_a5, num_a5
         ncl_a6, so4_a6, nh4_a6, num_a6
         dst_a7, so4_a7, nh4_a7, num_a7
+        H2O
       End Implicit
    End Solution Classes
 
@@ -88,6 +90,7 @@
           pom_a3 <- dataset
           bc_a3 <- dataset
           num_a3 <- dataset
+          H2O <- dataset
       End Ext Forcing
 
    END CHEMISTRY

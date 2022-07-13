@@ -61,10 +61,13 @@ def buildcpp(case):
         atm_grid = '128x256'
     if atm_grid == 'T341':
         atm_grid = '512x1024'
+    if atm_grid == 'ne30pg3':
+        atm_grid = 'ne30np4.pg3'
+
 
     # if need to build - then construct configure command
     config_opts = ["-s", "-fc_type", compiler, "-ccsm_seq",
-                   "-dyn", cam_dycore, "-hgrid", atm_grid,
+                   "-dyn", cam_dycore, "-hgrid", atm_grid, "-cpl", comp_interface,
                    "-usr_src", os.path.join(caseroot, "SourceMods", "src.cam")]
 
     if nlev:
@@ -105,7 +108,10 @@ def buildcpp(case):
         os.makedirs(camconf)
 
     # Construct the command itself.
-    cmd = os.path.join(srcroot, "components", "cam", "bld", "configure") + \
+    testpath = os.path.join(srcroot, "components", "cam")
+    if os.path.exists(testpath):
+        srcroot = testpath
+    cmd = os.path.join(srcroot, "bld", "configure") + \
           " " + " ".join(config_opts)
     run_cmd_no_fail(cmd, from_dir=camconf)
 

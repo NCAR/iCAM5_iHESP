@@ -1,6 +1,22 @@
 module tfilt_massfix
+!-----------------------------------------------------------------------
+!
+! Purpose:
+! Time filter (second half of filter for vorticity and divergence only)
+!
+!-----------------------------------------------------------------------
+  implicit none
+  private
+  save
 
+  public tfilt_massfixrun
+!
+! Private module data
+!
+
+!=======================================================================
 contains
+!=======================================================================
 
 subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
                           v3m1,   v3,    t3m1,   t3,     q3m1,   &
@@ -10,33 +26,34 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
                           vm2,    tm2,   qm2,    vortm1, divm1,  &
                           omga,   dpsl,  dpsm,   beta,   hadv ,  &
                           nlon,   pdeldry, pdelm1dry, pdelm2dry)
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
-! Time filter (second half of filter for vorticity and divergence only)
-! 
-! Method: 
-! 
-! Author: 
-! 
 !-----------------------------------------------------------------------
-   use shr_kind_mod, only: r8 => shr_kind_r8
-   use cam_history,  only: outfld
-   use eul_control_mod, only : fixmas,eps
-   use pmgrid,       only: plon, plev, plevp, plat
-   use pspect
-   use commap
-   use constituents, only: pcnst, qmin, cnst_cam_outfld, &
+!
+! Purpose:
+! Time filter (second half of filter for vorticity and divergence only)
+!
+! Method:
+!
+! Author:
+!
+!-----------------------------------------------------------------------
+   use shr_kind_mod,    only: r8 => shr_kind_r8
+   use cam_control_mod, only: ideal_phys
+   use cam_history,     only: outfld
+   use eul_control_mod, only: fixmas,eps
+   use pmgrid,          only: plon, plev, plevp, plat
+   use commap,          only: clat
+   use constituents,    only: pcnst, qmin, cnst_cam_outfld, &
                            tottnam, tendnam, cnst_get_type_byind, fixcnam, &
                            hadvnam, vadvnam
-   use time_manager, only: get_nstep
-   use physconst,    only: cpair, gravit
-   use scamMod
-   use phys_control, only: phys_getopts
-   
+   use time_manager,    only: get_nstep
+   use physconst,       only: cpair, gravit
+   use scamMod,         only: single_column, dqfxcam
+   use phys_control,    only: phys_getopts
+   use qneg_module,     only: qneg3
+
 #if ( defined BFB_CAM_SCAM_IOP )
    use iop
-   use constituents, only: cnst_get_ind, cnst_name
+   use constituents,    only: cnst_get_ind, cnst_name
 #endif
    implicit none
 
@@ -62,7 +79,7 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
    real(r8), intent(in) :: beta                   ! energy fixer coefficient
    real(r8), intent(in) :: hadv(plon,plev,pcnst)  ! horizonal q advection tendency
    real(r8), intent(in) :: alpha(pcnst)
-   real(r8), intent(in) :: etamid(plev)           ! vertical coords at midpoints 
+   real(r8), intent(in) :: etamid(plev)           ! vertical coords at midpoints
    real(r8), intent(in) :: u3(plon,plev)
    real(r8), intent(in) :: v3(plon,plev)
    real(r8), intent(inout) :: t3(plon,plev)
@@ -90,7 +107,7 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
 !
    integer ifcnt                   ! Counter
    integer :: nstep                ! current timestep number
-   integer :: timefiltstep         ! 
+   integer :: timefiltstep         !
 
    real(r8) tfix    (plon)        ! T correction
    real(r8) engycorr(plon,plev)   ! energy equivalent to T correction
@@ -123,11 +140,13 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
 !   real(r8) engp                   ! Potential energy integral
    integer i, k, m,j,ixcldliq,ixcldice,ixnumliq,ixnumice
 #if ( defined BFB_CAM_SCAM_IOP )
+   real(r8) :: u3forecast(plon,plev)
+   real(r8) :: v3forecast(plon,plev)
    real(r8) :: t3forecast(plon,plev),delta_t3(plon,plev)
    real(r8) :: q3forecast(plon,plev,pcnst),delta_q3(plon,plev,pcnst)
 #endif
    real(r8) fixmas_plon(plon)
-   real(r8) beta_plon(plon) 
+   real(r8) beta_plon(plon)
    real(r8) clat_plon(plon)
    real(r8) alpha_plon(plon)
 
@@ -140,7 +159,11 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
    do k=1,plev
       do i=1,nlon
          divt3dsav(i,k,lat)=(t3(i,k)-tm2(i,k))/ztodt -t2sav(i,k,lat)
+         divu3dsav(i,k,lat)=(u3(i,k)-um2(i,k))/ztodt -fusav(i,k,lat)
+         divv3dsav(i,k,lat)=(v3(i,k)-vm2(i,k))/ztodt -fvsav(i,k,lat)
          t3forecast(i,k)=tm2(i,k)+ztodt*t2sav(i,k,lat)+ztodt*divt3dsav(i,k,lat)
+         u3forecast(i,k)=um2(i,k)+ztodt*fusav(i,k,lat)+ztodt*divu3dsav(i,k,lat)
+         v3forecast(i,k)=vm2(i,k)+ztodt*fvsav(i,k,lat)+ztodt*divv3dsav(i,k,lat)
       end do
    end do
    do i=1,nlon
@@ -180,6 +203,8 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
    call outfld('beta',beta_plon  ,plon   ,lat     )
    call outfld('CLAT    ',clat_plon  ,plon   ,lat     )
    call outfld('divT3d',divt3dsav(1,1,lat)  ,plon   ,lat     )
+   call outfld('divU3d',divu3dsav(1,1,lat)  ,plon   ,lat     )
+   call outfld('divV3d',divv3dsav(1,1,lat)  ,plon   ,lat     )
    do m =1,pcnst
       call outfld(trim(cnst_name(m))//'_dten',divq3dsav(1,1,m,lat)  ,plon   ,lat     )
    end do
@@ -217,13 +242,17 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
 !
 ! Add temperature correction for energy conservation
 !
+   if (ideal_phys) then
+      engycorr(:,:) = 0._r8
+   else
 !$OMP PARALLEL DO PRIVATE (K, I)
-   do k=1,plev
-      do i=1,nlon
-         engycorr(i,k) = (cpair/gravit)*beta*pdel(i,k)/ztodt
-         t3      (i,k) = t3(i,k) + beta
+      do k=1,plev
+         do i=1,nlon
+            engycorr(i,k) = (cpair/gravit)*beta*pdel(i,k)/ztodt
+            t3      (i,k) = t3(i,k) + beta
+         end do
       end do
-   end do
+   end if
    do i=1,nlon
       tfix(i) = beta/ztodt
    end do
@@ -365,14 +394,14 @@ subroutine tfilt_massfixrun (ztodt,         lat,    u3m1,   u3,     &
             divm1(i,k) = om2eps*divm1(i,k) + eps*divm2(i,k) + eps*div(i,k)
          end do
          do m=2,pcnst
-            if (cnst_get_type_byind(m) .eq. 'wet') then 
+            if (cnst_get_type_byind(m) .eq. 'wet') then
                do i=1,nlon
                   q3m1(i,k,m) = om2eps*q3m1(i,k,m) + eps*qm2(i,k,m) + eps*q3(i,k,m)
                end do
-            endif 
+            endif
          end do
          do m=2,pcnst
-            if (cnst_get_type_byind(m) .eq. 'dry') then 
+            if (cnst_get_type_byind(m) .eq. 'dry') then
                do i=1,nlon  ! calculate numerator (timefiltered mass * pdeldry)
                   q3m1(i,k,m) = (om2eps*pdelm1dry(i,k)*q3m1(i,k,m) + &
                        eps*pdelm2dry(i,k)*qm2(i,k,m) + &

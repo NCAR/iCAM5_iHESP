@@ -8,7 +8,8 @@ module filenames
 ! this module is used to determine the names.
 
 use time_manager,     only: get_curr_date, get_prev_date
-use shr_kind_mod,     only: shr_kind_cm, shr_kind_cl
+use shr_kind_mod,     only: cl=>shr_kind_cl
+use cam_control_mod,  only: caseid
 use cam_abortutils,   only: endrun
 use cam_logfile,      only: iulog
 
@@ -19,21 +20,11 @@ save
 public get_dir                                  ! Get the directory name from a full path
 public interpret_filename_spec                  ! Interpret a filename specifier
 
-character(shr_kind_cl), public :: ncdata = 'ncdata'       ! full pathname for initial dataset
-character(shr_kind_cl), public :: bnd_topo = 'bnd_topo'   ! full pathname for topography dataset
-
-character(shr_kind_cl), public :: absems_data = 'absems_data' ! full pathname for time-invariant absorption dataset
-
-character(shr_kind_cm), public :: caseid = ' '  ! Case identifier
-logical, public :: brnch_retain_casename = .false.
-
-integer, parameter :: nlen = shr_kind_cl                ! String length
-
 !===============================================================================
 CONTAINS
 !===============================================================================
 
-character(len=nlen) function get_dir( filepath )
+character(len=cl) function get_dir( filepath )
 
 ! Return the directory from a filename with a full path
 
@@ -56,7 +47,7 @@ end function get_dir
 
 !===============================================================================
 
-character(len=nlen) function interpret_filename_spec( filename_spec, number, prev, case, &
+character(len=cl) function interpret_filename_spec( filename_spec, number, prev, case, &
    yr_spec, mon_spec, day_spec, sec_spec )
 
 ! Create a filename from a filename specifier. The 
@@ -92,8 +83,8 @@ character(len=nlen) function interpret_filename_spec( filename_spec, number, pre
    integer :: month ! Simulation month
    integer :: day   ! Simulation day
    integer :: ncsec ! Seconds into current simulation day
-   character(len=nlen) :: string    ! Temporary character string 
-   character(len=nlen) :: format    ! Format character string 
+   character(len=cl) :: string    ! Temporary character string 
+   character(len=cl) :: format    ! Format character string 
    integer :: i, n  ! Loop variables
    logical :: previous              ! If should label with previous time-step
    logical :: done
@@ -197,7 +188,7 @@ character(len=nlen) function interpret_filename_spec( filename_spec, number, pre
       if ( len_trim(interpret_filename_spec) == 0 )then
          interpret_filename_spec = trim(string)
       else
-         if ( (len_trim(interpret_filename_spec)+len_trim(string)) >= nlen )then
+         if ( (len_trim(interpret_filename_spec)+len_trim(string)) >= cl )then
             call endrun ('INTERPRET_FILENAME_SPEC: Resultant filename too long')
          end if
          interpret_filename_spec = trim(interpret_filename_spec) // trim(string)

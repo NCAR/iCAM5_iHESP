@@ -10,9 +10,12 @@ module upper_bc
 !---------------------------------------------------------------------------------
 
   use shr_kind_mod, only: r8 => shr_kind_r8
+  use shr_const_mod,only: grav   => shr_const_g,     &   ! gravitational constant (m/s^2)
+                          kboltz => shr_const_boltz, &   ! Boltzmann constant
+                          pi => shr_const_pi,        &   ! pi
+                          rEarth => shr_const_rearth     ! Earth radius 
   use ppgrid,       only: pcols, pver, pverp
   use constituents, only: pcnst
-  use physconst,    only: rair, mwdry
   use cam_logfile,  only: iulog
   use spmd_utils,   only: masterproc
   use ref_pres,     only: ptop_ref
@@ -153,12 +156,9 @@ end subroutine ubc_setopts
     use mo_tgcm_ubc, only: tgcm_ubc_inti
     use mo_snoe,     only: snoe_inti
     use mo_msis_ubc, only: msis_ubc_inti
-    use time_manager,only: get_step_size
-    use constituents,only: cnst_get_ind, cnst_mw !Needed for ubc_flux
-    use physics_buffer, only : physics_buffer_desc
+    use constituents,only: cnst_get_ind
 
 !---------------------------Local workspace-----------------------------
-    integer :: steps_per_day
     logical :: zonal_avg
 !-----------------------------------------------------------------------
     apply_upper_bc = ptop_ref<1._r8 ! Pa
@@ -168,25 +168,24 @@ end subroutine ubc_setopts
     call cnst_get_ind('F', f_ndx, abort=.false.)
     call cnst_get_ind('HF', hf_ndx, abort=.false.)
 
-    steps_per_day = 86400/get_step_size()
     zonal_avg     = .false.
 
 !-----------------------------------------------------------------------
-!	... initialize the tgcm upper boundary module
+!       ... initialize the tgcm upper boundary module
 !-----------------------------------------------------------------------
     call tgcm_ubc_inti( tgcm_ubc_file, tgcm_ubc_data_type, tgcm_ubc_cycle_yr, tgcm_ubc_fixed_ymd, tgcm_ubc_fixed_tod)
     if (masterproc) write(iulog,*) 'ubc_init: after tgcm_ubc_inti'
 
 !-----------------------------------------------------------------------
-!	... initialize the snoe module
+!       ... initialize the snoe module
 !-----------------------------------------------------------------------
     call snoe_inti(snoe_ubc_file)
     if (masterproc) write(iulog,*) 'ubc_init: after snoe_inti'
 
 !-----------------------------------------------------------------------
-!	... initialize the msis module
+!       ... initialize the msis module
 !-----------------------------------------------------------------------
-    call msis_ubc_inti( zonal_avg, steps_per_day )
+    call msis_ubc_inti( zonal_avg )
     if (masterproc) write(iulog,*) 'ubc_init: after msis_ubc_inti'
 
   end subroutine ubc_init
@@ -198,23 +197,21 @@ end subroutine ubc_setopts
 ! timestep dependent setting
 !-----------------------------------------------------------------------
 
-    use mo_solar_parms, only: solar_parms_get
-    use mo_msis_ubc,    only: msis_timestep_init
-    use mo_tgcm_ubc,    only: tgcm_timestep_init
-    use mo_snoe,        only: snoe_timestep_init
-    use physics_types,  only: physics_state
-    use ppgrid,         only: begchunk, endchunk
-    use physics_buffer, only : physics_buffer_desc
+    use solar_parms_data, only: kp=>solar_parms_kp, ap=>solar_parms_ap, f107=>solar_parms_f107
+    use solar_parms_data, only: f107a=>solar_parms_f107a, f107p=>solar_parms_f107p
+    use mo_msis_ubc,      only: msis_timestep_init
+    use mo_tgcm_ubc,      only: tgcm_timestep_init
+    use mo_snoe,          only: snoe_timestep_init
+    use physics_types,    only: physics_state
+    use ppgrid,           only: begchunk, endchunk
+    use physics_buffer,   only: physics_buffer_desc
 
     type(physics_state), intent(in) :: state(begchunk:endchunk)                 
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
 
-    real(r8) :: ap, kp, f107, f107a
-
     if (.not.apply_upper_bc) return
 
-    call solar_parms_get( kp_s = kp, f107_s = f107, f107a_s = f107a, ap_s = ap )
-    call msis_timestep_init( ap, f107, f107a )
+    call msis_timestep_init( ap, f107p, f107a )
     call tgcm_timestep_init( pbuf2d, state )
     call snoe_timestep_init( kp, f107 )
 
@@ -222,7 +219,9 @@ end subroutine ubc_setopts
 
 !===============================================================================
 
-  subroutine ubc_get_vals (lchnk, ncol, ntop_molec, pint, zi, msis_temp, ubc_mmr, ubc_flux)
+  subroutine ubc_get_vals (lchnk, ncol, pint, zi, t, q, omega, phis, &
+                           msis_temp, ubc_mmr, ubc_flux)
+
 !-----------------------------------------------------------------------
 ! interface routine for vertical diffusion and pbl scheme
 !-----------------------------------------------------------------------
@@ -230,36 +229,53 @@ end subroutine ubc_setopts
     use mo_snoe,          only: set_no_ubc, ndx_no
     use mo_tgcm_ubc,      only: set_tgcm_ubc
     use cam_abortutils,   only: endrun
-    use physconst,        only: rairv, mbarv
+    use physconst,        only: avogad, rairv, mbarv, rga ! Avogadro, gas constant, mean mass, universal gas constant
     use phys_control,     only: waccmx_is
-    use physconst,        only: avogad
-    use constituents,     only: cnst_get_ind, cnst_mw  ! Needed for ubc_flux
-  
+    use constituents,     only: cnst_get_ind, cnst_mw, cnst_fixed_ubc  ! Needed for ubc_flux
+
 !------------------------------Arguments--------------------------------
     integer,  intent(in)  :: lchnk                 ! chunk identifier
     integer,  intent(in)  :: ncol                  ! number of atmospheric columns
-    integer,  intent(in)  :: ntop_molec            ! top of molecular diffusion region (=1)
     real(r8), intent(in)  :: pint(pcols,pverp)     ! interface pressures
     real(r8), intent(in)  :: zi(pcols,pverp)       ! interface geoptl height above sfc
+    real(r8), intent(in)  :: t(pcols,pver)         ! midpoint temperature
+    real(r8), intent(in),target :: q(pcols,pver,pcnst)   ! contituent mixing ratios (kg/kg)
+    real(r8), intent(in)  :: omega(pcols,pver)     ! Vertical pressure velocity (Pa/s)
+    real(r8), intent(in)  :: phis(pcols)           ! Surface geopotential (m2/s2)
 
-    real(r8), intent(out) :: ubc_mmr(pcols,pcnst)  ! upper bndy mixing ratios (kg/kg)
     real(r8), intent(out) :: msis_temp(pcols)      ! upper bndy temperature (K)
-    real(r8), intent(out) :: ubc_flux(pcnst)       ! upper bndy flux (kg/s/m^2)
+    real(r8), intent(out) :: ubc_mmr(pcols,pcnst)  ! upper bndy mixing ratios (kg/kg)
+    real(r8), intent(out) :: ubc_flux(pcols,pcnst) ! upper bndy flux (kg/s/m^2)
 
 !---------------------------Local storage-------------------------------
-    integer  :: ierr                               ! error flag for allocates
-    integer  :: indx_H                             ! cnst index for H
+    integer :: m                                   ! constituent index
+    integer :: ierr                                ! error flag for allocates
+    integer :: indx_H                              ! cnst index for H
+    integer :: indx_HE                             ! cnst index for He
+    integer :: iCol                                ! column loop counter
 
     real(r8), parameter :: m2km = 1.e-3_r8         ! meter to km
     real(r8) :: rho_top(pcols)                     ! density at top interface
     real(r8) :: z_top(pcols)                       ! height of top interface (km)
 
+    real(r8), parameter :: hfluxlimitfac = 0.72_r8 ! Hydrogen upper boundary flux limiting factor
+
+    real(r8) :: nmbartop                           ! Top level density (rho)
+    real(r8) :: zkt                                ! Factor for H Jean's escape flux calculation
+    real(r8) :: nDensHETop                         ! Helium number density (kg/m3)
+    real(r8) :: pScaleHeight                       ! Scale height (m)
+    real(r8) :: wN2                                ! Neutral vertical velocity second level (m/s)
+    real(r8) :: wN3                                ! Neutral vertical velocity at third level (m/s)
+    real(r8) :: wNTop                              ! Neutral vertical velocity at top level (m/s)
+
+    real(r8), pointer :: qh_top(:)         ! Top level hydrogen mixing ratio (kg/kg)
 !-----------------------------------------------------------------------
 
-    if (.not.apply_upper_bc) return
-
     ubc_mmr(:,:) = 0._r8
-    ubc_flux(:) = 0._r8
+    ubc_flux(:,:) = 0._r8
+    msis_temp(:) = 0._r8
+
+    if (.not. apply_upper_bc) return
 
     call get_msis_ubc( lchnk, ncol, msis_temp, ubc_mmr )
     if( t_pert_ubc /= 0._r8 ) then
@@ -269,23 +285,69 @@ end subroutine ubc_setopts
           call endrun
        end if
     end if
-
    
     !--------------------------------------------------------------------------------------------
     ! For WACCM-X, calculate upper boundary H flux
     !--------------------------------------------------------------------------------------------
     if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
 
-       call cnst_get_ind('H',  indx_H)
+      call cnst_get_ind('H',  indx_H)
+      qh_top => q(:,1,indx_H)
 
-       ubc_flux(indx_H) = cnst_mw(indx_H)/ avogad * 0.9e12_r8      ! upward mass flux of H, kg/s/m^2
+      do iCol = 1, ncol
+        !--------------------------------------------------
+        ! Get total density (rho) at top level
+        !--------------------------------------------------
+        nmbartop = 0.5_r8 * (pint(iCol,1) + pint(iCol,2)) / ( rairv(iCol,1,lchnk) * t(iCol,1) ) 
 
-       ubc_mmr(:ncol,ndx_no) = 0.0_r8
+        !---------------------------------------------------------------------
+        ! Calculate factor for Jean's escape flux once here, used twice below
+        !---------------------------------------------------------------------
+        zkt = (rEarth + ( 0.5_r8 * ( zi(iCol,1) + zi(iCol,2) ) + rga * phis(iCol) ) ) * &
+                                                   cnst_mw(indx_H) / avogad * grav / ( kboltz * t(iCol,1) )
+      
+        ubc_flux(iCol,indx_H) = hfluxlimitfac * SQRT(kboltz/(2.0_r8 * pi * cnst_mw(indx_H) / avogad)) * &
+                                qh_top(iCol) * nmbartop * &
+                                SQRT(t(iCol,1)) * (1._r8 + zkt) * EXP(-zkt)
+                                
+        ubc_flux(iCol,indx_H) = ubc_flux(iCol,indx_H) * &
+                                (2.03E-13_r8 * qh_top(iCol) * nmbartop / (cnst_mw(indx_H) / avogad) * t(iCol,1))
+                                       
+        !--------------------------------------------------------------------------------------------------------------
+        !  Need to get helium number density (SI units) from mass mixing ratio.  mbarv is kg/mole, same as rMass units
+        !  kg/kg * (kg/mole)/(kg/mole) * (Pa or N/m*m)/((Joules/K or N*m/K) * (K)) = m-3
+        !--------------------------------------------------------------------------------------------------------------- 
+!        nDensHETop  = qhe_top(iCol) * mbarv(iCol,1,lchnk) / cnst_mw(indx_HE) * &
+!                                   0.5_r8 * (pint(iCol,1) + pint(iCol,2)) / (kboltz * t(iCol,1))
+!       
+!        !------------------------------------------------------------------------------------------------------
+!        !  Get midpoint vertical velocity for top level by extrapolating from two levels below top (Pa/s)*P
+!        !------------------------------------------------------------------------------------------------------                 
+!
+!        pScaleHeight = .5_r8*(rairv(iCol,2,lchnk)*t(iCol,1) + rairv(iCol,1,lchnk)*t(iCol,1)) / grav      
+!        wN2 = -omega(iCol,2) / 0.5_r8 * (pint(iCol,1) + pint(iCol,2)) * pScaleHeight 
+! 
+!        pScaleHeight = .5_r8 * (rairv(iCol,3,lchnk)*t(iCol,2) + rairv(iCol,2,lchnk)*t(iCol,2)) / grav      
+!        wN3 = -omega(iCol,3) / 0.5_r8 * (pint(iCol,1) + pint(iCol,2)) * pScaleHeight 
+!  
+!        !----------------------------------------------------
+!        !  Get top midpoint level vertical velocity
+!        !----------------------------------------------------
+!        wNTop = 1.5_r8 * wN2 - 0.5_r8 * wN3 
+!
+!        !-----------------------------------------------------------------------------------------------------------------
+!        ! Helium upper boundary flux is just helium density multiplied by vertical velocity (kg*/m3)*(m/s) = kg/s/m^2) 
+!        !-----------------------------------------------------------------------------------------------------------------
+!        ubc_flux(iCol,indx_HE) = -ndensHETop * wNTop 
+!                         
+      enddo
+
+      ubc_mmr(:ncol,ndx_no) = 0.0_r8
 
     else ! for waccm
 
-       rho_top(:ncol) = pint(:ncol,ntop_molec) / (rairv(:ncol,ntop_molec,lchnk)*msis_temp(:ncol))
-       z_top(:ncol)   = m2km * zi(:ncol,ntop_molec)
+       rho_top(:ncol) = pint(:ncol,1) / (rairv(:ncol,1,lchnk)*msis_temp(:ncol))
+       z_top(:ncol)   = m2km * zi(:ncol,1)
 
        call set_no_ubc  ( lchnk, ncol, z_top, ubc_mmr, rho_top )
        if( ndx_no > 0 .and. no_xfac_ubc /= 1._r8 ) then
@@ -294,7 +356,7 @@ end subroutine ubc_setopts
 
     endif
 
-    call set_tgcm_ubc( lchnk, ncol, ubc_mmr, mbarv(:,ntop_molec,lchnk))
+    call set_tgcm_ubc( lchnk, ncol, ubc_mmr, mbarv(:,1,lchnk))
 
     if (f_ndx .GT. 0) then
       ubc_mmr(:ncol, f_ndx) = 1.0e-15_r8
@@ -302,6 +364,13 @@ end subroutine ubc_setopts
     if (hf_ndx .GT. 0) then
       ubc_mmr(:ncol, hf_ndx) = 1.0e-15_r8
     endif
+
+    ! Zero out constituent ubc's that are not used.
+    do m = 1, pcnst
+       if (.not. cnst_fixed_ubc(m)) then
+          ubc_mmr(:,m) = 0._r8
+       end if
+    end do
 
   end subroutine ubc_get_vals
 

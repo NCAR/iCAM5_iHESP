@@ -61,11 +61,7 @@ contains
   subroutine prescribed_ozone_init()
 
     use tracer_data, only : trcdata_init
-    use cam_history, only : addfld, phys_decomp
-    use ppgrid,      only : pver
-    use error_messages, only: handle_err
-    use ppgrid,         only: pcols, pver, begchunk, endchunk
-    use physics_buffer, only : physics_buffer_desc
+    use cam_history, only : addfld
 
     implicit none
 
@@ -88,8 +84,8 @@ contains
     call trcdata_init( specifier, filename, filelist, datapath, fields, file, &
                        rmv_file, cycle_yr, fixed_ymd, fixed_tod, data_type)
 
-    call addfld(ozone_name,'mol/mol ', pver, &
-         'I', 'prescribed ozone', phys_decomp )
+    call addfld(ozone_name, (/ 'lev' /), &
+         'I','mol/mol', 'prescribed ozone' )
 
   end subroutine prescribed_ozone_init
 
@@ -180,7 +176,7 @@ subroutine prescribed_ozone_readnl(nlfile)
    fixed_tod  = prescribed_ozone_fixed_tod
 
    ! Turn on prescribed volcanics if user has specified an input dataset.
-   if (len_trim(filename) > 0 ) has_prescribed_ozone = .true.
+   if (len_trim(filename) > 0 .and. filename.ne.'NONE') has_prescribed_ozone = .true.
 
 end subroutine prescribed_ozone_readnl
 

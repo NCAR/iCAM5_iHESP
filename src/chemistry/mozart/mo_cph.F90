@@ -46,8 +46,7 @@ contains
   subroutine init_cph
 
     use mo_chem_utls,   only : get_rxt_ndx, get_spc_ndx
-    use cam_history,    only : addfld, phys_decomp, add_default
-    use ppgrid,         only : pver
+    use cam_history,    only : addfld, add_default
     use chem_mods,      only : rxt_tag_lst, rxt_tag_map, rxt_tag_cnt
     use cam_abortutils, only : endrun
 
@@ -87,13 +86,13 @@ contains
 
        write( longname, fmt='(f12.6)') exotherm(i)
        longname = trim(adjustl(longname))//' kcal/mol chem pot heating rate for rxtn '//trim(rxt_tag_lst(tagndx))
-       call addfld( fldnames(i), 'K/s ', pver, 'I', trim(longname), phys_decomp )
+       call addfld( fldnames(i), (/ 'lev' /), 'I', 'K/s', trim(longname) )
        if (debug) then
           call add_default( fldnames(i), 10, ' ' )
        endif
     enddo
 
-    call addfld( 'QCP',   'K/s ', pver, 'I', 'chem pot heating rate', phys_decomp )
+    call addfld( 'QCP', (/ 'lev' /), 'I',   'K/s', 'chem pot heating rate' )
 
   end subroutine init_cph
   

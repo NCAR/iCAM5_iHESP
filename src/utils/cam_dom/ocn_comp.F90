@@ -9,8 +9,7 @@ module ocn_comp
   use shr_sys_mod,          only: shr_sys_abort
 
   use cam_logfile,          only: iulog
-  use cam_control_mod,      only: nsrest, aqua_planet
-  use filenames,            only: caseid
+  use cam_control_mod,      only: initial_run, restart_run, aqua_planet
   use ppgrid,               only: pcols, begchunk, endchunk
   use phys_grid,            only: read_chunk_from_field, write_field_from_chunk, &
                                   gather_chunk_to_field, get_ncols_p, scatter_field_to_chunk
@@ -47,7 +46,7 @@ module ocn_comp
   integer :: nrf  = -1                    ! logical unit number for ocn restart dataset
   integer :: nrpf = -1                    ! logical unit number for ocn restart pointer file
   integer, parameter  :: nlen = 256       ! Length of character strings
-  character(len=nlen) :: dom_branch_file = ' ' ! full pathname of restart file to branch from (nsrest=3)
+  character(len=nlen) :: dom_branch_file = ' ' ! full pathname of restart file to branch from
   character(len=nlen) :: rest_pfile = './rpointer.ocn' ! restart pointer file contains name of most recently
   character(len=nlen) :: bndtvs           ! sst file
   character(len=nlen) :: focndomain       ! ocn domain file
@@ -135,7 +134,7 @@ contains
    !
    ! Data ocean model
    !
-   if (nsrest == 0) then
+   if (initial_run) then
       call ocn_read_inidat( )
    else
       call ocn_read_restart( ocn_out, stop_ymd, stop_tod )
@@ -293,7 +292,7 @@ contains
        else
           fieldname = 'frac'
           call infld(fieldname, ncid_dom, 'ni', 'nj', 1, pcols, begchunk,&
-               endchunk, arr2d ,readvar, grid_map='PHYS')
+               endchunk, arr2d ,readvar, gridname='physgrid')
 !          call read_domain (fieldname, ncid_dom, 'ni', 'nj', 'xc','yc',&
 !               1, pcols, begchunk, endchunk, arr2d, readvar)
           if(.not. readvar) call shr_sys_abort('dom: error in reading LANDFRAC')
@@ -389,11 +388,10 @@ contains
     character(len=nlen) :: pname           ! restart full pathname
     !-----------------------------------------------------------------------
 
-    ! restart run =>nsrest=1) and branch run=>nsrest=3.  
     ! Only read the restart pointer file for a restart run.
     
     if (masterproc) then
-       if (nsrest == 1) then
+       if (restart_run) then
           nrpf = getunit()
           call opnfil (rest_pfile, nrpf, 'f', status="old")
           read (nrpf,'(a)') pname

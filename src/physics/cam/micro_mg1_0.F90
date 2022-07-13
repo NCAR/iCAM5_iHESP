@@ -139,6 +139,21 @@ logical :: use_hetfrz_classnuc ! option to use heterogeneous freezing
 character(len=16)  :: micro_mg_precip_frac_method  ! type of precipitation fraction method
 real(r8)           :: micro_mg_berg_eff_factor     ! berg efficiency factor
 
+! Switches for specification rather than prediction of droplet and crystal number
+! note: number will be adjusted as needed to keep mean size within bounds,
+! even when specified droplet or ice number is used
+!
+! If constant cloud ice number is set (nicons = .true.),
+! then all microphysical processes except mass transfer due to ice nucleation
+! (mnuccd) are based on the fixed cloud ice number. Calculation of
+! mnuccd follows from the prognosed ice crystal number ni.
+logical :: nccons ! nccons=.true. to specify constant cloud droplet number
+logical :: nicons ! nicons=.true. to specify constant cloud ice number
+
+! parameters for specified ice and droplet number concentration
+! note: these are local in-cloud values, not grid-mean
+real(r8) :: ncnst ! droplet num concentration when nccons=.true. (m-3)
+real(r8) :: ninst ! ice num concentration when nicons=.true. (m-3)
 
 !===============================================================================
 contains
@@ -148,7 +163,8 @@ subroutine micro_mg_init( &
      kind, gravit, rair, rh2o, cpair,  &
      rhoh2o, tmelt_in, latvap, latice, &
      rhmini_in, micro_mg_dcs, use_hetfrz_classnuc_in, &
-     micro_mg_precip_frac_method_in, micro_mg_berg_eff_factor_in, errstring)
+     micro_mg_precip_frac_method_in, micro_mg_berg_eff_factor_in, &
+     nccons_in, nicons_in, ncnst_in, ninst_in, errstring)
 
 !----------------------------------------------------------------------- 
 ! 
@@ -173,6 +189,10 @@ real(r8),         intent(in)  :: micro_mg_dcs
 logical,          intent(in)  :: use_hetfrz_classnuc_in
 character(len=16),intent(in)  :: micro_mg_precip_frac_method_in  ! type of precipitation fraction method
 real(r8),         intent(in)  :: micro_mg_berg_eff_factor_in     ! berg efficiency factor
+logical,          intent(in)  :: nccons_in
+logical,          intent(in)  :: nicons_in
+real(r8),         intent(in)  :: ncnst_in
+real(r8),         intent(in)  :: ninst_in
 
 character(128),   intent(out) :: errstring       ! Output status (non-blank for error return)
 
@@ -201,6 +221,11 @@ tmelt = tmelt_in
 rhmini = rhmini_in
 micro_mg_precip_frac_method = micro_mg_precip_frac_method_in
 micro_mg_berg_eff_factor    = micro_mg_berg_eff_factor_in
+
+nccons = nccons_in
+nicons = nicons_in
+ncnst  = ncnst_in
+ninst  = ninst_in
 
 ! latent heats
 
@@ -502,14 +527,14 @@ character(128),   intent(out) :: errstring       ! Output status (non-blank for 
 
 ! Used with CARMA cirrus microphysics
 ! (or similar external microphysics model)
-real(r8), intent(in), pointer :: tnd_qsnow(:,:) ! snow mass tendency (kg/kg/s)
-real(r8), intent(in), pointer :: tnd_nsnow(:,:) ! snow number tendency (#/kg/s)
-real(r8), intent(in), pointer :: re_ice(:,:)    ! ice effective radius (m)
+real(r8), intent(in) :: tnd_qsnow(:,:) ! snow mass tendency (kg/kg/s)
+real(r8), intent(in) :: tnd_nsnow(:,:) ! snow number tendency (#/kg/s)
+real(r8), intent(in) :: re_ice(:,:)    ! ice effective radius (m)
 
 ! From external ice nucleation.
-real(r8), intent(in), pointer :: frzimm(:,:) ! Number tendency due to immersion freezing (1/cm3)
-real(r8), intent(in), pointer :: frzcnt(:,:) ! Number tendency due to contact freezing (1/cm3)
-real(r8), intent(in), pointer :: frzdep(:,:) ! Number tendency due to deposition nucleation (1/cm3)
+real(r8), intent(in) :: frzimm(:,:) ! Number tendency due to immersion freezing (1/cm3)
+real(r8), intent(in) :: frzcnt(:,:) ! Number tendency due to contact freezing (1/cm3)
+real(r8), intent(in) :: frzdep(:,:) ! Number tendency due to deposition nucleation (1/cm3)
 
 !Water tracer/isotopes
 real(r8), intent(out) :: preo(pcols,pver)      ! mass tendency from rain evaporation
@@ -848,18 +873,6 @@ logical  :: do_clubb_sgs
 ! Return error message
 errstring = ' '
 
-if (.not. (do_cldice .or. &
-     (associated(tnd_qsnow) .and. associated(tnd_nsnow) .and. associated(re_ice)))) then
-   errstring = "MG's native cloud ice processes are disabled, but &
-        &no replacement values were passed in."
-end if
-
-if (use_hetfrz_classnuc .and. (.not. &
-     (associated(frzimm) .and. associated(frzcnt) .and. associated(frzdep)))) then
-   errstring = "Hoose heterogeneous freezing is enabled, but the &
-        &required tendencies were not all passed in."
-end if
-
 call phys_getopts(do_clubb_sgs_out = do_clubb_sgs)
 
 ! initialize  output fields for number conc qand ice nucleation
@@ -1130,6 +1143,10 @@ do k=top_lev,pver
          niic(i,k)=0._r8
       endif
 
+      if (nicons) then
+        niic(i,k) = ninst/rho(i,k)
+      end if
+
       !if T < 0 C then bergeron.
       if (do_cldice .and. (t(i,k).lt.273.15_r8)) then
 
@@ -1388,6 +1405,8 @@ do i=1,ncol
       nstend(i,1:pver)=0._r8
       prect(i)=0._r8
       preci(i)=0._r8
+      rflx(i,1:pver+1)=0._r8
+      sflx(i,1:pver+1)=0._r8
       qniic(i,1:pver)=0._r8
       qric(i,1:pver)=0._r8
       nsic(i,1:pver)=0._r8
@@ -1449,6 +1468,10 @@ do i=1,ncol
 
       prect(i)=0._r8
       preci(i)=0._r8
+
+      ! initialize fluxes
+      rflx(i,1:pver+1)=0._r8
+      sflx(i,1:pver+1)=0._r8
 
       do k=top_lev,pver
       
@@ -1566,6 +1589,13 @@ do i=1,ncol
          qiic(i,k)=min(cwmi(i,k)/icldm(i,k),5.e-3_r8)
          ncic(i,k)=max(nc(i,k)/lcldm(i,k),0._r8)
          niic(i,k)=max(ni(i,k)/icldm(i,k),0._r8)
+
+         if (nccons) then
+           ncic(i,k) = ncnst/rho(i,k)
+         end if
+         if (nicons) then
+           niic(i,k) = ninst/rho(i,k)
+         end if 
 
          if (qc(i,k) - berg(i,k)*deltat.lt.qsmall) then
             qcic(i,k)=0._r8
@@ -2753,6 +2783,10 @@ do i=1,ncol
             end if
          end if
 
+         ! Precip Flux Calculation (Diagnostic)
+         rflx(i,k+1)=(prect(i)-preci(i)) * rhow
+         sflx(i,k+1)=preci(i) * rhow
+
          ! if rain/snow mix ratio is zero so should number concentration
 
          if (qniic(i,k).lt.qsmall) then
@@ -2893,15 +2927,6 @@ do i=1,ncol
          if (arcld(i,k) .gt. 0._r8) then
             rercld(i,k)=rercld(i,k)/arcld(i,k)
          end if
-
-         !calculate precip fluxes and adding them to summing sub-stepping variables
-         !! flux is zero at top interface
-         rflx(i,1)=0.0_r8
-         sflx(i,1)=0.0_r8
-
-         !! calculating the precip flux (kg/m2/s) as mixingratio(kg/kg)*airdensity(kg/m3)*massweightedfallspeed(m/s)
-         rflx(i,k+1)=qrout(i,k)*rho(i,k)*umr(k)
-         sflx(i,k+1)=qsout(i,k)*rho(i,k)*ums(k)
 
          !! add to summing sub-stepping variable
          rflx1(i,k+1)=rflx1(i,k+1)+rflx(i,k+1)
@@ -3051,6 +3076,13 @@ do i=1,ncol
       dumi(i,k) = (qi(i,k)+qitend(i,k)*deltat)/icldm(i,k)
       dumnc(i,k) = max((nc(i,k)+nctend(i,k)*deltat)/lcldm(i,k),0._r8)
       dumni(i,k) = max((ni(i,k)+nitend(i,k)*deltat)/icldm(i,k),0._r8)
+
+      if (nccons) then
+        dumnc(i,k) = ncnst/rho(i,k)
+      end if
+      if (nicons) then
+        dumni(i,k) = ninst/rho(i,k)   
+      end if
 
       ! obtain new slope parameter to avoid possible singularity
 
@@ -3243,6 +3275,12 @@ do i=1,ncol
       prect(i) = prect(i)+(faloutc(pver)+falouti(pver))/g/nstep/1000._r8  
       preci(i) = preci(i)+(falouti(pver))/g/nstep/1000._r8
 
+      ! Add fallout to Precip Flux: note unit change m/s *kg/m3 = kg/m2
+      do k = top_lev,pver
+         rflx(i,k+1)=rflx(i,k+1)+(faloutc(k))/g/nstep/1000._r8 * rhow
+         sflx(i,k+1)=sflx(i,k+1)+(falouti(k))/g/nstep/1000._r8 * rhow
+      end do
+
    end do   !! nstep loop
 
    ! end sedimentation
@@ -3257,6 +3295,13 @@ do i=1,ncol
       dumi(i,k) = max(qi(i,k)+qitend(i,k)*deltat,0._r8)
       dumnc(i,k) = max(nc(i,k)+nctend(i,k)*deltat,0._r8)
       dumni(i,k) = max(ni(i,k)+nitend(i,k)*deltat,0._r8)
+
+      if (nccons) then
+        dumnc(i,k) = ncnst/rho(i,k)*lcldm(i,k)
+      end if
+      if (nicons) then
+        dumni(i,k) = ninst/rho(i,k)*icldm(i,k)
+      end if
 
       if (dumc(i,k).lt.qsmall) dumnc(i,k)=0._r8
       if (dumi(i,k).lt.qsmall) dumni(i,k)=0._r8
@@ -3383,6 +3428,13 @@ do i=1,ncol
       dumnc(i,k) = max(nc(i,k)+nctend(i,k)*deltat,0._r8)/lcldm(i,k)
       dumni(i,k) = max(ni(i,k)+nitend(i,k)*deltat,0._r8)/icldm(i,k)
 
+      if (nccons) then
+        dumnc(i,k) = ncnst/rho(i,k)
+      end if
+      if (nicons) then
+        dumni(i,k) = ninst/rho(i,k)
+      end if
+
       ! limit in-cloud mixing ratio to reasonable value of 5 g kg-1
 
       dumc(i,k)=min(dumc(i,k),5.e-3_r8)
@@ -3392,6 +3444,15 @@ do i=1,ncol
       ! cloud ice effective radius
 
       if (dumi(i,k).ge.qsmall) then
+
+         if (nicons) then
+           ! make sure ni is consistent with the constant N by adjusting
+           ! tendency, need to multiply by cloud fraction
+           ! note that nitend may be further adjusted below if mean crystal
+           ! size is out of bounds
+           nitend(i,k) = (ninst/rho(i,k)*icldm(i,k) - ni(i,k))/deltat
+         end if
+
          ! add upper limit to in-cloud number concentration to prevent numerical error
          dumni(i,k)=min(dumni(i,k),dumi(i,k)*1.e20_r8)
          lami(k) = (cons1*ci*dumni(i,k)/dumi(i,k))**(1._r8/di)
@@ -3426,6 +3487,14 @@ do i=1,ncol
       ! cloud droplet effective radius
 
       if (dumc(i,k).ge.qsmall) then
+
+         if (nccons) then
+           ! make sure nc is consistent with the constant N by adjusting
+           ! tendency, need to multiply by cloud fraction
+           ! note that nctend may be further adjusted below if mean droplet
+           ! size is out of bounds
+           nctend(i,k) = (ncnst/rho(i,k)*lcldm(i,k) - nc(i,k))/deltat
+         end if
 
          ! add upper limit to in-cloud number concentration to prevent numerical error
          dumnc(i,k)=min(dumnc(i,k),dumc(i,k)*1.e20_r8)
@@ -3562,7 +3631,7 @@ end do
 
 do i = 1,ncol
    do k=top_lev,pver
-      if (qc(i,k)+qctend(i,k)*deltat.ge.qsmall) then
+      if (qc(i,k)+qctend(i,k)*deltat.ge.qsmall .and. nc(i,k)+nctend(i,k)*deltat.gt.10._r8) then
          dum=((qc(i,k)+qctend(i,k)*deltat)/lcldm(i,k)*rho(i,k)*1000._r8)**2 &
               /(0.109_r8*(nc(i,k)+nctend(i,k)*deltat)/lcldm(i,k)*rho(i,k)/1.e6_r8)*lcldm(i,k)/cldmax(i,k)
       else

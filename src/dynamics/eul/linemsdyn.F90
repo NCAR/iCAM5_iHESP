@@ -1,3 +1,4 @@
+
 module linemsdyn
 
 !----------------------------------------------------------------------- 
@@ -368,7 +369,6 @@ subroutine linemsdyn_fft(nlon_fft,nlon_fft2,fftbuf,fftbuf2)
 ! $Author$
 
    use pmgrid,  only: plon, plat
-   use rgrid,   only: nlon
    use eul_control_mod, only : trig, ifax
 #if (defined SPMD)
    use mpishorthand, only: mpicom
@@ -421,14 +421,14 @@ subroutine linemsdyn_fft(nlon_fft,nlon_fft2,fftbuf,fftbuf2)
       ntr = 8
 !$OMP PARALLEL DO PRIVATE (K, WORK)
       do k=1,plev
-         fftbuf(nlon(lat)+1:nlon_fft,:,k,lat) = 0.0_r8
+         fftbuf(plon+1:nlon_fft,:,k,lat) = 0.0_r8
          call fft991(fftbuf(1,1,k,lat)     ,work    ,trig(1,lat),ifax(1,lat),inc     ,&
-                     nlon_fft ,nlon(lat)   ,ntr     ,isign   )
+                     nlon_fft ,plon   ,ntr     ,isign   )
       enddo
       ntr = 1
-      fftbuf(nlon(lat)+1:nlon_fft,9,1,lat) = 0.0_r8
+      fftbuf(plon+1:nlon_fft,9,1,lat) = 0.0_r8
       call fft991(fftbuf(1,9,1,lat)     ,work    ,trig(1,lat),ifax(1,lat),inc     ,&
-                  nlon_fft ,nlon(lat)   ,ntr     ,isign   )
+                  nlon_fft ,plon   ,ntr     ,isign   )
    enddo
 !
 #if ( defined SPMD )
@@ -466,11 +466,11 @@ subroutine linemsdyn_aft(                                          &
 ! $Id$
 ! $Author$
 
+   use pspect, only: pmmax
 #if (defined SPMD)
    use comspe, only: numm, maxm
 #else
    use comspe, only: maxm
-   use rgrid, only: nmmax
 #endif
 ! Input arguments
 !     
@@ -518,10 +518,9 @@ subroutine linemsdyn_aft(                                          &
 #if (defined SPMD)
    mlength = numm(iam)
 #else
-   mlength = nmmax(irow)
+   mlength = pmmax
 #endif
    do k=1,plev
-!cdir loopchg
       do i=1,2*mlength
 
          grt1(i,k) = 0.5_r8*(fftbufn(i,tdyndex,k)+fftbufs(i,tdyndex,k))
@@ -551,7 +550,6 @@ subroutine linemsdyn_aft(                                          &
       end do
    end do
 
-!cdir altcode=(loopcnt)
    do i=1,2*mlength
       grlps1(i) = 0.5_r8*(fftbufn(i,bpstrdex,1)+fftbufs(i,bpstrdex,1))
       grlps2(i) = 0.5_r8*(fftbufn(i,bpstrdex,1)-fftbufs(i,bpstrdex,1))

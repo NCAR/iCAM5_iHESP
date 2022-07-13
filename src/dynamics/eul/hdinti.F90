@@ -15,36 +15,28 @@ subroutine hdinti(rearth, deltat)
 ! Reviewed:          B. Boville, April 1996
 !
 !-----------------------------------------------------------------------
-!
-! $Id$
-! $Author$
 
-   use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
+   use shr_kind_mod,   only: r8=>shr_kind_r8
+   use cam_abortutils, only: endrun
    use pmgrid
    use pspect
    use eul_control_mod
+   use cam_logfile,    only: iulog
    implicit none
+
 !------------------------------Arguments--------------------------------
-!
-! Input arguments
-!
+
    real(r8), intent(in) :: rearth               ! radius of the earth
    real(r8), intent(in) :: deltat               ! time step
-!
+
 !---------------------------Local workspace-----------------------------
-!
-   integer     k             ! level index
-   integer(i8) n             ! n-wavenumber index
+
+   integer :: k             ! level index
+   integer :: n             ! n-wavenumber index
+   integer :: iexpon
+   real(r8) :: fn
 !
 !-----------------------------------------------------------------------
-!
-! Top level for del**4 diffusion, set for 18-level model
-!
-   kmnhd4 = 4
-!
-! Bottom level for increased del**2 diffusion (kmxhd2 < kmnhd4)
-!
-   kmxhd2 = 2
 !
 ! Initialize physical constants for courant number based spect truncation
 !
@@ -58,19 +50,29 @@ subroutine hdinti(rearth, deltat)
       nindex(k) = 2*nmaxhd
    end do
 !
-! Set the Del^2 and Del^4 diffusion coefficients for each wavenumber
+! Set the Del^2 and Del^N diffusion coefficients for each wavenumber
 !
    hdfst2(1) = 0._r8
    hdfsd2(1) = 0._r8
 !
-   hdfst4(1) = 0._r8
-   hdfsd4(1) = 0._r8
+   hdfstn(1) = 0._r8
+   hdfsdn(1) = 0._r8
+
+   iexpon    = hdif_order/2
+
    do n=2,pnmax
+
       hdfst2(n) = dif2 * (n*(n-1)  ) / rearth**2
       hdfsd2(n) = dif2 * (n*(n-1)-2) / rearth**2
 
-      hdfst4(n) = dif4 * (n*(n-1)*n*(n-1)  ) / rearth**4
-      hdfsd4(n) = dif4 * (n*(n-1)*n*(n-1)-4) / rearth**4
+      fn        = n*(n-1)
+      fn        = fn/rearth**2
+      fn        = fn**iexpon
+      
+      hdfstn(n) = hdif_coef * fn
+      fn        = 2._r8/rearth**2 
+      hdfsdn(n) = hdfstn(n) - hdif_coef * fn**iexpon
+
    end do
 !
    return

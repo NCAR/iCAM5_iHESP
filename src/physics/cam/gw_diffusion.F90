@@ -20,7 +20,7 @@ contains
 !==========================================================================
 
 subroutine gw_ediff(ncol, pver, ngwv, kbot, ktop, tend_level, &
-     gwut, ubm, nm, rho, dt, gravit, p, c, &
+     gwut, ubm, nm, rho, dt, prndl, gravit, p, c, vramp, &
      egwdffi, decomp, ro_adjust)
 !
 ! Calculate effective diffusivity associated with GW forcing.
@@ -50,12 +50,17 @@ subroutine gw_ediff(ncol, pver, ngwv, kbot, ktop, tend_level, &
   real(r8), intent(in) :: rho(ncol,pver+1)
   ! Time step.
   real(r8), intent(in) :: dt
+  ! Inverse Prandtl number.
+  real(r8), intent(in) :: prndl
   ! Acceleration due to gravity.
   real(r8), intent(in) :: gravit
   ! Pressure coordinates.
   type(Coords1D), intent(in) :: p
   ! Wave phase speeds for each column.
   real(r8), intent(in) :: c(ncol,-ngwv:ngwv)
+
+  ! Coefficient to ramp down diffusion coeff.
+  real(r8), pointer, intent(in) :: vramp(:)
 
   ! Adjustment parameter for IGWs.
   real(r8), intent(in), optional :: &
@@ -77,8 +82,7 @@ subroutine gw_ediff(ncol, pver, ngwv, kbot, ktop, tend_level, &
   real(r8) :: dpidz_sq(ncol,pver+1)
   ! Level and wave indices.
   integer :: k, l
-  ! Inverse Prandtl number.
-  real(r8), parameter :: prndl=0.25_r8
+
   ! Density scale height.
   real(r8), parameter :: dscale=7000._r8
 
@@ -94,9 +98,9 @@ subroutine gw_ediff(ncol, pver, ngwv, kbot, ktop, tend_level, &
         egwdff_lev = &
              prndl * 0.5_r8 * gwut(:,k,l) * (c(:,l)-ubm(:,k)) / nm(:,k)**2
 
-        ! IGWs have a different Prandtl number, and need ro_adjust factor.
+        ! IGWs need ro_adjust factor.
         if (present(ro_adjust)) then
-           egwdff_lev = egwdff_lev * 4._r8 * ro_adjust(:,l,k)**2
+           egwdff_lev = egwdff_lev * ro_adjust(:,l,k)**2
         end if
 
         egwdffm(:,k) = egwdffm(:,k) + egwdff_lev
@@ -104,6 +108,11 @@ subroutine gw_ediff(ncol, pver, ngwv, kbot, ktop, tend_level, &
      end do
   end do
 
+  if (associated(vramp)) then
+     do k = ktop,kbot
+        egwdffm(:,k) = egwdffm(:,k) * vramp(k)
+     end do
+  endif
 
   ! Interpolate effective diffusivity to interfaces.
   ! Assume zero at top and bottom interfaces.

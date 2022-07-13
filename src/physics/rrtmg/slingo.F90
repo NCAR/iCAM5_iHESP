@@ -57,7 +57,7 @@ contains
 
 subroutine slingo_rad_props_init()
 
-   use cam_history, only: addfld, phys_decomp
+!   use cam_history, only: addfld
    use netcdf
    use spmd_utils,     only: masterproc
    use ioFileMod,      only: getfil
@@ -80,17 +80,17 @@ subroutine slingo_rad_props_init()
    call cnst_get_ind('CLDLIQ', ixcldliq)
    call cnst_get_ind('CLDICE', ixcldice)
 
-   !call addfld ('CLWPTH_OLD','Kg/m2   ',pver, 'I','old In Cloud Liquid Water Path',phys_decomp, sampling_seq='rad_lwsw')
-   !call addfld ('KEXT_OLD','m^2/kg',pver,'I','old extinction',phys_decomp)
-   !call addfld ('CLDOD_OLD','1',pver,'I','old liquid OD',phys_decomp)
-   !call addfld ('REL_OLD','1',pver,'I','old liquid effective radius (liquid)',phys_decomp)
+   !call addfld ('CLWPTH_OLD',(/ 'lev' /), 'I','Kg/m2','old In Cloud Liquid Water Path', sampling_seq='rad_lwsw')
+   !call addfld ('KEXT_OLD',(/ 'lev' /),'I','m^2/kg','old extinction')
+   !call addfld ('CLDOD_OLD',(/ 'lev' /),'I','1','old liquid OD')
+   !call addfld ('REL_OLD',(/ 'lev' /),'I','1','old liquid effective radius (liquid)')
 
-   !call addfld ('CLWPTH_NEW','Kg/m2   ',pver, 'I','In Cloud Liquid Water Path',phys_decomp, sampling_seq='rad_lwsw')
-   !call addfld ('KEXT_NEW','m^2/kg',pver,'I','extinction',phys_decomp)
-   !call addfld ('CLDOD_NEW','1',pver,'I','liquid OD',phys_decomp)
+   !call addfld ('CLWPTH_NEW',(/ 'lev' /), 'I','Kg/m2','In Cloud Liquid Water Path', sampling_seq='rad_lwsw')
+   !call addfld ('KEXT_NEW',(/ 'lev' /),'I','m^2/kg','extinction')
+   !call addfld ('CLDOD_NEW',(/ 'lev' /),'I','1','liquid OD')
 
-   !call addfld('CIWPTH_NEW','Kg/m2   ',pver, 'I','In Cloud Ice Water Path',phys_decomp, sampling_seq='rad_lwsw')
-   !call addfld('CIWPTH_OLD','Kg/m2   ',pver, 'I','In Cloud Ice Water Path (old)',phys_decomp, sampling_seq='rad_lwsw')
+   !call addfld('CIWPTH_NEW',(/ 'lev' /), 'I','Kg/m2','In Cloud Ice Water Path', sampling_seq='rad_lwsw')
+   !call addfld('CIWPTH_OLD',(/ 'lev' /), 'I','Kg/m2','In Cloud Ice Water Path (old)', sampling_seq='rad_lwsw')
 
    return
 

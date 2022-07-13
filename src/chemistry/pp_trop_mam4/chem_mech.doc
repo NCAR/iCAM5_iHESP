@@ -25,17 +25,17 @@
       ( 22)  pom_a4             (C)
       ( 23)  bc_a4              (C)
       ( 24)  num_a4             (H)
+      ( 25)  H2O             
   
   
      Invariant species
       (  1)  M               
       (  2)  N2              
       (  3)  O2              
-      (  4)  H2O             
-      (  5)  O3              
-      (  6)  OH              
-      (  7)  NO3             
-      (  8)  HO2             
+      (  4)  O3              
+      (  5)  OH              
+      (  6)  NO3             
+      (  7)  HO2             
   
   
      Column integrals
@@ -71,6 +71,7 @@ Class List
       ( 22)  pom_a4          
       ( 23)  bc_a4           
       ( 24)  num_a4          
+      ( 25)  H2O             
   
      Photolysis
   jh2o2            (  1)   H2O2 + hv -> (No products)                                           rate = ** User defined **         (  1)
@@ -92,6 +93,7 @@ Extraneous prod/loss species
  ( 6)   num_a1   (dataset)
  ( 7)   num_a2   (dataset)
  ( 8)   num_a4   (dataset)
+ ( 9)   H2O   (dataset)
   
   
  Equation Report
@@ -122,3 +124,4 @@ Extraneous prod/loss species
     d(pom_a4)/dt = 0                                                                                                    
     d(bc_a4)/dt = 0                                                                                                     
     d(num_a4)/dt = 0                                                                                                    
+    d(H2O)/dt = r2*OH*H2O2                                                                                              

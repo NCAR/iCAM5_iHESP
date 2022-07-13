@@ -4,10 +4,12 @@
 
 <start_ymd>00010101</start_ymd>
 
+<co2vmr>367.0e-6</co2vmr>
+
 <ncdata hgrid="1.9x2.5" >atm/cam/inic/fv/cami-chem_1990-01-01_1.9x2.5_L26_c080114.nc</ncdata>
 
 <!-- Solar constant from Lean (via Caspar Ammann) -->
-<solar_data_file>atm/cam/solar/spectral_irradiance_Lean_1610-2009_ann_c100405.nc</solar_data_file>
+<solar_irrad_data_file>atm/cam/solar/spectral_irradiance_Lean_1610-2009_ann_c100405.nc</solar_irrad_data_file>
 <solar_data_ymd>20000101</solar_data_ymd>
 <solar_data_type>FIXED</solar_data_type>
 
@@ -41,11 +43,6 @@
 <flbc_file>atm/waccm/lb/LBC_1765-2500_1.9x2.5_CMIP5_RCP45_za_c120204.nc</flbc_file>
 <flbc_type>CYCLICAL</flbc_type>
 
-<!-- strat aerosol data  -->
-<prescribed_strataero_cycle_yr>2000</prescribed_strataero_cycle_yr>
-<prescribed_strataero_file>CESM_1949_2100_sad_V2_c130627.nc</prescribed_strataero_file>
-<prescribed_strataero_type>CYCLICAL</prescribed_strataero_type>
-
 <!-- emissions timing  -->
 
 <!-- <ext_frc_type>'SERIAL'</ext_frc_type> -->
@@ -70,8 +67,7 @@
   'SFNO','SFNO2','SFCO','SFBIGALK','SFBIGENE','SFC10H16','SFC2H4','SFC2H5OH','SFC2H6','SFC3H6','SFC3H8',
   'SFCH2O','SFCH3CHO','SFCH3COCH3','SFCH3OH','SFDMS','SFISOP','SFMEK','SFNH3',
   'SFCB1','SFCB2','SFOC1','SFOC2','SFSO2','SFTOLUENE','SFHCN','SFCH3CN',
-  'DV_HCN','DV_CH3CN','WDR_HCN','WDR_CH3CN','WD_HCN','WD_CH3CN',
-  'WDR_SO2','WDR_HNO3','WDR_H2O2','WDR_CH2O','WD_SO2',
+  'DV_HCN','DV_CH3CN','WD_HCN','WD_CH3CN','WD_SO2','WD_HNO3','WD_H2O2','WD_CH2O',
   'O3_CHMP','O3_CHML','CO_CHMP','CO_CHML','CH4_CHML','SO4_CHMP','SO4_CHML',
 </fincl1>
 

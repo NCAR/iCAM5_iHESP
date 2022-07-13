@@ -31,13 +31,10 @@ module qbo
 
   use shr_kind_mod,   only: r8 => shr_kind_r8
   use spmd_utils,     only: masterproc
-  use pmgrid,         only: plon, plev, plevp
   use ppgrid,         only: pcols, pver
   use time_manager,   only: get_curr_date, get_curr_calday
   use phys_grid,      only: get_rlat_p
   use physics_types,  only: physics_state, physics_ptend, physics_ptend_init
-  use cam_history
-  use error_messages, only: alloc_err
   use cam_abortutils, only: endrun  
   use cam_logfile,    only: iulog
   use bnddyi_mod,     only: bnddyi
@@ -156,6 +153,7 @@ contains
    use time_manager, only : get_step_size
    use ref_pres,     only : pref_mid
    use phys_control, only : phys_getopts
+   use cam_history,  only : addfld, add_default
    use wrap_nf
 #if (defined SPMD )
    use mpishorthand
@@ -166,9 +164,7 @@ contains
 !---------------------------------------------------------------------
     real(r8), parameter :: hPa2Pa = 100._r8
 
-    integer  :: i, m, y, n         ! testing indexes
     integer  :: yr, mon, day       ! components of a date
-    integer  :: ncdate             ! current date in integer format [yyyymmdd]
     integer  :: ncsec              ! current time of day [seconds]
     integer  :: ncid               ! netcdf ID for input dataset 
     integer  :: astat              ! allocate status
@@ -546,18 +542,17 @@ master_proc : &
 !---------------------------------------------------------------------
     calday = get_curr_calday()
     call get_curr_date( yr, mon, day, ncsec )
-    write(iulog,*) 'qbo_init: get_curr_date = ', yr,mon,day,ncsec
-    ncdate = yr*10000 + mon*100 + day
+    if (masterproc) write(iulog,*) 'qbo_init: get_curr_date = ', yr,mon,day,ncsec
 
 !---------------------------------------------------------------------
 ! Set current day in run or in qbo cycle
 !---------------------------------------------------------------------
     cday = calday + yr*365._r8
-    write(iulog,*) 'qbo_init: cday = ', cday
+    if (masterproc) write(iulog,*) 'qbo_init: cday = ', cday
     if( has_monthly_data .and. qbo_cyclic ) then
        cday = mod( cday,qbo_days )
     end if
-    write(iulog,*) 'qbo_init: cday = ', cday
+    if (masterproc) write(iulog,*) 'qbo_init: cday = ', cday
 
     if( has_monthly_data ) then
        if( qbo_cyclic ) then
@@ -576,7 +571,7 @@ master_proc : &
                 nm = qbo_mons
              end if
           end if
-          write(iulog,*) 'qbo_init: nm,np = ', nm,np
+          if (masterproc) write(iulog,*) 'qbo_init: nm,np = ', nm,np
 !---------------------------------------------------------------------
 ! Set past and future days for data, generate day for cyclic data
 !---------------------------------------------------------------------
@@ -595,7 +590,7 @@ master_proc : &
              cdaym = cdaym + yr*365._r8
              yr    = date_qbo(np)/10000
              cdayp = cdayp + yr*365._r8
-             write(iulog,*) 'qbo_init: nm, date_qbo(nm), date_qbo(np), cdaym, cdayp = ', &
+             if (masterproc) write(iulog,*) 'qbo_init: nm, date_qbo(nm), date_qbo(np), cdaym, cdayp = ', &
                   nm, date_qbo(nm), date_qbo(np), cdaym, cdayp
              if( cday >= cdaym .and. cday < cdayp ) then
                 found = .true.
@@ -606,7 +601,7 @@ master_proc : &
              call endrun( 'QBO_INIT: failed to find bracketing dates' )
           end if
        end if
-       write(iulog,*) 'qbo_init: cdaym,cdayp = ', cdaym,cdayp
+       if (masterproc) write(iulog,*) 'qbo_init: cdaym,cdayp = ', cdaym,cdayp
     endif
 
 !---------------------------------------------------------------------
@@ -614,8 +609,8 @@ master_proc : &
 !----------------------------------------------------------------------
 ! 
 !----------------------------------------------------------------------
-    call addfld ('QBOTEND ','M/S/S   ',plev, 'A','Wind tendency from QBO relaxation',phys_decomp)
-    call addfld ('QBO_U0 ','M/S   ',plev, 'A','Specified wind used for QBO',phys_decomp)
+    call addfld ('QBOTEND',(/ 'lev' /), 'A','M/S/S','Wind tendency from QBO relaxation')
+    call addfld ('QBO_U0', (/ 'lev' /), 'A','M/S','Specified wind used for QBO')
 
     if (history_waccm) then
        call add_default ('QBOTEND', 1, ' ')
@@ -627,7 +622,7 @@ master_proc : &
 !----------------------------------------------------------------------
     uzm_idx = pbuf_get_index("UZM")
 
-    write(iulog,*) 'end of qbo_init'
+    if (masterproc) write(iulog,*) 'end of qbo_init'
 
   end subroutine qbo_init
 
@@ -834,6 +829,7 @@ next_interval : &
 
     subroutine qbo_relax( state, pbuf, ptend )
       use physics_buffer, only: physics_buffer_desc, pbuf_get_field
+      use cam_history,    only: outfld
 !------------------------------------------------------------------------
 ! relax zonal mean wind towards qbo sequence 
 !------------------------------------------------------------------------
@@ -877,7 +873,7 @@ has_qbo_forcing : &
     call pbuf_get_field(pbuf, uzm_idx, uzm)
 
     kl          = max( 1,ktop-1 )
-    ku          = min( plev,kbot+1 )
+    ku          = min( pver,kbot+1 )
 !--------------------------------------------------------------------------------
 ! get latitude in radians for present chunk
 !--------------------------------------------------------------------------------
