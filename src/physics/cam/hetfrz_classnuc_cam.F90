@@ -20,7 +20,7 @@ use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_mode_idx, rad_cnst_g
 
 use physics_buffer, only: pbuf_add_field, dtype_r8, pbuf_old_tim_idx, &
                           pbuf_get_index, pbuf_get_field
-use cam_history,    only: addfld, phys_decomp, add_default, outfld
+use cam_history,    only: addfld, add_default, outfld
 
 use ref_pres,       only: top_lev => trop_cloud_top_lev
 use wv_saturation,  only: svp_water, svp_ice
@@ -68,6 +68,7 @@ integer :: &
 ! modal aerosols
 integer, parameter :: MAM3_nmodes = 3
 integer, parameter :: MAM7_nmodes = 7
+integer, parameter :: MAM4_nmodes = 4
 integer :: nmodes = -1             ! number of aerosol modes
 
 ! mode indices
@@ -219,70 +220,70 @@ subroutine hetfrz_classnuc_cam_init(mincld_in)
    ! pbuf fields used by hetfrz_classnuc
    ast_idx      = pbuf_get_index('AST')
 
-   call addfld('bc_num', '#/cm3', pver, 'A', 'total bc number', phys_decomp)
-   call addfld('dst1_num', '#/cm3', pver, 'A', 'total dst1 number', phys_decomp)
-   call addfld('dst3_num', '#/cm3', pver, 'A', 'total dst3 number', phys_decomp)
-   call addfld('bcc_num', '#/cm3', pver, 'A', 'coated bc number', phys_decomp)
-   call addfld('dst1c_num', '#/cm3', pver, 'A', 'coated dst1 number', phys_decomp)
-   call addfld('dst3c_num', '#/cm3', pver, 'A', 'coated dst3 number', phys_decomp)
-   call addfld('bcuc_num', '#/cm3', pver, 'A', 'uncoated bc number', phys_decomp)
-   call addfld('dst1uc_num', '#/cm3', pver, 'A', 'uncoated dst1 number', phys_decomp)
-   call addfld('dst3uc_num', '#/cm3', pver, 'A', 'uncoated dst3 number', phys_decomp)
+   call addfld('bc_num',        (/ 'lev' /), 'A', '#/cm3', 'total bc number')
+   call addfld('dst1_num',      (/ 'lev' /), 'A', '#/cm3', 'total dst1 number')
+   call addfld('dst3_num',      (/ 'lev' /), 'A', '#/cm3', 'total dst3 number')
+   call addfld('bcc_num',       (/ 'lev' /), 'A', '#/cm3', 'coated bc number')
+   call addfld('dst1c_num',     (/ 'lev' /), 'A', '#/cm3', 'coated dst1 number')
+   call addfld('dst3c_num',     (/ 'lev' /), 'A', '#/cm3', 'coated dst3 number')
+   call addfld('bcuc_num',      (/ 'lev' /), 'A', '#/cm3', 'uncoated bc number')
+   call addfld('dst1uc_num',    (/ 'lev' /), 'A', '#/cm3', 'uncoated dst1 number')
+   call addfld('dst3uc_num',    (/ 'lev' /), 'A', '#/cm3', 'uncoated dst3 number')
 
-   call addfld('bc_a1_num', '#/cm3', pver, 'A', 'interstitial bc number', phys_decomp)
-   call addfld('dst_a1_num', '#/cm3', pver, 'A', 'interstitial dst1 number', phys_decomp)
-   call addfld('dst_a3_num', '#/cm3', pver, 'A', 'interstitial dst3 number', phys_decomp)
-   call addfld('bc_c1_num', '#/cm3', pver, 'A', 'cloud borne bc number', phys_decomp)
-   call addfld('dst_c1_num', '#/cm3', pver, 'A', 'cloud borne dst1 number', phys_decomp)
-   call addfld('dst_c3_num', '#/cm3', pver, 'A', 'cloud borne dst3 number', phys_decomp)
+   call addfld('bc_a1_num',     (/ 'lev' /), 'A', '#/cm3', 'interstitial bc number')
+   call addfld('dst_a1_num',    (/ 'lev' /), 'A', '#/cm3', 'interstitial dst1 number')
+   call addfld('dst_a3_num',    (/ 'lev' /), 'A', '#/cm3', 'interstitial dst3 number')
+   call addfld('bc_c1_num',     (/ 'lev' /), 'A', '#/cm3', 'cloud borne bc number')
+   call addfld('dst_c1_num',    (/ 'lev' /), 'A', '#/cm3', 'cloud borne dst1 number')
+   call addfld('dst_c3_num',    (/ 'lev' /), 'A', '#/cm3', 'cloud borne dst3 number')
     
-   call addfld('fn_bc_c1_num', '#/cm3', pver, 'A', 'cloud borne bc number derived from fn', phys_decomp)
-   call addfld('fn_dst_c1_num', '#/cm3', pver, 'A', 'cloud borne dst1 number derived from fn', phys_decomp)
-   call addfld('fn_dst_c3_num', '#/cm3', pver, 'A', 'cloud borne dst3 number derived from fn', phys_decomp)
+   call addfld('fn_bc_c1_num',  (/ 'lev' /), 'A', '#/cm3', 'cloud borne bc number derived from fn')
+   call addfld('fn_dst_c1_num', (/ 'lev' /), 'A', '#/cm3', 'cloud borne dst1 number derived from fn')
+   call addfld('fn_dst_c3_num', (/ 'lev' /), 'A', '#/cm3', 'cloud borne dst3 number derived from fn')
 
-   call addfld('na500', '#/cm3', pver, 'A', 'interstitial aerosol number with D>500 nm', phys_decomp)
-   call addfld('totna500', '#/cm3', pver, 'A', 'total aerosol number with D>500 nm', phys_decomp)
+   call addfld('na500',         (/ 'lev' /), 'A', '#/cm3', 'interstitial aerosol number with D>500 nm')
+   call addfld('totna500',      (/ 'lev' /), 'A', '#/cm3', 'total aerosol number with D>500 nm')
 
-   call addfld('FREQIMM', 'fraction', pver, 'A', 'Fractional occurance of immersion  freezing', phys_decomp)
-   call addfld('FREQCNT', 'fraction', pver, 'A', 'Fractional occurance of contact    freezing', phys_decomp)
-   call addfld('FREQDEP', 'fraction', pver, 'A', 'Fractional occurance of deposition freezing', phys_decomp)
-   call addfld('FREQMIX', 'fraction', pver, 'A', 'Fractional occurance of mixed-phase clouds' , phys_decomp)
+   call addfld('FREQIMM', (/ 'lev' /), 'A', 'fraction', 'Fractional occurance of immersion  freezing')
+   call addfld('FREQCNT', (/ 'lev' /), 'A', 'fraction', 'Fractional occurance of contact    freezing')
+   call addfld('FREQDEP', (/ 'lev' /), 'A', 'fraction', 'Fractional occurance of deposition freezing')
+   call addfld('FREQMIX', (/ 'lev' /), 'A', 'fraction', 'Fractional occurance of mixed-phase clouds' )
 
-   call addfld('DSTFREZIMM', 'm-3s-1', pver, 'A', 'dust immersion  freezing rate', phys_decomp)
-   call addfld('DSTFREZCNT', 'm-3s-1', pver, 'A', 'dust contact    freezing rate', phys_decomp)
-   call addfld('DSTFREZDEP', 'm-3s-1', pver, 'A', 'dust deposition freezing rate', phys_decomp)
+   call addfld('DSTFREZIMM', (/ 'lev' /), 'A', 'm-3s-1', 'dust immersion  freezing rate')
+   call addfld('DSTFREZCNT', (/ 'lev' /), 'A', 'm-3s-1', 'dust contact    freezing rate')
+   call addfld('DSTFREZDEP', (/ 'lev' /), 'A', 'm-3s-1', 'dust deposition freezing rate')
 
-   call addfld('BCFREZIMM', 'm-3s-1', pver, 'A', 'bc immersion  freezing rate', phys_decomp)
-   call addfld('BCFREZCNT', 'm-3s-1', pver, 'A', 'bc contact    freezing rate', phys_decomp)
-   call addfld('BCFREZDEP', 'm-3s-1', pver, 'A', 'bc deposition freezing rate', phys_decomp)
+   call addfld('BCFREZIMM', (/ 'lev' /), 'A', 'm-3s-1', 'bc immersion  freezing rate')
+   call addfld('BCFREZCNT', (/ 'lev' /), 'A', 'm-3s-1', 'bc contact    freezing rate')
+   call addfld('BCFREZDEP', (/ 'lev' /), 'A', 'm-3s-1', 'bc deposition freezing rate')
 
-   call addfld('NIMIX_IMM', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to het immersion freezing in Mixed Clouds', phys_decomp)
-   call addfld('NIMIX_CNT', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to het contact freezing in Mixed Clouds', phys_decomp)
-   call addfld('NIMIX_DEP', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to het deposition freezing in Mixed Clouds', phys_decomp)
+   call addfld('NIMIX_IMM', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to het immersion freezing in Mixed Clouds')
+   call addfld('NIMIX_CNT', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to het contact freezing in Mixed Clouds')
+   call addfld('NIMIX_DEP', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to het deposition freezing in Mixed Clouds')
 
-   call addfld('DSTNIDEP', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to dst dep freezing in Mixed Clouds', phys_decomp)
-   call addfld('DSTNICNT', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to dst cnt freezing in Mixed Clouds', phys_decomp)
-   call addfld('DSTNIIMM', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to dst imm freezing in Mixed Clouds', phys_decomp)
+   call addfld('DSTNIDEP', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to dst dep freezing in Mixed Clouds')
+   call addfld('DSTNICNT', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to dst cnt freezing in Mixed Clouds')
+   call addfld('DSTNIIMM', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to dst imm freezing in Mixed Clouds')
 
-   call addfld('BCNIDEP', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to bc dep freezing in Mixed Clouds', phys_decomp)
-   call addfld('BCNICNT', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to bc cnt freezing in Mixed Clouds', phys_decomp)
-   call addfld('BCNIIMM', '#/m3', pver, 'A', &
-               'Activated Ice Number Concentration due to bc imm freezing in Mixed Clouds', phys_decomp)
+   call addfld('BCNIDEP', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to bc dep freezing in Mixed Clouds')
+   call addfld('BCNICNT', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to bc cnt freezing in Mixed Clouds')
+   call addfld('BCNIIMM', (/ 'lev' /), 'A', '#/m3', &
+               'Activated Ice Number Concentration due to bc imm freezing in Mixed Clouds')
 
-   call addfld('NUMICE10s', '#/m3', pver, 'A', &
-               'Ice Number Concentration due to het freezing in Mixed Clouds during 10-s period', phys_decomp)
-   call addfld('NUMIMM10sDST', '#/m3', pver, 'A', &
-               'Ice Number Concentration due to imm freezing by dst in Mixed Clouds during 10-s period', phys_decomp)
-   call addfld('NUMIMM10sBC', '#/m3', pver, 'A', &
-               'Ice Number Concentration due to imm freezing by bc in Mixed Clouds during 10-s period', phys_decomp)
+   call addfld('NUMICE10s', (/ 'lev' /), 'A', '#/m3', &
+               'Ice Number Concentration due to het freezing in Mixed Clouds during 10-s period')
+   call addfld('NUMIMM10sDST', (/ 'lev' /), 'A', '#/m3', &
+               'Ice Number Concentration due to imm freezing by dst in Mixed Clouds during 10-s period')
+   call addfld('NUMIMM10sBC', (/ 'lev' /), 'A', '#/m3', &
+               'Ice Number Concentration due to imm freezing by bc in Mixed Clouds during 10-s period')
 
    if (hist_hetfrz_classnuc) then
 
@@ -375,6 +376,12 @@ subroutine hetfrz_classnuc_cam_init(mincld_in)
             mode_coardust_idx, mode_finedust_idx, mode_pcarbon_idx
          call endrun(routine//': ERROR required mode type not found')
       end if
+   else if (nmodes == MAM4_nmodes) then
+      if (mode_accum_idx == -1 .or. mode_coarse_idx == -1 .or. mode_pcarbon_idx == -1) then
+         write(iulog,*) routine//': ERROR required mode type not found - mode idx:', &
+            mode_accum_idx, mode_coarse_idx, mode_pcarbon_idx
+         call endrun(routine//': ERROR required mode type not found')
+      end if
    end if
 
    ! Set some mode properties
@@ -392,6 +399,13 @@ subroutine hetfrz_classnuc_cam_init(mincld_in)
 
       call rad_cnst_get_mode_props(0, mode_coardust_idx, sigmag=sigma_logr_aer)
       alnsg_mode_coardust = log(sigma_logr_aer)
+
+      call rad_cnst_get_mode_props(0, mode_pcarbon_idx, sigmag=sigma_logr_aer)
+      alnsg_mode_pcarbon = log(sigma_logr_aer)
+
+   else if (nmodes == MAM4_nmodes) then
+      call rad_cnst_get_mode_props(0, mode_coarse_idx, sigmag=sigma_logr_aer)
+      alnsg_mode_coarse = log(sigma_logr_aer)
 
       call rad_cnst_get_mode_props(0, mode_pcarbon_idx, sigmag=sigma_logr_aer)
       alnsg_mode_pcarbon = log(sigma_logr_aer)
@@ -431,6 +445,22 @@ subroutine hetfrz_classnuc_cam_init(mincld_in)
       bc_pcarbon   = 5
       pom_pcarbon  = 14
       num_pcarbon  = 15
+   else if (nmodes == MAM4_nmodes) then
+      ncnst = 14
+      so4_accum  =  1
+      bc_accum   =  2
+      pom_accum  =  3
+      soa_accum  =  4
+      dst_accum  =  5
+      ncl_accum  =  6
+      num_accum  =  7
+      dst_coarse =  8
+      ncl_coarse =  9
+      so4_coarse = 10
+      num_coarse = 11
+      bc_pcarbon   = 12
+      pom_pcarbon  = 13
+      num_pcarbon  = 14
    end if
 
    ! Allocate arrays to hold specie and mode indices for all constitutents (mass and number) 
@@ -466,7 +496,7 @@ subroutine hetfrz_classnuc_cam_init(mincld_in)
    mode_idx(soa_accum) = mode_accum_idx
    spec_idx(ncl_accum) = rad_cnst_get_spec_idx(0, mode_accum_idx, 'seasalt')
    mode_idx(ncl_accum) = mode_accum_idx
-   if (nmodes == MAM3_nmodes) then
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
       spec_idx(dst_accum) = rad_cnst_get_spec_idx(0, mode_accum_idx, 'dust')
       mode_idx(dst_accum) = mode_accum_idx
    end if
@@ -520,7 +550,7 @@ subroutine hetfrz_classnuc_cam_init(mincld_in)
    end if
 
    ! Get some specie specific properties.
-   if (nmodes == MAM3_nmodes) then
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
       call rad_cnst_get_aer_props(0, mode_idx(dst_accum), spec_idx(dst_accum), density_aer=specdens_dust)
    else if (nmodes == MAM7_nmodes) then
       call rad_cnst_get_aer_props(0, mode_idx(dst_finedust), spec_idx(dst_finedust), density_aer=specdens_dust)
@@ -607,12 +637,14 @@ subroutine hetfrz_classnuc_cam_calc( &
       lchnk => state%lchnk,             &
       ncol  => state%ncol,              &
       t     => state%t,                 &
-      qc    => state%q(:,:,cldliq_idx), &
-      nc    => state%q(:,:,numliq_idx), &
+      qc    => state%q(:pcols,:pver,cldliq_idx), &
+      nc    => state%q(:pcols,:pver,numliq_idx), &
       pmid  => state%pmid               )
 
    itim_old = pbuf_old_tim_idx()
    call pbuf_get_field(pbuf, ast_idx, ast, start=(/1,1,itim_old/), kount=(/pcols,pver,1/))
+
+   rho(:,:) = 0._r8
 
    do k = top_lev, pver
       do i = 1, ncol
@@ -663,7 +695,7 @@ subroutine hetfrz_classnuc_cam_calc( &
             na500(i,k), tot_na500(i,k))
 
          fn_cloudborne_aer_num(i,k,1) = total_aer_num(i,k,1)*factnum(i,k,mode_accum_idx)  ! bc
-         if (nmodes == MAM3_nmodes) then
+         if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
             fn_cloudborne_aer_num(i,k,2) = total_aer_num(i,k,2)*factnum(i,k,mode_accum_idx)  ! dst_a1
             fn_cloudborne_aer_num(i,k,3) = total_aer_num(i,k,3)*factnum(i,k,mode_coarse_idx) ! dst_a3
          else if (nmodes == MAM7_nmodes) then
@@ -725,6 +757,22 @@ subroutine hetfrz_classnuc_cam_calc( &
    numice10s_imm_dst(:ncol,:) = 0._r8
    numice10s_imm_bc(:ncol,:)  = 0._r8
 
+   nnuccc_bc(:,:) = 0._r8
+   nnucct_bc(:,:) = 0._r8
+   nnudep_bc(:,:) = 0._r8
+
+   nnuccc_dst(:,:) = 0._r8
+   nnucct_dst(:,:) = 0._r8
+   nnudep_dst(:,:) = 0._r8
+
+   niimm_bc(:,:) = 0._r8
+   nicnt_bc(:,:) = 0._r8
+   nidep_bc(:,:) = 0._r8
+
+   niimm_dst(:,:) = 0._r8
+   nicnt_dst(:,:) = 0._r8
+   nidep_dst(:,:) = 0._r8
+
    do i = 1, ncol
       do k = top_lev, pver
 
@@ -738,7 +786,7 @@ subroutine hetfrz_classnuc_cam_calc( &
             supersatice = svp_water(t(i,k))/svp_ice(t(i,k))
 
             fn(1) = factnum(i,k,mode_accum_idx)  ! bc accumulation mode
-            if (nmodes == MAM3_nmodes) then
+            if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
                 fn(2) = factnum(i,k,mode_accum_idx)  ! dust_a1 accumulation mode
                 fn(3) = factnum(i,k,mode_coarse_idx) ! dust_a3 coarse mode
             else if (nmodes == MAM7_nmodes) then
@@ -910,10 +958,10 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
    real(r8) :: vol_core(3) 
    real(r8) :: fac_volsfc_dust_a1, fac_volsfc_dust_a3, fac_volsfc_bc
    real(r8) :: tmp1, tmp2
-   real(r8) :: bc_num                     ! bc number in accumulation mode for MAM3
-                                          ! bc number in accumulation and primary carbon mode for MAM7
+   real(r8) :: bc_num                     ! bc number in accumulation mode for MAM3 
+                                          ! bc number in accumulation and primary carbon mode for MAM7 and MAM4
    real(r8) :: dst1_num, dst3_num         ! dust number in accumulation and corase mode for MAM3
-                                          ! dust number in fine dust and corase dust mode for MAM7
+                                          ! dust number in fine dust and corase dust mode for MAM7 and MAM4
    logical :: num_to_mass_in = .true.
    real(r8), parameter :: bc_num_to_mass = 4.669152e+17_r8      ! #/kg from emission
    real(r8), parameter :: dst1_num_to_mass = 3.484e+15_r8       ! #/kg for dust in accumulation mode
@@ -948,8 +996,8 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
    !*****************************************************************************
    !                calculate intersitial aerosol 
    !*****************************************************************************
-
-   if (nmodes == MAM3_nmodes) then
+   
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
 
       if (.not. num_to_mass_in) then
 
@@ -988,6 +1036,9 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
          dst3_num = 0.0_r8
       end if
 
+      if (nmodes == MAM4_nmodes) then
+        bc_num = bc_num+(aer(ii,kk,bc_pcarbon)) * bc_num_to_mass*1.0e-6_r8 ! #/cm^3
+      end if
    else if (nmodes == MAM7_nmodes) then
       bc_num = (aer(ii,kk,bc_accum)+aer(ii,kk,bc_pcarbon)) * bc_num_to_mass*1.0e-6_r8 ! #/cm^3
       dst1_num = aer(ii,kk,num_finedust)*1.0e-6_r8  ! #/cm^3
@@ -997,8 +1048,8 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
    !*****************************************************************************
    !                calculate cloud borne aerosol 
    !*****************************************************************************    
-
-   if (nmodes == MAM3_nmodes) then
+   
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
 
       as_so4 = aer_cb(ii,kk,so4_accum)
       as_bc  = aer_cb(ii,kk,bc_accum)
@@ -1058,13 +1109,26 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
    !*****************************************************************************    
    ! calculate mass mean radius
    !*****************************************************************************    
+   
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
 
-   if (nmodes == MAM3_nmodes) then
+      if (nmodes == MAM3_nmodes) then
 
-      if (aer(ii,kk,bc_accum)*1.0e-3_r8 > 1.0e-30_r8 .and. bc_num > 1.0e-3_r8) then
-         r_bc = ( 3._r8/(4*pi*specdens_bc)*aer(ii,kk,bc_accum)/(bc_num*1.0e6_r8) )**(1._r8/3._r8)
+        if (aer(ii,kk,bc_accum)*1.0e-3_r8 > 1.0e-30_r8 .and. bc_num > 1.0e-3_r8) then
+           r_bc = ( 3._r8/(4*pi*specdens_bc)*aer(ii,kk,bc_accum)/(bc_num*1.0e6_r8) )**(1._r8/3._r8)
+        else
+           r_bc = 0.04e-6_r8
+        end if
+
       else
-         r_bc = 0.04e-6_r8
+        if ((aer(ii,kk,bc_accum)+aer(ii,kk,bc_pcarbon))*1.0e-3_r8 > 1.0e-30_r8 &
+            .and. bc_num > 1.0e-3_r8) then
+            r_bc = ( 3._r8/(4*pi*specdens_bc)*(aer(ii,kk,bc_accum)+aer(ii,kk,bc_pcarbon))/ &
+                    (bc_num*1.0e6_r8) )**(1._r8/3._r8)
+        else
+            r_bc = 0.067e-6_r8 ! from emission size
+        end if
+
       end if
 
       if (aer(ii,kk,dst_accum)*1.0e-3_r8 > 1.0e-30_r8 .and. dst1_num > 1.0e-3_r8) then
@@ -1109,8 +1173,8 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
    !*****************************************************************************
    !                calculate coated fraction 
    !*****************************************************************************
-
-   if (nmodes == MAM3_nmodes) then
+   
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
 
       fac_volsfc_bc      = exp(2.5_r8*alnsg_mode_accum**2)
       fac_volsfc_dust_a1 = exp(2.5_r8*alnsg_mode_accum**2)
@@ -1134,11 +1198,20 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
       !   But ratio1/ratio2 == tmp1/tmp2, and coding below avoids possible overflow 
 
       ! bc
-      vol_shell(1) = vol_shell(2)
-      vol_core(1) = aer(ii,kk,bc_accum)/(specdens_bc*rhoair)
-      tmp1 = vol_shell(1)*(r_bc*2._r8)*fac_volsfc_bc
-      tmp2 = max(6.0_r8*dr_so4_monolayers_dust*vol_core(1), 0.0_r8)
-      dstcoat(1) = tmp1/tmp2
+      if (nmodes == MAM3_nmodes) then
+        vol_shell(1) = vol_shell(2)
+        vol_core(1) = aer(ii,kk,bc_accum)/(specdens_bc*rhoair)
+        tmp1 = vol_shell(1)*(r_bc*2._r8)*fac_volsfc_bc
+        tmp2 = max(6.0_r8*dr_so4_monolayers_dust*vol_core(1), 0.0_r8)
+        dstcoat(1) = tmp1/tmp2
+      else
+        fac_volsfc_bc      = exp(2.5_r8*alnsg_mode_pcarbon**2)
+        vol_shell(1) = ( aer(ii,kk,pom_pcarbon)*pom_equivso4_factor/specdens_pom )/rhoair
+        vol_core(1)  = aer(ii,kk,bc_pcarbon)/(specdens_bc*rhoair)
+        tmp1 = vol_shell(1)*(r_bc*2._r8)*fac_volsfc_bc
+        tmp2 = max(6.0_r8*dr_so4_monolayers_dust*vol_core(1), 0.0_r8)
+        dstcoat(1) = tmp1/tmp2
+      end if
 
       ! dust_a1
       tmp1 = vol_shell(2)*(r_dust_a1*2._r8)*fac_volsfc_dust_a1
@@ -1180,7 +1253,7 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
       tmp1 = vol_shell(3)*(r_dust_a3*2._r8)*fac_volsfc_dust_a3 
       tmp2 = max(6.0_r8*dr_so4_monolayers_dust*vol_core(3), 0.0_r8)
       dstcoat(3) = tmp1/tmp2
-
+    
    end if
 
    if (dstcoat(1) > 1._r8)    dstcoat(1) = 1._r8
@@ -1195,14 +1268,14 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
       coated_aer_num(i)   = total_interstial_aer_num(i)*dstcoat(i)
       uncoated_aer_num(i) = total_interstial_aer_num(i)*(1._r8-dstcoat(i))
    end do
-
-   if (nmodes == MAM7_nmodes) then
+    
+   if (nmodes == MAM4_nmodes .or. nmodes == MAM7_nmodes) then
       coated_aer_num(1)   = (aer(ii,kk,bc_pcarbon)*bc_num_to_mass*1.0e-6_r8)*dstcoat(1)+ &
                             (aer(ii,kk,bc_accum)*bc_num_to_mass*1.0e-6_r8)
       uncoated_aer_num(1) = (aer(ii,kk,bc_pcarbon)*bc_num_to_mass*1.0e-6_r8)*(1._r8-dstcoat(1))
    end if
-
-   if (nmodes == MAM3_nmodes) then
+    
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
       dst1_scale = 0.488_r8    ! scaled for D>0.5-1 um from 0.1-1 um
    else if (nmodes == MAM7_nmodes) then
       dst1_scale = 0.566_r8    ! scaled for D>0.5-2 um from 0.1-2 um
@@ -1217,9 +1290,8 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
    !*****************************************************************************
    !                prepare some variables for water activity 
    !*****************************************************************************
-
-   if (nmodes == MAM3_nmodes) then
-
+   
+   if (nmodes == MAM3_nmodes .or. nmodes == MAM4_nmodes) then
       ! accumulation mode for dust_a1 
       if (aer(ii,kk,num_accum) > 0._r8) then 
          awcam(2) = (dst1_num*1.0e6_r8)/aer(ii,kk,num_accum)* &
@@ -1236,7 +1308,7 @@ subroutine get_aer_num(ii, kk, ncnst, aer, aer_cb, rhoair,&
          awfacm(2) = 0._r8
       end if
 
-      ! accumulation mode for bc
+      ! accumulation mode for bc (if MAM4, primary carbon mode is insoluble)
       if (aer(ii,kk,num_accum) > 0._r8) then
          awcam(1) = (bc_num*1.0e6_r8)/aer(ii,kk,num_accum)* &
             ( aer(ii,kk,so4_accum) + aer(ii,kk,soa_accum) + aer(ii,kk,pom_accum) + aer(ii,kk,bc_accum) )*1.0e9_r8 ! [mug m-3]

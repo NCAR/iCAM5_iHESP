@@ -35,7 +35,7 @@ module prescribed_volcaero
 
   ! These variables are settable via the namelist (with longer names)
   character(len=16)  :: fld_name = 'MMRVOLC'
-  character(len=256) :: filename = ''
+  character(len=256) :: filename = 'NONE'
   character(len=256) :: filelist = ''
   character(len=256) :: datapath = ''
   character(len=32)  :: data_type = 'SERIAL'
@@ -134,7 +134,7 @@ subroutine prescribed_volcaero_readnl(nlfile)
    fixed_tod  = prescribed_volcaero_fixed_tod
 
    ! Turn on prescribed volcanics if user has specified an input dataset.
-   if (len_trim(filename) > 0 ) has_prescribed_volcaero = .true.
+   if (len_trim(filename) > 0 .and. filename.ne.'NONE') has_prescribed_volcaero = .true.
 
 end subroutine prescribed_volcaero_readnl
 
@@ -159,12 +159,8 @@ end subroutine prescribed_volcaero_readnl
   subroutine prescribed_volcaero_init()
 
     use tracer_data, only : trcdata_init
-    use cam_history, only : addfld, phys_decomp
-    use ppgrid,      only : pver
-    use error_messages, only: handle_err
-    use ppgrid,         only: pcols, pver, begchunk, endchunk
-    
-    use physics_buffer, only : physics_buffer_desc, pbuf_get_index
+    use cam_history, only : addfld, horiz_only
+    use physics_buffer, only : pbuf_get_index
 
     implicit none
 
@@ -189,10 +185,10 @@ end subroutine prescribed_volcaero_readnl
                        rmv_file, cycle_yr, fixed_ymd, fixed_tod, data_type)
 
 
-    call addfld(volcaero_name,'kg/kg', pver, 'I', 'prescribed volcanic aerosol dry mass mixing ratio', phys_decomp )
-    call addfld(volcrad_name,'m', pver, 'I', 'volcanic aerosol geometric-mean radius', phys_decomp )
-    call addfld(volcmass_name,'kg/m^2', pver, 'I', 'volcanic aerosol vertical mass path in layer', phys_decomp )
-    call addfld(volcmass_column_name,'kg/m^2', 1, 'I', 'volcanic aerosol column mass', phys_decomp )
+    call addfld(volcaero_name,        (/ 'lev' /), 'I','kg/kg',  'prescribed volcanic aerosol dry mass mixing ratio' )
+    call addfld(volcrad_name,         (/ 'lev' /), 'I','m',      'volcanic aerosol geometric-mean radius' )
+    call addfld(volcmass_name,        (/ 'lev' /), 'I','kg/m^2', 'volcanic aerosol vertical mass path in layer' )
+    call addfld(volcmass_column_name, horiz_only,  'I','kg/m^2', 'volcanic aerosol column mass' )
 
     radius_ndx = pbuf_get_index(volcrad_name, errcode)
 

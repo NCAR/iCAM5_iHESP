@@ -148,8 +148,8 @@ contains
       use subcol_utils, only: subcol_utils_init_restart
       use pio,          only: file_desc_t
 
-      type(file_desc_t),intent(in) :: File
-      integer ,intent(in)          :: hdimids(:)
+      type(file_desc_t),intent(inout) :: File
+      integer ,intent(in)             :: hdimids(:)
 
       call subcol_utils_init_restart(File, hdimids)
       ! Put scheme-specific calls here (in select statement)

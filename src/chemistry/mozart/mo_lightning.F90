@@ -39,8 +39,9 @@ contains
     use ioFileMod,     only : getfil
     use mo_chem_utls,  only : get_spc_ndx
 
-    use cam_history,   only : addfld, phys_decomp
+    use cam_history,   only : addfld, add_default, horiz_only
     use dyn_grid,      only : get_dyn_grid_parm
+    use phys_control,  only : phys_getopts
 
     implicit none
 
@@ -64,6 +65,9 @@ contains
     real(r8), allocatable :: lons(:)
     real(r8), allocatable :: landmask(:,:)
     character(len=256) :: locfn
+    logical :: history_cesm_forcing
+
+    call phys_getopts( history_cesm_forcing_out = history_cesm_forcing )
 
     no_ndx = get_spc_ndx('NO')
     xno_ndx = get_spc_ndx('XNO')
@@ -110,13 +114,17 @@ contains
     geo_factor = ngcols_p/(4._r8*pi)
 
 
-    call addfld( 'LNO_COL_PROD','TG N/YR', 1,    'I', 'lighting column NO source', phys_decomp )
-    call addfld( 'LNO_PROD',    '/cm3/s',  pver, 'I', 'lighting insitu NO source', phys_decomp )
-    call addfld( 'FLASHFRQ',    '1/MIN',   1,    'I', 'lighting flash rate', phys_decomp )        ! flash frequency in grid box per minute (PPP)
-    call addfld( 'FLASHENGY',   '   ',     1,    'I', 'lighting flash rate', phys_decomp )        ! flash frequency in grid box per minute (PPP)
-    call addfld( 'CLDHGT',      'KM',      1,    'I', 'cloud top height', phys_decomp )           ! cloud top height
-    call addfld( 'DCHGZONE',    'KM',      1,    'I', 'depth of discharge zone', phys_decomp )           ! depth of discharge zone
-    call addfld( 'CGIC',        'RATIO',   1,    'I', 'ratio of cloud-ground/intracloud discharges', phys_decomp )        ! ratio of cloud-ground/intracloud discharges
+    call addfld( 'LNO_COL_PROD', horiz_only,  'I', 'TG N/YR', 'lighting column NO source' )
+    call addfld( 'LNO_PROD',     (/ 'lev' /), 'I', '/cm3/s',  'lighting insitu NO source' )
+    call addfld( 'FLASHFRQ',     horiz_only,  'I', '1/MIN',   'lighting flash rate' )        ! flash frequency in grid box per minute (PPP)
+    call addfld( 'FLASHENGY',    horiz_only,  'I', '   ',     'lighting flash rate' )          ! flash frequency in grid box per minute (PPP)
+    call addfld( 'CLDHGT',       horiz_only,  'I', 'KM',      'cloud top height' )              ! cloud top height
+    call addfld( 'DCHGZONE',     horiz_only,  'I', 'KM',      'depth of discharge zone' )       ! depth of discharge zone
+    call addfld( 'CGIC',         horiz_only,  'I', 'RATIO',   'ratio of cloud-ground/intracloud discharges' ) ! ratio of cloud-ground/intracloud discharges
+
+    if ( history_cesm_forcing ) then
+       call add_default('LNO_COL_PROD',1,' ')
+    endif
 
   end subroutine lightning_inti
 

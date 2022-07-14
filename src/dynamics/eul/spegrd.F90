@@ -1,3 +1,4 @@
+
 !----------------------------------------------------------------------- 
 ! 
 ! Purpose: 
@@ -117,12 +118,9 @@ subroutine spegrd_bft (lat     ,nlon_fft, &
 ! Assemble northern and southern hemisphere grid values from the
 ! symmetric and antisymmetric fourier coefficients: pre-FFT
 !
-!DIR$ NOSTREAM
    rmlength = 2*numm(iam)
    if (lat > plat/2) then                       ! Northern hemisphere
-!DIR$ PREFERVECTOR
       do k=1,plev
-!cdir loopchg
          do i=1,rmlength
             fftbuf(i,vortdex,k) = grzs(i,k) + grza(i,k)
             fftbuf(i,divdex,k) = grds(i,k) + grda(i,k)
@@ -135,7 +133,6 @@ subroutine spegrd_bft (lat     ,nlon_fft, &
          end do
       end do
 !
-!cdir altcode=(loopcnt)
       do i=1,rmlength
          fftbuf(i,dpsdex,plevp) = grdps(i) + grdpa(i)
          fftbuf(i,psdex,plevp) = grpss(i) + grpsa(i)
@@ -145,9 +142,7 @@ subroutine spegrd_bft (lat     ,nlon_fft, &
 
    else                                          ! Southern hemisphere
 
-!DIR$ PREFERVECTOR
       do k=1,plev
-!cdir loopchg
          do i=1,rmlength
             fftbuf(i,vortdex,k) = grzs(i,k) - grza(i,k)
             fftbuf(i,divdex,k) = grds(i,k) - grda(i,k)
@@ -160,7 +155,6 @@ subroutine spegrd_bft (lat     ,nlon_fft, &
          end do
       end do
 
-!cdir altcode=(loopcnt)
       do i=1,rmlength
          fftbuf(i,dpsdex,plevp) = grdps(i) - grdpa(i)
          fftbuf(i,psdex,plevp) = grpss(i) - grpsa(i)
@@ -191,8 +185,8 @@ subroutine spegrd_ift (nlon_fft_in, nlon_fft_out, fftbuf_in, fftbuf_out)
 !
    use shr_kind_mod, only: r8 => shr_kind_r8
    use pmgrid,       only: plon, plat, plevp, beglat, endlat, plev
-   use rgrid
-   use comspe, only: maxm
+   use comspe,       only: maxm
+   use pspect,       only: pmmax
 #if ( defined SPMD )
    use mpishorthand
 #endif
@@ -268,14 +262,14 @@ subroutine spegrd_ift (nlon_fft_in, nlon_fft_out, fftbuf_in, fftbuf_out)
       do k=1,plev
          fftbuf_out(begtrm:nlon_fft_out,:,k,lat) = 0.0_r8
          call fft991 (fftbuf_out(1,1,k,lat), work, trig(1,lat), ifax(1,lat), inc, &
-                      nlon_fft_out, nlon(lat), ntr, isign)
+                      nlon_fft_out, plon, ntr, isign)
       enddo
       ntr = 1
 !$OMP PARALLEL DO PRIVATE (IFLD, WORK)
       do ifld=1,4
          fftbuf_out(begtrm:nlon_fft_out,ifld,plevp,lat) = 0.0_r8
          call fft991 (fftbuf_out(1,ifld,plevp,lat), work, trig(1,lat), ifax(1,lat), inc, &
-                      nlon_fft_out, nlon(lat), ntr, isign)
+                      nlon_fft_out, plon, ntr, isign)
       enddo
    enddo
 !
@@ -441,7 +435,7 @@ subroutine spegrd_aft (ztodt   ,lat     ,nlon    ,nlon_fft, &
 ! Finish horizontal diffusion: add pressure surface correction term to t and
 ! q diffusions; add kinetic energy dissipation to internal energy (temperature)
 !
-   klev = max(kmnhd4,nprlev)
+   klev = max(kmnhdn,nprlev)
    call difcor (klev,        ztodt,  dps,    u3,     v3, &
                 q3m1(1,1,1), pdel,   pint,   t3,     dth, &
                 duh,         dvh,    nlon)
@@ -514,3 +508,5 @@ subroutine spegrd_aft (ztodt   ,lat     ,nlon    ,nlon_fft, &
 
    return
 end subroutine spegrd_aft
+
+

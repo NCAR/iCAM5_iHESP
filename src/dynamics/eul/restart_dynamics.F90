@@ -10,7 +10,7 @@ module restart_dynamics
        dps, phis, dpsl, dpsm, omga, ptimelevels
   use scanslt,         only:  lammp, phimp, sigmp, qfcst
 #if ( defined BFB_CAM_SCAM_IOP )
-  use iop,             only: dqfx3sav,divq3dsav,divt3dsav,t2sav,betasav
+  use iop,             only: dqfx3sav,divq3dsav,divt3dsav,t2sav,betasav,fusav,fvsav
 #endif
   use cam_logfile,  only: iulog
   use spmd_utils,   only: masterproc
@@ -35,7 +35,7 @@ module restart_dynamics
      character(len=namlen) :: name
   end type restart_var_t
 #if ( defined BFB_CAM_SCAM_IOP )
-  integer, parameter :: restartvarcnt = 22
+  integer, parameter :: restartvarcnt = 24
 #else
   integer, parameter :: restartvarcnt = 17
 #endif
@@ -155,6 +155,12 @@ CONTAINS
     call set_r_var('T2', 1, vcnt, v3=t2sav )
 
     vcnt=vcnt+1
+    call set_r_var('FU', 1, vcnt, v3=fusav )
+
+    vcnt=vcnt+1
+    call set_r_var('FV', 1, vcnt, v3=fvsav )
+
+    vcnt=vcnt+1
     call set_r_var('BETA', 1, vcnt, v1=betasav )
 
 #endif    
@@ -168,33 +174,36 @@ CONTAINS
 
 
 
-subroutine init_restart_dynamics(File, hdimids, dyn_out)
+subroutine init_restart_dynamics(File, dyn_out)
 
-    use dyn_comp,     only: dyn_export_t
-    use dyn_grid,     only: get_horiz_grid_dim_d
-    use constituents, only: pcnst
-    use hycoef,       only: init_restart_hycoef
+    use dyn_comp,         only: dyn_export_t
+    use constituents,     only: pcnst
+    use hycoef,           only: init_restart_hycoef
+    use cam_grid_support, only: cam_grid_write_attr, cam_grid_id
+    use cam_grid_support, only: cam_grid_header_info_t
 
     ! Input arguments
     type(File_desc_t),  intent(inout) :: File
-    integer,            pointer       :: hdimids(:)
     type(Dyn_export_t), intent(in)    :: dyn_out
 
+    integer :: hdimids(2)
     integer :: vdimids(2)
     character(len=namlen) :: name
 
     integer :: alldims(4), alldims2d(3), qdims(5)
-    integer :: timelevels_dimid, i, hdim1, hdim2, ierr
+    integer :: timelevels_dimid, i, ierr
     type(var_desc_t), pointer :: vdesc
+    integer :: grid_id
     integer :: ndims, timelevels
+    type(cam_grid_header_info_t) :: info
 
     call init_restart_hycoef(File, vdimids)
 
-    call get_horiz_grid_dim_d(hdim1, hdim2)
-    allocate(hdimids(2))
-    ierr = PIO_Def_Dim(File, 'lon',hdim1, hdimids(1))
-
-    ierr = PIO_Def_Dim(File, 'lat',hdim2, hdimids(2))
+    ! Grid attributes
+    grid_id = cam_grid_id('gauss_grid')
+    call cam_grid_write_attr(File, grid_id, info)
+    hdimids(1) = info%get_hdimid(1)
+    hdimids(2) = info%get_hdimid(2)
 
     ierr = PIO_Def_Dim(File,'timelevels',PIO_UNLIMITED,timelevels_dimid)
 
@@ -227,7 +236,7 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
 
     do i=1,restartvarcnt
     
-       call get_restart_var(File, i, name, timelevels, ndims, vdesc)
+       call get_restart_var(i, name, timelevels, ndims, vdesc)
        if(timelevels>1) then
           if(ndims==3) then
              ierr = PIO_Def_Var(File, name, pio_double, alldims2d, vdesc)
@@ -265,6 +274,8 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
     use constituents,    only: pcnst
     use eul_control_mod, only: fixmas, tmass0
     use hycoef, only: write_restart_hycoef
+    use cam_grid_support, only: cam_grid_write_var
+    use dyn_grid,        only: dyn_decomp
 
 
     !
@@ -287,6 +298,9 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
     type(var_desc_t), pointer :: vdesc
     character(len=namlen) :: name
     !
+
+    ! Write grid vars
+    call cam_grid_write_var(File, dyn_decomp)
 
     call write_restart_hycoef(File)
 
@@ -315,11 +329,11 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
 
 
     do t=1,ptimelevels
-       time = ndcur+(real(nscur,kind=r8)+ (t-2)*dtime)/86400_r8
+       time = ndcur+(real(nscur,kind=r8)+ (t-2)*dtime)/86400._r8
        ierr = pio_put_var(File,timedesc%varid, (/int(t)/), time)
     end do
     do i=1,restartvarcnt
-       call get_restart_var(File, i, name, timelevels, ndims, vdesc)
+       call get_restart_var(i, name, timelevels, ndims, vdesc)
        if(timelevels==1) then
           if(ndims==2) then
              call pio_write_darray(File, vdesc, iodesc2d, transfer(restartvars(i)%v2d(:,:), mold), ierr)
@@ -354,8 +368,7 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
     return
   end subroutine write_restart_dynamics
 
-  subroutine get_restart_var(File, i,name, timelevels, ndims, vdesc)
-    type(file_desc_t), intent(in) :: FIle
+  subroutine get_restart_var(i,name, timelevels, ndims, vdesc)
     integer, intent(in) :: i
     character(len=namlen), intent(out) :: name
     integer, intent(out) :: ndims, timelevels
@@ -373,28 +386,29 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
 
   !#######################################################################
 
-  subroutine read_restart_dynamics (File, dyn_in, dyn_out, NLFileName)
+  subroutine read_restart_dynamics (File, dyn_in, dyn_out)
+
     use dyn_comp, only : dyn_init, dyn_import_t, dyn_export_t
     use cam_pio_utils, only : pio_subsystem
 
     use pmgrid,          only: plon, plat, beglat, endlat
-    use scanslt,         only: scanslt_alloc
+    use ppgrid,          only: pver
+    
 #if ( defined BFB_CAM_SCAM_IOP )
     use iop,             only: init_iop_fields
 #endif
     use massfix,         only: alpha, hw1, hw2, hw3
-    use prognostics,     only:  ptimelevels, n3m2, n3m1, n3, initialize_prognostics
-    use ppgrid,          only: pver
+    use prognostics,     only: n3m2, n3m1, n3
+
     use constituents,    only: pcnst
     use eul_control_mod, only: fixmas, tmass0
 
     !
     ! Input arguments
     !
-    type(file_desc_t), intent(inout) :: File     ! PIO file handle
-    type(dyn_import_t) :: dyn_in    ! not used by this dycore, included for compatibility
-    type(dyn_export_t) :: dyn_out ! not used by this dycore, included for compatibility
-    character(len=*), intent(in) :: NLFileName
+    type(file_desc_t),  intent(inout) :: File     ! PIO file handle
+    type(dyn_import_t), intent(out)   :: dyn_in
+    type(dyn_export_t), intent(out)   :: dyn_out
     !
     ! Local workspace
     !
@@ -410,10 +424,8 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
     integer :: ndims, timelevels, i, s2d, s3d, s4d
     type(var_desc_t), pointer :: vdesc
 
-    call dyn_init(file, nlfilename)
+    call dyn_init(dyn_in, dyn_out)
 
-    call initialize_prognostics
-	
     dims4d(1) = plon
     dims4d(2) = pver
     dims4d(3) = pcnst
@@ -439,8 +451,6 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
     call pio_initdecomp(pio_subsystem, pio_double, (/plon,plat/), ldof, iodesc2d)
     deallocate(ldof)
 
-    call scanslt_alloc()
-    
     ierr = PIO_Inq_varid(File, 'tmass0', tmass0desc)
     ierr = pio_get_var(File, tmass0desc, tmass0)
     ierr = PIO_Inq_varid(File,'fixmas', fixmasdesc)
@@ -461,7 +471,7 @@ subroutine init_restart_dynamics(File, hdimids, dyn_out)
     call init_iop_fields()
 #endif
     do i=1,restartvarcnt
-       call get_restart_var(File, i, name, timelevels, ndims, vdesc)
+       call get_restart_var(i, name, timelevels, ndims, vdesc)
 
 
        ierr = PIO_Inq_varid(File, name, vdesc)

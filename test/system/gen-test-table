@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 # Execute this script in the directory containing the test-driver 
-# scripts (~models/atm/cam/test/system) to loop through the CAM test 
+# scripts (~components/cam/test/system) to loop through the CAM test 
 # lists (filenames matching test_*) and create an html file 
 # (test_table.html) with the specifics of each test detailed.
 

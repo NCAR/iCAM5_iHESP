@@ -1,6 +1,6 @@
 package Build::ChemPreprocess;
 #-------------------------------------------------------------------------------------
-# ($chem_nadv) = chem_preprocess( $cfg_ref, $prnt_lvl )
+# ($chem_nadv) = chem_preprocess( $cfg_ref, $prnt_lvl, $fc_type )
 #
 # This routine does the following:
 # - Invokes the chemistry preprocessor
@@ -41,6 +41,7 @@ sub chem_preprocess
     my $cam_root = $cfg_ref->get('cam_root');
     my $cam_bld = $cfg_ref->get('cam_bld');
     my $chem_proc_src = $cfg_ref->get('chem_proc_src');
+    my $force_build = $cfg_ref->get('build_chem_proc');
 
     if (defined $ENV{CASEBUILD}) {
         #needed to expand $CASEBUILD in $chem_proc_src for CESM scripts
@@ -50,7 +51,7 @@ sub chem_preprocess
 
     my $chem_proc_bld = "$cam_bld/chem_proc";
 
-    my $chem_preprocessor = "$cam_root/models/atm/cam/chem_proc";
+    my $chem_preprocessor = "$cam_root/components/cam/chem_proc";
 
     my $chem_mech_infile;
 
@@ -87,7 +88,7 @@ sub chem_preprocess
 	    $usr_mech_infile = "$chem_proc_bld/chem_mech.in";
 	    write_chem_preproc($usr_mech_infile, $cfg_ref, $chem_preprocessor , $chem_proc_bld);
 	} else {
-	    $usr_mech_infile = "$cam_root/models/atm/cam/src/chemistry/pp_${chem_pkg}/chem_mech.in";
+	    $usr_mech_infile = "$cam_root/components/cam/src/chemistry/pp_${chem_pkg}/chem_mech.in";
 	}
     }
 
@@ -106,13 +107,14 @@ sub chem_preprocess
     if ( -e "$cam_bld/chem_mech.in") {
 	$needtorun = compare("$usr_mech_infile","$cam_bld/chem_mech.in");
     }
-    if ($needtorun) {
+    if ($needtorun or $force_build) {
 	my $proc_exe_path ;
 	if ( -e "$chem_preprocessor/$chem_proc_exe" ) {
 	    $proc_exe_path = "$chem_preprocessor/$chem_proc_exe" ;
 	} else {
 	    $proc_exe_path = "$chem_proc_bld/$chem_proc_exe" ;
 	}
+        if ($force_build) { unlink($proc_exe_path); }
 	if (! -e $proc_exe_path) {
 	    my $gmake = 'gmake';
 	    build_chem_preproc($gmake,$chem_preprocessor ,$chem_proc_bld,$chem_proc_exe,$fc_type);
@@ -279,9 +281,12 @@ sub run_chem_preproc
     my $cmd = "mkdir -p $src_dir";
     run_shell_command($cmd) or die "Failed: $cmd";
 
-    # get new code from tar filex
-    #my $cmd = "tar -xf $chem_proc_bld/cam.subs.tar -C $src_dir";
+    # extract new code from tar file
     my $cmd = "cd $src_dir && tar -xf $chem_proc_bld/cam.subs.tar";
+    run_shell_command($cmd) or die "Failed: $cmd";
+
+    # remove some garbage files produced when compiled with gfortran on hobart
+    my $cmd = "rm -f $src_dir/.F90 $src_dir/mo_.F90 ";
     run_shell_command($cmd) or die "Failed: $cmd";
 
     if ($print>=2) { print "run_chem_preproc complete\n"; }
@@ -293,8 +298,12 @@ sub build_chem_preproc
 {
     my ($gmake,$chem_proc_src,$chem_proc_bld,$chem_proc_exe,$fc_type) = @_;
 
-    if ($print>=2) { print "build_chem_preproc.... \n"; }
-    if ($print) { print "creating $chem_proc_bld/$chem_proc_exe\n"; }
+    if ($print) { print "creating $chem_proc_bld/$chem_proc_exe ...\n"; }
+    if ($print>=2) {
+        print " **************************************************** \n";
+        print " ** arg fc_type = $fc_type \n";
+        print " **************************************************** \n";
+    }
 
     $ENV{'MODEL_EXEDIR'} = "$chem_proc_bld";
     $ENV{'EXENAME'} = "$chem_proc_exe";
@@ -303,47 +312,56 @@ sub build_chem_preproc
     $ENV{'OBJ_DIR'} = "$chem_proc_bld/obj";
 
     my $cmplr;
-    if ($fc_type) {
-
-	if    ($fc_type eq 'pgi')       { $cmplr = 'pgf90'; }
-	elsif ($fc_type eq 'intel')     { $cmplr = 'ifort'; }
-	elsif ($fc_type eq 'gnu')       { $cmplr = 'gfortran'; }
-	elsif ($fc_type eq 'xlf')       { $cmplr = 'xlf95'; }
-
-    } else {
-	$cmplr = $ENV{'CHEMPROC_FC'};
+    if (!$fc_type) {
+	die " ERROR: build_chem_preproc: configure arg fc_type must be specified\n".
+	    "                            to build the chemistry preprocessor";
     }
 
-    # if the user specified cam fortran compiler (via CHEMPROC_FC) then use that for chem preprocessor
-    if ($cmplr) {
-	if ($print>=2) {
-	    print " ****************************************** \n";
-	    print " ****************************************** \n";
-	    print " ** user has specified compiler :  $cmplr  \n";
-	    print " ****************************************** \n";
-	    print " ****************************************** \n";
-	}
-	$ENV{'COMPILER'} = $cmplr ;
+    if    ($fc_type eq 'pgi')   { $cmplr = 'pgf90'; }
+    elsif ($fc_type eq 'intel') { $cmplr = 'ifort'; }
+    elsif ($fc_type eq 'gnu')   { $cmplr = 'gfortran'; }
+    elsif ($fc_type eq 'ibm')   { $cmplr = 'xlf95'; }
+
+    # check path for $cmplr
+    my $check = check_preproc_compiler($cmplr);
+
+    if ($cmplr and $check == 1) {
+        if ($print>=2) {
+            print " **************************************************** \n";
+            print " ** user specified compiler : $fc_type --> $cmplr\n";
+            print " **************************************************** \n";
+        }
+        $ENV{'USER_FC'} = $cmplr ;
     } else {
+        if ($print>=2) {
+            print " **************************************************** \n";
+            print " ** $cmplr does not seem to be in PATH \n";
+            print " ** try to find a suitable compiler ....\n";
+        }
+	# try to find a suitable compiler
         my $cmplr = find_preproc_compiler();
+        if ($print>=2) {
+            print " ** found : $cmplr \n";
+            print " **************************************************** \n";
+        }
         if ($cmplr) {
-	    $ENV{'COMPILER'} = $cmplr ;
-	} else {
-	    die "** Not able to find fortran compiler for chemistry preprocessor ** \n";
-	}
+            $ENV{'USER_FC'} = $cmplr ;
+        } else {
+            die "** Not able to find fortran compiler for chemistry preprocessor ** \n";
+        }
     }
     if ($print) {
-	print " **************************************************** \n";
-	print " compile preprocessor with this fortran compiler:\n";
-	my $prnt_cmplr = $ENV{'COMPILER'};
-	print " env var COMPILER = $prnt_cmplr \n";
-	print " **************************************************** \n";
+        print " **************************************************** \n";
+        print " ** chemistry preprocessor fortran compiler :\n";
+        print " ** env var USER_FC = $ENV{'USER_FC'} \n";
+        print " **************************************************** \n";
     }
     my $log_file = "$chem_proc_bld/MAKE.out";
     my $makefile = "$chem_proc_src/src/Makefile";
     my $cmd = "$gmake -f $makefile > $log_file 2>&1";
     run_shell_command($cmd) or die "Failed: $cmd";
 
+    # do some clean up
     my $cmd = "rm -f $chem_proc_bld/obj/*.o $chem_proc_bld/obj/*.mod $chem_proc_bld/../*.mod";
     run_shell_command($cmd);
 
@@ -403,10 +421,22 @@ sub find_preproc_compiler {
     my $path = $ENV{'PATH'};
     my @dirs = split(':',$path);
     foreach my $fc (@compilers) {
-	foreach my $dir (@dirs) {
-	    if ( -e "$dir\/$fc" ) { return $fc; }
-	}
+        foreach my $dir (@dirs) {
+            if ( -e "$dir\/$fc" ) { return $fc; }
+        }
     }
+}
+#-----------------------------------------------------------------------------------------------
+# checks for specified compiler in  $PATH
+sub check_preproc_compiler {
+    my ($fc) = @_;
+
+    my $path = $ENV{'PATH'};
+    my @dirs = split(':',$path);
+    foreach my $dir (@dirs) {
+        if ( -e "$dir\/${fc}" ) { return 1; }
+    }
+    return 0;
 }
 
 #-----------------------------------------------------------------------------------------------

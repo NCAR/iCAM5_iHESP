@@ -149,7 +149,7 @@ end subroutine init_hb_diff
     ! 
     !-----------------------------------------------------------------------
 
-    use pbl_utils, only: virtem, calc_ustar, calc_obklen
+    use pbl_utils, only: virtem, calc_ustar, calc_obklen, austausch_atm
 
     !------------------------------Arguments--------------------------------
     !
@@ -208,12 +208,12 @@ end subroutine init_hb_diff
     !
 
     ! virtual temperature
-    thv(:ncol,ntop_turb:) = virtem(th(:ncol,ntop_turb:),q(:ncol,ntop_turb:))
+    call virtem(ncol, (pver-ntop_turb+1), th(:ncol,ntop_turb:),q(:ncol,ntop_turb:), thv(:ncol,ntop_turb:))
 
     ! Compute ustar, Obukhov length, and kinematic surface fluxes.
-    call calc_ustar(t(:ncol,pver),pmid(:ncol,pver),taux(:ncol),tauy(:ncol), &
+    call calc_ustar(ncol, t(:ncol,pver),pmid(:ncol,pver),taux(:ncol),tauy(:ncol), &
          rrho(:ncol),ustar(:ncol))
-    call calc_obklen(th(:ncol,pver), thv(:ncol,pver), qflx(:ncol),  &
+    call calc_obklen(ncol, th(:ncol,pver), thv(:ncol,pver), qflx(:ncol),  &
                      shflx(:ncol),   rrho(:ncol),     ustar(:ncol), &
                      khfs(:ncol),    kqfs(:ncol),     kbfs(:ncol),  &
                      obklen(:ncol))
@@ -231,7 +231,8 @@ end subroutine init_hb_diff
     !
     ! Get free atmosphere exchange coefficients
     !
-    call austausch_atm(ncol    ,ri      ,s2      ,kvf     )
+    call austausch_atm(pcols, ncol, pver, ntop_turb, nbot_turb, &
+         ml2, ri, s2, kvf)
     ! 
     ! Get pbl exchange coefficients
     !
@@ -487,77 +488,6 @@ end subroutine init_hb_diff
   end subroutine pblintd
   !
   !===============================================================================
-  subroutine austausch_atm(ncol    ,ri      ,s2      ,kvf     )
-    !----------------------------------------------------------------------- 
-    ! 
-    ! Purpose: 
-    !  Computes exchange coefficients for free turbulent flows. 
-    ! 
-    ! Method: 
-    !
-    ! The free atmosphere diffusivities are based on standard mixing length
-    ! forms for the neutral diffusivity multiplied by functns of Richardson
-    ! number. K = l^2 * |dV/dz| * f(Ri). The same functions are used for
-    ! momentum, potential temperature, and constitutents. 
-    !
-    ! The stable Richardson num function (Ri>0) is taken from Holtslag and
-    ! Beljaars (1989), ECMWF proceedings. f = 1 / (1 + 10*Ri*(1 + 8*Ri))
-    ! The unstable Richardson number function (Ri<0) is taken from  CCM1.
-    ! f = sqrt(1 - 18*Ri)
-    ! 
-    ! Author: B. Stevens (rewrite, August 2000)
-    ! 
-    !-----------------------------------------------------------------------
-    !------------------------------Arguments--------------------------------
-    !
-    ! Input arguments
-    !
-    integer, intent(in) :: ncol                     ! number of atmospheric columns
-
-    real(r8), intent(in)  ::  s2(pcols,pver)        ! shear squared
-    real(r8), intent(in)  ::  ri(pcols,pver)        ! richardson no
-    !
-    ! Output arguments
-    !
-    real(r8), intent(out) :: kvf(pcols,pverp)       ! coefficient for heat and tracers
-    !
-    !---------------------------Local workspace-----------------------------
-    !
-    real(r8) :: fofri                  ! f(ri)
-    real(r8) :: kvn                    ! neutral Kv
-
-    integer  :: i                      ! longitude index
-    integer  :: k                      ! vertical index
-    !
-    !-----------------------------------------------------------------------
-    !
-    ! The surface diffusivity is always zero
-    !
-    kvf(:ncol,pverp) = 0.0_r8
-    !
-    ! Set the vertical diffusion coefficient above the top diffusion level
-    ! Note that nbot_turb != pver is not supported
-    !
-    kvf(:ncol,1:ntop_turb) = 0.0_r8
-    !
-    ! Compute the free atmosphere vertical diffusion coefficients: kvh = kvq = kvm. 
-    !
-    do k = ntop_turb, nbot_turb-1
-       do i=1,ncol
-          if (ri(i,k) < 0.0_r8) then
-             fofri = sqrt(max(1._r8 - 18._r8*ri(i,k),0._r8))
-          else 
-             fofri = 1.0_r8/(1.0_r8 + 10.0_r8*ri(i,k)*(1.0_r8 + 8.0_r8*ri(i,k)))    
-          end if
-          kvn = ml2(k)*sqrt(s2(i,k))
-          kvf(i,k+1) = max(zkmin,kvn*fofri)
-       end do
-    end do
-
-    return
-  end subroutine austausch_atm
-  !
-  !===============================================================================
   subroutine austausch_pbl(lchnk ,ncol    ,          &
        z       ,kvf     ,kqfs    ,khfs    ,kbfs    , &
        obklen  ,ustar   ,wstar   ,pblh    ,kvm     , &
@@ -590,10 +520,6 @@ end subroutine init_hb_diff
     !
     ! Author: B. Boville, B. Stevens (rewrite August 2000)
     ! 
-    !-----------------------------------------------------------------------
-!++ debug code to be removed after validation of PBL codes
-     use phys_debug, only: phys_debug_hbdiff1
-!++ debug code to be removed after validation of PBL codes
     !------------------------------Arguments--------------------------------
     !
     ! Input arguments
@@ -733,10 +659,6 @@ end subroutine init_hb_diff
           end if
        end do
     end do
-
-!++ debug code to be removed after validation of PBL codes
-    call phys_debug_hbdiff1(lchnk, pblh, zl, zh)
-!++ debug code to be removed after validation of PBL codes
 
     !
     ! Check whether last allowed midpoint is within pbl

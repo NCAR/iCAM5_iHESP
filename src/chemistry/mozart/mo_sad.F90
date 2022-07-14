@@ -33,9 +33,8 @@
 !     ... initialize the sad module
 !----------------------------------------------------------------------
 
-      use time_manager, only : is_first_step
       use ref_pres,     only : pref_mid_norm
-      use cam_history,  only : addfld, phys_decomp
+      use cam_history,  only : addfld
       use physics_buffer, only : physics_buffer_desc, pbuf_set_field
 
       implicit none
@@ -63,7 +62,7 @@
          write(iulog,*) '          whose midpoint is ',pref_mid_norm(sad_topp)*1.e3_r8,' hPa'
       endif
 
-      call addfld( 'H2SO4M_C',  'ug/m3 ',   pver, 'I', 'chemical sulfate aerosol mass',  phys_decomp )
+      call addfld( 'H2SO4M_C',   (/ 'lev' /), 'I',  'ug/m3', 'chemical sulfate aerosol mass' )
 
       end subroutine sad_inti
 !===============================================================================

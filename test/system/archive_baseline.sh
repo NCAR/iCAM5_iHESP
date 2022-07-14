@@ -1,9 +1,9 @@
 #!/bin/sh -f
 
-echo 
+echo
 
 if [ $# -ne 1 ]; then
-    echo "Invoke archive_baseline.sh -help for usage." 
+    echo "Invoke archive_baseline.sh -help for usage."
     exit 1
 fi
 
@@ -12,7 +12,7 @@ cat << EOF1
 NAME
 
 	archive_baseline.sh - archive pretag baselines to set locations on
-                              goldbach and yellowstone.
+                              hobart, izumi and cheyenne.
 
 
 SYNOPSIS
@@ -23,16 +23,17 @@ SYNOPSIS
 
 ENVIROMENT VARIABLES
 
-	CAM_TESTDIR - Directory that contains the finished results you wish to archive.
-	CAM_FC      - Compiler used, only used on goldbach (PGI,NAG), where the compiler
+	CESM_TESTDIR - Directory that contains the CESM finished results you wish to archive.
+	CAM_TESTDIR - Directory that contains the CAM finished results you wish to archive.
+	CAM_FC      - Compiler used, only used on hobart and izumi (PGI,NAG), where the compiler
                       name is appended to the archive directory.
 
 
 BASELINE ARCHIVED LOCATION
 
-	goldbach:     /fs/cgd/csm/models/atm/cam/pretag_bl/TAGNAME_pgi
-	              /fs/cgd/csm/models/atm/cam/pretag_bl/TAGNAME_nag
-        yellowstone:  /glade/p/cesm/cseg/models/atm/cam/pretag_bl/TAGNAME
+	hobart, izumi:     /fs/cgd/csm/models/atm/cam/pretag_bl/TAGNAME_pgi
+	                   /fs/cgd/csm/models/atm/cam/pretag_bl/TAGNAME_nag
+        cheyenne:  /glade/p/cesmdata/cseg/cam_baselines/TAGNAME
 
 
 
@@ -43,7 +44,7 @@ HOW TO USE ARCHIVE BASELINES
 
 WORK FLOW
 
-	This is an example for goldbach.
+	This is an example for hobart or izumi.
 
 	Modify your sandbox with the changes you want.
         setenv CAM_FC PGI
@@ -51,18 +52,18 @@ WORK FLOW
         Run the cam test suite.
         Make your trunk tag
 	archive_baseline.sh cam5_2_06
-        
+
 	Create a new sandbox.
         setenv CAM_FC PGI
 	setenv CAM_TESTDIR /scratch/cluster/fischer/cam5_2_07
         setenv BL_TESTDIR /fs/cgd/csm/models/atm/cam/pretag_bl/cam5_2_06_pgi
         Run the cam test suite.
         Make your trunk tag
-        archive_baseline.sh cam5_2_07	
-   
+        archive_baseline.sh cam5_2_07
+
 
 WARNING
-	
+
 	System changes can cause answer changes. So you may need to create new baselines
         if you are getting unexpected baseline failures.
 
@@ -80,24 +81,55 @@ fi
 hostname=`hostname`
 case $hostname in
 
-  go*)
-    echo "server: goldbach"
+  ho*)
+    echo "server: hobart"
     if [ -z "$CAM_FC" ]; then
       CAM_FC="PGI"
     fi
-    test_file_list="tests_pretag_goldbach_${CAM_FC,,}"
+    test_file_list="tests_pretag_hobart_${CAM_FC,,}"
     baselinedir="/fs/cgd/csm/models/atm/cam/pretag_bl/$1_${CAM_FC,,}"
   ;;
-  ys*)
-    echo "server: yellowstone"
+
+  iz*)
+    echo "server: izumi"
+    if [ -z "$CAM_FC" ]; then
+      CAM_FC="PGI"
+    fi
+    test_file_list="tests_pretag_izumi_${CAM_FC,,}"
+    baselinedir="/fs/cgd/csm/models/atm/cam/pretag_bl/$1_${CAM_FC,,}"
+  ;;
+
+  ch*)
+    echo "server: cheyenne"
     if [ -z "$CAM_FC" ]; then
       CAM_FC="INTEL"
     fi
-    test_file_list="tests_pretag_yellowstone"
-    baselinedir="/glade/p/cesm/cseg/models/atm/cam/pretag_bl/$1"
+    test_file_list="tests_pretag_cheyenne"
+    baselinedir="/glade/p/cesmdata/cseg/cam_baselines/$1"
   ;;
+
   * ) echo "ERROR: machine $hostname not currently supported"; exit 1 ;;
 esac
+
+if [ -n "$CESM_TESTDIR" ]; then
+
+    echo " "
+    case $hostname in
+	ch*)
+	    echo "CESM Archiving to /glade/p/cesmdata/cseg/cesm_baselines/$1"
+	    ;;
+
+	hobart)
+	    echo "CESM Archiving to /fs/cgd/csm/models/atm/cam/cesm_baselines/$1"
+	    ;;
+	izumi)
+	    echo "CESM Archiving to /fs/cgd/csm/models/atm/cam/cesm_baselines/$1"
+	    ;;
+    esac
+    echo " "
+
+    ../../../../cime/scripts/Tools/bless_test_results -p -t '' -c '' -r $CESM_TESTDIR -b $1 -f -s
+fi
 
 echo
 echo "Archiving to ${baselinedir}"
@@ -146,4 +178,18 @@ while read input_line; do
        fi
 
   done
+
 done < ${test_file_list}
+
+case $hostname in
+
+    ch* | hobart | izumi)
+	if [ -z "$CESM_TESTDIR" ]; then
+	    echo '***********************************************************************************'
+	    echo 'INFO: The aux_cam and test_cam tests were NOT archived'
+	    echo "INFO: Must set CESM_TESTDIR (test-root in the create_test) to archive aux_cam tests"
+	    echo '***********************************************************************************'
+	fi
+	;;
+
+esac

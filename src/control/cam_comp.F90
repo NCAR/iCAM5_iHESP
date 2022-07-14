@@ -1,163 +1,186 @@
 module cam_comp
 !-----------------------------------------------------------------------
 !
-! Purpose:  The CAM Community Atmosphere Model component. Interfaces with 
-!           a merged surface field that is provided outside of this module. 
-!           This is the atmosphere only component. It can interface with a 
-!           host of surface components.
+! Community Atmosphere Model (CAM) component interfaces.
+!
+! This interface layer is CAM specific, i.e., it deals entirely with CAM
+! specific data structures.  It is the layer above this, either atm_comp_mct
+! or atm_comp_esmf, which translates between CAM and either MCT or ESMF
+! data structures in order to interface with the driver/coupler.
 !
 !-----------------------------------------------------------------------
-   use shr_kind_mod,      only: r8 => SHR_KIND_R8, cl=>SHR_KIND_CL, cs=>SHR_KIND_CS
-   use pmgrid,            only: plat, plev
-   use spmd_utils,        only: masterproc
-   use cam_abortutils,    only: endrun
-   use camsrfexch,        only: cam_out_t, cam_in_t     
-   use shr_sys_mod,       only: shr_sys_flush
-   use physics_types,     only: physics_state, physics_tend
-   use cam_control_mod,   only: nsrest, print_step_cost, obliqr, lambm0, mvelpp, eccen
-   use dyn_comp,          only: dyn_import_t, dyn_export_t
-   use ppgrid,            only: begchunk, endchunk
-   use perf_mod
-   use cam_logfile,       only: iulog
-   use physics_buffer,    only: physics_buffer_desc
-   use offline_driver,    only: offline_driver_init, offline_driver_dorun, offline_driver_run
 
-   implicit none
-   private
-   save
-   !
-   ! Public access methods
-   !
-   public cam_init      ! First phase of CAM initialization
-   public cam_run1      ! CAM run method phase 1
-   public cam_run2      ! CAM run method phase 2
-   public cam_run3      ! CAM run method phase 3
-   public cam_run4      ! CAM run method phase 4
-   public cam_final     ! CAM Finalization
-   !
-   ! Private module data
-   !
-#if ( defined SPMD )
-   real(r8) :: cam_time_beg              ! Cam init begin timestamp
-   real(r8) :: cam_time_end              ! Cam finalize end timestamp
-   real(r8) :: stepon_time_beg = -1.0_r8 ! Stepon (run1) begin timestamp
-   real(r8) :: stepon_time_end = -1.0_r8 ! Stepon (run4) end timestamp
-   integer  :: nstep_beg = -1            ! nstep at beginning of run
-#else
-   integer  :: mpicom = 0
-#endif
+use shr_kind_mod,      only: r8 => SHR_KIND_R8, cl=>SHR_KIND_CL, cs=>SHR_KIND_CS
+use shr_sys_mod,       only: shr_sys_flush
 
-  real(r8) :: gw(plat)           ! Gaussian weights
-  real(r8) :: etamid(plev)       ! vertical coords at midpoints
-  real(r8) :: dtime              ! Time step for either physics or dynamics (set in dynamics init)
+use spmd_utils,        only: masterproc, mpicom
+use cam_control_mod,   only: cam_ctrl_init, cam_ctrl_set_orbit
+use runtime_opts,      only: read_namelist
+use time_manager,      only: timemgr_init, get_step_size, &
+                             get_nstep, is_first_step, is_first_restart_step
 
-  type(dyn_import_t) :: dyn_in   ! Dynamics import container
-  type(dyn_export_t) :: dyn_out  ! Dynamics export container
+use camsrfexch,        only: cam_out_t, cam_in_t
+use ppgrid,            only: begchunk, endchunk
+use physics_types,     only: physics_state, physics_tend
+use dyn_comp,          only: dyn_import_t, dyn_export_t
 
-  type(physics_state), pointer :: phys_state(:) => null()
-  type(physics_tend ), pointer :: phys_tend(:) => null()
-  type(physics_buffer_desc), pointer :: pbuf2d(:,:) => null()
+use physics_buffer,    only: physics_buffer_desc
+use offline_driver,    only: offline_driver_init, offline_driver_dorun, offline_driver_run
 
-  real(r8) :: wcstart, wcend     ! wallclock timestamp at start, end of timestep
-  real(r8) :: usrstart, usrend   ! user timestamp at start, end of timestep
-  real(r8) :: sysstart, sysend   ! sys timestamp at start, end of timestep
+use perf_mod
+use cam_logfile,       only: iulog
+use cam_abortutils,    only: endrun
+
+implicit none
+private
+
+public cam_init      ! First phase of CAM initialization
+public cam_run1      ! CAM run method phase 1
+public cam_run2      ! CAM run method phase 2
+public cam_run3      ! CAM run method phase 3
+public cam_run4      ! CAM run method phase 4
+public cam_final     ! CAM Finalization
+
+type(dyn_import_t) :: dyn_in   ! Dynamics import container
+type(dyn_export_t) :: dyn_out  ! Dynamics export container
+
+type(physics_state),       pointer :: phys_state(:) => null()
+type(physics_tend ),       pointer :: phys_tend(:) => null()
+type(physics_buffer_desc), pointer :: pbuf2d(:,:) => null()
+
+real(r8) :: dtime_phys         ! Time step for physics tendencies.  Set by call to
+                               ! stepon_run1, then passed to the phys_run*
 
 !-----------------------------------------------------------------------
-  contains
+contains
 !-----------------------------------------------------------------------
 
-!
-!-----------------------------------------------------------------------
-!
-subroutine cam_init( cam_out, cam_in, mpicom_atm, &
-	             start_ymd, start_tod, ref_ymd, ref_tod, stop_ymd, stop_tod, &
-                    perpetual_run, perpetual_ymd, calendar)
+subroutine cam_init( &
+   caseid, ctitle, model_doi_url, dart_mode, &
+   initial_run_in, restart_run_in, branch_run_in, &
+   calendar, brnch_retain_casename, aqua_planet, &
+   single_column, scmlat, scmlon,               &
+   eccen, obliqr, lambm0, mvelpp,               &
+   perpetual_run, perpetual_ymd, &
+   dtime, start_ymd, start_tod, ref_ymd, ref_tod, &
+   stop_ymd, stop_tod, curr_ymd, curr_tod, &
+   cam_out, cam_in)
 
    !-----------------------------------------------------------------------
    !
-   ! Purpose:  CAM initialization.
+   ! CAM component initialization.
    !
    !-----------------------------------------------------------------------
 
-   use infnan,           only: nan, assignment(=)
    use history_defaults, only: bldfld
    use cam_initfiles,    only: cam_initfiles_open
-   use inital,           only: cam_initial
+   use dyn_grid,         only: dyn_grid_init
+   use phys_grid,        only: phys_grid_init
+   use physpkg,          only: phys_register, phys_init
+   use chem_surfvals,    only: chem_surfvals_init
+   use dyn_comp,         only: dyn_init
    use cam_restart,      only: cam_read_restart
    use stepon,           only: stepon_init
-   use physpkg,          only: phys_init, phys_register
-   
-   use dycore,           only: dycore_is
+   use ionosphere_interface, only: ionosphere_init
+   use camsrfexch,       only: hub2atm_alloc, atm2hub_alloc
+   use cam_history,      only: intht
+   use history_scam,     only: scm_intht
+   use cam_pio_utils,    only: init_pio_subsystem
+   use cam_instance,     only: inst_suffix
+
 #if (defined BFB_CAM_SCAM_IOP)
    use history_defaults, only: initialize_iop_history
 #endif
-!   use shr_orb_mod,      only: shr_orb_params
-   use camsrfexch,       only: hub2atm_alloc, atm2hub_alloc
-   use cam_history,      only: addfld, phys_decomp, intht, init_masterlinkedlist
-   use history_scam,     only: scm_intht
-   use scamMod,          only: single_column
-   use cam_pio_utils,    only: init_pio_subsystem
-   use cam_instance,     only: inst_suffix
-   use time_manager,     only: get_step_size
 
-#if ( defined SPMD )   
-   real(r8) :: mpi_wtime  ! External
-#endif
-   !-----------------------------------------------------------------------
-   !
+
    ! Arguments
-   !
-   type(cam_out_t), pointer        :: cam_out(:)       ! Output from CAM to surface
-   type(cam_in_t) , pointer        :: cam_in(:)        ! Merged input state to CAM
-   integer            , intent(in) :: mpicom_atm       ! CAM MPI communicator
-   integer            , intent(in) :: start_ymd        ! Start date (YYYYMMDD)
-   integer            , intent(in) :: start_tod        ! Start time of day (sec)
-   integer            , intent(in) :: ref_ymd          ! Reference date (YYYYMMDD)
-   integer            , intent(in) :: ref_tod          ! Reference time of day (sec)
-   integer            , intent(in) :: stop_ymd         ! Stop date (YYYYMMDD)
-   integer            , intent(in) :: stop_tod         ! Stop time of day (sec)
-   logical            , intent(in) :: perpetual_run    ! If in perpetual mode or not
-   integer            , intent(in) :: perpetual_ymd    ! Perpetual date (YYYYMMDD)
-   character(len=cs)  , intent(in) :: calendar         ! Calendar type
-   !
+   character(len=cl), intent(in) :: caseid                ! case ID
+   character(len=cl), intent(in) :: ctitle                ! case title
+   character(len=cl), intent(in) :: model_doi_url         ! CESM model DOI
+   logical,           intent(in) :: dart_mode             ! enables DART mode
+   logical,           intent(in) :: initial_run_in        ! true => inital run
+   logical,           intent(in) :: restart_run_in        ! true => restart run
+   logical,           intent(in) :: branch_run_in         ! true => branch run
+   character(len=cs), intent(in) :: calendar              ! Calendar type
+   logical,           intent(in) :: brnch_retain_casename ! Flag to allow a branch to use the same
+                                                          ! caseid as the run being branched from.
+   logical,           intent(in) :: aqua_planet           ! Flag to run model in "aqua planet" mode
+
+   logical,           intent(in) :: single_column
+   real(r8),          intent(in) :: scmlat
+   real(r8),          intent(in) :: scmlon
+
+   real(r8),          intent(in) :: eccen
+   real(r8),          intent(in) :: obliqr
+   real(r8),          intent(in) :: lambm0
+   real(r8),          intent(in) :: mvelpp
+
+   logical,           intent(in) :: perpetual_run    ! true => perpetual mode enabled
+   integer,           intent(in) :: perpetual_ymd    ! Perpetual date (YYYYMMDD)
+   integer,           intent(in) :: dtime                 ! model timestep (sec)
+
+   integer,           intent(in) :: start_ymd             ! Start date (YYYYMMDD)
+   integer,           intent(in) :: start_tod             ! Start time of day (sec)
+   integer,           intent(in) :: curr_ymd              ! Start date (YYYYMMDD)
+   integer,           intent(in) :: curr_tod              ! Start time of day (sec)
+   integer,           intent(in) :: stop_ymd              ! Stop date (YYYYMMDD)
+   integer,           intent(in) :: stop_tod              ! Stop time of day (sec)
+   integer,           intent(in) :: ref_ymd               ! Reference date (YYYYMMDD)
+   integer,           intent(in) :: ref_tod               ! Reference time of day (sec)
+
+   type(cam_out_t),   pointer    :: cam_out(:)       ! Output from CAM to surface
+   type(cam_in_t) ,   pointer    :: cam_in(:)        ! Merged input state to CAM
+
    ! Local variables
-   !
-   character(len=cs) :: filein ! Input namelist filename
+   character(len=cs) :: filein      ! Input namelist filename
    !-----------------------------------------------------------------------
-   etamid = nan
-   !
-   ! Initialize CAM MPI communicator, number of processors, master processors 
-   !	
-#if ( defined SPMD )
-   cam_time_beg = mpi_wtime()
-#endif
 
-   !
-   ! Initialization needed for cam_history
-   ! 
-   call init_masterlinkedlist()
-   !
-   ! Set up spectral arrays
-   !
-   call trunc()
-   !
-   ! Initialize index values for advected and non-advected tracers
-   !
-   call phys_register ()
-   !
-   ! Determine input namelist filename
-   !
+   call init_pio_subsystem()
+
+   ! Initializations using data passed from coupler.
+   call cam_ctrl_init( &
+      caseid_in=caseid, &
+      ctitle_in=ctitle, &
+      initial_run_in=initial_run_in, &
+      restart_run_in=restart_run_in, &
+      branch_run_in=branch_run_in, &
+      dart_mode_in=dart_mode, &
+      aqua_planet_in=aqua_planet, &
+      brnch_retain_casename_in=brnch_retain_casename)
+
+   call cam_ctrl_set_orbit(eccen, obliqr, lambm0, mvelpp)
+
+   call timemgr_init( &
+      dtime, calendar, start_ymd, start_tod, ref_ymd,  &
+      ref_tod, stop_ymd, stop_tod, curr_ymd, curr_tod, &
+      perpetual_run, perpetual_ymd, initial_run_in)
+
+   ! Read CAM namelists.
    filein = "atm_in" // trim(inst_suffix)
-   !
-   ! Do appropriate dynamics and history initialization depending on whether initial, restart, or 
-   ! branch.  On restart run intht need not be called because all the info is on restart dataset.
-   !
-   call init_pio_subsystem(filein)
+   call read_namelist(filein, single_column, scmlat, scmlon)
 
-   if ( nsrest == 0 )then
+   ! Open initial or restart file, and topo file if specified.
+   call cam_initfiles_open()
 
-      call cam_initfiles_open()
-      call cam_initial(dyn_in, dyn_out, NLFileName=filein)
+   ! Initialize grids and dynamics grid decomposition
+   call dyn_grid_init()
+
+   ! Initialize physics grid decomposition
+   call phys_grid_init()
+
+   ! Register advected tracers and physics buffer fields
+   call phys_register ()
+
+   ! Initialize ghg surface values before default initial distributions
+   ! are set in dyn_init
+   call chem_surfvals_init()
+
+   ! initialize ionosphere
+   call ionosphere_init()
+
+   if (initial_run_in) then
+
+      call dyn_init(dyn_in, dyn_out)
 
       ! Allocate and setup surface exchange data
       call atm2hub_alloc(cam_out)
@@ -165,29 +188,23 @@ subroutine cam_init( cam_out, cam_in, mpicom_atm, &
 
    else
 
-      call cam_read_restart(cam_in, cam_out, dyn_in, dyn_out, pbuf2d, stop_ymd, stop_tod, NLFileName=filein )
+      call cam_read_restart(cam_in, cam_out, dyn_in, dyn_out, pbuf2d, stop_ymd, stop_tod)
 
 #if (defined BFB_CAM_SCAM_IOP)
       call initialize_iop_history()
 #endif
    end if
 
-
    call phys_init( phys_state, phys_tend, pbuf2d,  cam_out )
 
    call bldfld ()       ! master field list (if branch, only does hash tables)
 
-   call stepon_init( gw, etamid, dyn_in, dyn_out ) ! dyn_out necessary?
+   call stepon_init(dyn_in, dyn_out)
 
-   !
-   ! initialize offline unit driver
-   !
    call offline_driver_init()
 
    if (single_column) call scm_intht()
-   call intht()
-
-   dtime = get_step_size()
+   call intht(model_doi_url)
 
 end subroutine cam_init
 
@@ -202,29 +219,15 @@ subroutine cam_run1(cam_in, cam_out)
 !            physics (before surface model updates).
 !
 !-----------------------------------------------------------------------
-   
+
    use physpkg,          only: phys_run1
    use stepon,           only: stepon_run1
-#if ( defined SPMD )
-   use mpishorthand,     only: mpicom
-#endif
-   use time_manager,     only: get_nstep
+   use ionosphere_interface,only: ionosphere_run1
 
    type(cam_in_t)  :: cam_in(begchunk:endchunk)
    type(cam_out_t) :: cam_out(begchunk:endchunk)
 
-#if ( defined SPMD )
-   real(r8) :: mpi_wtime
-#endif
-!-----------------------------------------------------------------------
-
-#if ( defined SPMD )
-   if (stepon_time_beg == -1.0_r8) stepon_time_beg = mpi_wtime()
-   if (nstep_beg == -1) nstep_beg = get_nstep()
-#endif
-   if (masterproc .and. print_step_cost) then
-      call t_stampf (wcstart, usrstart, sysstart)
-   end if
+   !-----------------------------------------------------------------------
 
    if (offline_driver_dorun) return
 
@@ -234,8 +237,13 @@ subroutine cam_run1(cam_in, cam_out)
    !----------------------------------------------------------
    call t_barrierf ('sync_stepon_run1', mpicom)
    call t_startf ('stepon_run1')
-   call stepon_run1( dtime, phys_state, phys_tend, pbuf2d, dyn_in, dyn_out )
+   call stepon_run1( dtime_phys, phys_state, phys_tend, pbuf2d, dyn_in, dyn_out )
    call t_stopf  ('stepon_run1')
+
+   !----------------------------------------------------------
+   ! first phase of ionosphere -- write to IC file if needed
+   !----------------------------------------------------------
+   call ionosphere_run1(pbuf2d)
 
    !
    !----------------------------------------------------------
@@ -244,7 +252,7 @@ subroutine cam_run1(cam_in, cam_out)
    !
    call t_barrierf ('sync_phys_run1', mpicom)
    call t_startf ('phys_run1')
-   call phys_run1(phys_state, dtime, phys_tend, pbuf2d,  cam_in, cam_out)
+   call phys_run1(phys_state, dtime_phys, phys_tend, pbuf2d,  cam_in, cam_out)
    call t_stopf  ('phys_run1')
 
 end subroutine cam_run1
@@ -263,13 +271,10 @@ subroutine cam_run2( cam_out, cam_in )
 !            between physics to dynamics.
 !
 !-----------------------------------------------------------------------
-   
+
    use physpkg,          only: phys_run2
    use stepon,           only: stepon_run2
-   use time_manager,     only: is_first_step, is_first_restart_step
-#if ( defined SPMD )
-   use mpishorthand,     only: mpicom
-#endif
+   use ionosphere_interface, only: ionosphere_run2
 
    type(cam_out_t), intent(inout) :: cam_out(begchunk:endchunk)
    type(cam_in_t),  intent(inout) :: cam_in(begchunk:endchunk)
@@ -284,7 +289,7 @@ subroutine cam_run2( cam_out, cam_in )
    !
    call t_barrierf ('sync_phys_run2', mpicom)
    call t_startf ('phys_run2')
-   call phys_run2(phys_state, dtime, phys_tend, pbuf2d,  cam_out, cam_in )
+   call phys_run2(phys_state, dtime_phys, phys_tend, pbuf2d,  cam_out, cam_in )
    call t_stopf  ('phys_run2')
 
    !
@@ -293,8 +298,14 @@ subroutine cam_run2( cam_out, cam_in )
    call t_barrierf ('sync_stepon_run2', mpicom)
    call t_startf ('stepon_run2')
    call stepon_run2( phys_state, phys_tend, dyn_in, dyn_out )
-
    call t_stopf  ('stepon_run2')
+
+   !
+   ! Ion transport
+   !
+   call t_startf('ionosphere_run2')
+   call ionosphere_run2( phys_state, dyn_in, pbuf2d )
+   call t_stopf ('ionosphere_run2')
 
    if (is_first_step() .or. is_first_restart_step()) then
       call t_startf ('cam_run2_memusage')
@@ -316,10 +327,6 @@ subroutine cam_run3( cam_out )
 !
 !-----------------------------------------------------------------------
    use stepon,           only: stepon_run3
-   use time_manager,     only: is_first_step, is_first_restart_step
-#if ( defined SPMD )
-   use mpishorthand,     only: mpicom
-#endif
 
    type(cam_out_t), intent(inout) :: cam_out(begchunk:endchunk)
 !-----------------------------------------------------------------------
@@ -331,7 +338,7 @@ subroutine cam_run3( cam_out )
    !
    call t_barrierf ('sync_stepon_run3', mpicom)
    call t_startf ('stepon_run3')
-   call stepon_run3( dtime, etamid, cam_out, phys_state, dyn_in, dyn_out )
+   call stepon_run3( dtime_phys, cam_out, phys_state, dyn_in, dyn_out )
 
    call t_stopf  ('stepon_run3')
 
@@ -357,10 +364,8 @@ subroutine cam_run4( cam_out, cam_in, rstwr, nlend, &
 !-----------------------------------------------------------------------
    use cam_history,      only: wshist, wrapup
    use cam_restart,      only: cam_write_restart
-   use dycore,           only: dycore_is
-#if ( defined SPMD )
-   use mpishorthand,     only: mpicom
-#endif
+   use qneg_module,      only: qneg_print_summary
+   use time_manager,     only: is_last_step
 
    type(cam_out_t), intent(inout)        :: cam_out(begchunk:endchunk)
    type(cam_in_t) , intent(inout)        :: cam_in(begchunk:endchunk)
@@ -371,13 +376,6 @@ subroutine cam_run4( cam_out, cam_in, rstwr, nlend, &
    integer            , intent(in), optional :: day_spec        ! Simulation day
    integer            , intent(in), optional :: sec_spec        ! Seconds into current simulation day
 
-#if ( defined SPMD )
-   real(r8) :: mpi_wtime
-#endif
-!-----------------------------------------------------------------------
-! print_step_cost
-
-   !
    !----------------------------------------------------------
    ! History and restart logic: Write and/or dispose history tapes if required
    !----------------------------------------------------------
@@ -387,9 +385,6 @@ subroutine cam_run4( cam_out, cam_in, rstwr, nlend, &
    call wshist ()
    call t_stopf  ('wshist')
 
-#if ( defined SPMD )
-   stepon_time_end = mpi_wtime()
-#endif
    !
    ! Write restart files
    !
@@ -408,20 +403,9 @@ subroutine cam_run4( cam_out, cam_in, rstwr, nlend, &
    call wrapup(rstwr, nlend)
    call t_stopf  ('cam_run4_wrapup')
 
-   if (masterproc .and. print_step_cost) then
-      call t_startf ('cam_run4_print')
-      call t_stampf (wcend, usrend, sysend)
-      write(iulog,'(a,3f8.3,a)')'Prv timestep wallclock, usr, sys=', &
-                            wcend-wcstart, usrend-usrstart, sysend-sysstart, &
-                            ' seconds'
-      call t_stopf  ('cam_run4_print')
-   end if
+   call qneg_print_summary(is_last_step())
 
-#ifndef UNICOSMP
-   call t_startf ('cam_run4_flush')
    call shr_sys_flush(iulog)
-   call t_stopf  ('cam_run4_flush')
-#endif
 
 end subroutine cam_run4
 
@@ -435,127 +419,53 @@ subroutine cam_final( cam_out, cam_in )
 ! Purpose:  CAM finalization.
 !
 !-----------------------------------------------------------------------
-   use units,            only: getunit
-   use time_manager,     only: get_nstep, get_step_size
-#if ( defined SPMD )
-   use mpishorthand,     only: mpicom, mpiint, &
-                               nsend, nrecv, nwsend, nwrecv
-   use spmd_utils,       only: iam, npes
-#endif
    use stepon,           only: stepon_final
    use physpkg,          only: phys_final
    use cam_initfiles,    only: cam_initfiles_close
    use camsrfexch,       only: atm2hub_deallocate, hub2atm_deallocate
+   use ionosphere_interface, only: ionosphere_final
+   use cam_control_mod,  only: initial_run
+
    !
    ! Arguments
    !
    type(cam_out_t), pointer :: cam_out(:) ! Output from CAM to surface
-   type(cam_in_t), pointer :: cam_in(:)   ! Input from merged surface to CAM
-!-----------------------------------------------------------------------
-   !
-   ! Local variables
-   !
-   integer :: nstep           ! Current timestep number.
+   type(cam_in_t),  pointer :: cam_in(:)   ! Input from merged surface to CAM
 
-#if ( defined SPMD )   
-   integer :: iu              ! SPMD Statistics output unit number
-   character*24 :: filenam    ! SPMD Stats output filename
-   integer :: signal          ! MPI message buffer
-!------------------------------Externals--------------------------------
-   real(r8) :: mpi_wtime
-#endif
+   ! Local variables
+   integer :: nstep           ! Current timestep number.
+   !-----------------------------------------------------------------------
 
    call phys_final( phys_state, phys_tend , pbuf2d)
    call stepon_final(dyn_in, dyn_out)
+   call ionosphere_final()
 
-   if(nsrest==0) then
+   if (initial_run) then
       call cam_initfiles_close()
    end if
 
    call hub2atm_deallocate(cam_in)
    call atm2hub_deallocate(cam_out)
 
-#if ( defined SPMD )
-   if (.false.) then
-      write(iulog,*)'The following stats are exclusive of initialization/boundary datasets'
-      write(iulog,*)'Number of messages sent by proc ',iam,' is ',nsend
-      write(iulog,*)'Number of messages recv by proc ',iam,' is ',nrecv
-   end if
-#endif
-
-   ! This flush attempts to ensure that asynchronous diagnostic prints from all 
-   ! processes do not get mixed up with the "END OF MODEL RUN" message printed 
-   ! by masterproc below.  The test-model script searches for this message in the 
-   ! output log to figure out if CAM completed successfully.  This problem has 
-   ! only been observed with the Linux Lahey compiler (lf95) which does not 
-   ! support line-buffered output.  
-#ifndef UNICOSMP
-   call shr_sys_flush( 0 )   ! Flush all output to standard error
-   call shr_sys_flush( iulog )   ! Flush all output to standard output
-#endif
+   ! This flush attempts to ensure that asynchronous diagnostic prints from all
+   ! processes do not get mixed up with the "END OF MODEL RUN" message printed
+   ! by masterproc below.  The test-model script searches for this message in the
+   ! output log to figure out if CAM completed successfully.
+   call shr_sys_flush( 0 )       ! Flush all output to standard error
+   call shr_sys_flush( iulog )   ! Flush all output to the CAM log file
 
    if (masterproc) then
-#if ( defined SPMD )
-      cam_time_end = mpi_wtime()
-#endif
       nstep = get_nstep()
       write(iulog,9300) nstep-1,nstep
 9300  format (//'Number of completed timesteps:',i6,/,'Time step ',i6, &
                 ' partially done to provide convectively adjusted and ', &
                 'time filtered values for history tape.')
-      write(iulog,*)'------------------------------------------------------------'
-#if ( defined SPMD )
-      write(iulog,*)
-      write(iulog,*)' Total run time (sec) : ', cam_time_end-cam_time_beg
-      write(iulog,*)' Time Step Loop run time(sec) : ', stepon_time_end-stepon_time_beg
-      if (((nstep-1)-nstep_beg) > 0) then
-         write(iulog,*)' SYPD : ',  &
-         236.55_r8/((86400._r8/(dtime*((nstep-1)-nstep_beg)))*(stepon_time_end-stepon_time_beg))
-      endif
-      write(iulog,*)
-#endif
+      write(iulog,*)' '
       write(iulog,*)'******* END OF MODEL RUN *******'
    end if
 
-
-#if ( defined SPMDSTATS )
-   if (t_single_filef()) then
-      write(filenam,'(a17)') 'spmdstats_cam.all'
-      iu = getunit ()
-      if (iam .eq. 0) then
-         open (unit=iu, file=filenam, form='formatted', status='replace')
-         signal = 1
-      else
-         call mpirecv(signal, 1, mpiint, iam-1, iam, mpicom) 
-         open (unit=iu, file=filenam, form='formatted', status='old', position='append')
-      endif
-      write (iu,*)'************ PROCESS ',iam,' ************'
-      write (iu,*)'iam ',iam,' msgs  sent =',nsend
-      write (iu,*)'iam ',iam,' msgs  recvd=',nrecv
-      write (iu,*)'iam ',iam,' words sent =',nwsend
-      write (iu,*)'iam ',iam,' words recvd=',nwrecv
-      write (iu,*)
-      close(iu)
-      if (iam+1 < npes) then
-         call mpisend(signal, 1, mpiint, iam+1, iam+1, mpicom)
-      endif
-   else
-      iu = getunit ()
-      write(filenam,'(a14,i5.5)') 'spmdstats_cam.', iam
-      open (unit=iu, file=filenam, form='formatted', status='replace')
-      write (iu,*)'************ PROCESS ',iam,' ************'
-      write (iu,*)'iam ',iam,' msgs  sent =',nsend
-      write (iu,*)'iam ',iam,' msgs  recvd=',nrecv
-      write (iu,*)'iam ',iam,' words sent =',nwsend
-      write (iu,*)'iam ',iam,' words recvd=',nwrecv
-      close(iu)
-   endif
-#endif
-
 end subroutine cam_final
 
-!
 !-----------------------------------------------------------------------
-!
 
 end module cam_comp

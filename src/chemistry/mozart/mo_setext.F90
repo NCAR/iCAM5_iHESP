@@ -10,9 +10,10 @@ module mo_setext
 
   save
 
-  integer :: co_ndx, no_ndx, synoz_ndx, xno_ndx
+  integer :: co_ndx, no_ndx, synoz_ndx, xno_ndx, o_ndx
   integer :: op_ndx, o2p_ndx, np_ndx, n2p_ndx, n2d_ndx, n_ndx, e_ndx, oh_ndx
   logical :: has_ions = .false.
+  logical :: has_dregion_ions = .false.
   integer :: aoa_nh_ndx
 
 contains
@@ -22,9 +23,8 @@ contains
     !	... Initialize the external forcing module
     !--------------------------------------------------------
 
-    use mo_chem_utls, only : get_extfrc_ndx
-    use ppgrid,       only : pver
-    use cam_history,  only : addfld, phys_decomp
+    use mo_chem_utls, only : get_extfrc_ndx, get_spc_ndx
+    use cam_history,  only : addfld
     use spmd_utils,   only : masterproc
 
     implicit none
@@ -43,8 +43,10 @@ contains
     n_ndx    = get_extfrc_ndx( 'N' )
     e_ndx    = get_extfrc_ndx( 'e' )
     oh_ndx   = get_extfrc_ndx( 'OH' )
+    o_ndx    = get_extfrc_ndx( 'O' )
 
     has_ions = op_ndx > 0 .and. o2p_ndx > 0 .and. np_ndx > 0 .and. n2p_ndx > 0 .and. e_ndx > 0
+    has_dregion_ions = has_ions .and. (get_spc_ndx( 'O2m' )>0)
 
     if (masterproc) then
        write(iulog,*) ' '
@@ -52,36 +54,35 @@ contains
        write(iulog,'(10i5)') co_ndx, no_ndx, synoz_ndx, xno_ndx
     endif
 
-    call addfld( 'NO_Lightning','molec/cm3/s', pver, 'A', 'lightning NO source', phys_decomp )
-    call addfld( 'NO_Aircraft', 'molec/cm3/s', pver, 'A', 'aircraft NO source',  phys_decomp )
-    call addfld( 'CO_Aircraft', 'molec/cm3/s', pver, 'A', 'aircraft CO source',  phys_decomp )
-    
-    if ( n2d_ndx > 0 .and. n_ndx>0 ) then
-       call addfld( 'N4S_SPE', 'molec/cm3/s', pver, 'I', 'solar proton event N(4S) source',phys_decomp )
-       call addfld( 'N2D_SPE', 'molec/cm3/s', pver, 'I', 'solar proton event N(2D) source',phys_decomp )
-       call addfld( 'N4S_GCR', 'molec/cm3/s', pver, 'I', 'galactic cosmic ray N(4S) source',phys_decomp )
-       call addfld( 'N2D_GCR', 'molec/cm3/s', pver, 'I', 'galactic cosmic ray N(2S) source',phys_decomp )
-    elseif ( no_ndx > 0 .and. n_ndx>0 ) then
-       call addfld( 'N4S_SPE', 'molec/cm3/s', pver, 'I', 'solar proton event N(4S) source',phys_decomp )
-       call addfld( 'NO_SPE',  'molec/cm3/s', pver, 'I', 'solar proton event NO source',phys_decomp )
-       call addfld( 'N4S_GCR', 'molec/cm3/s', pver, 'I', 'galactic cosmic ray N(4S) source',phys_decomp )
-       call addfld( 'NO_GCR',  'molec/cm3/s', pver, 'I', 'galactic cosmic ray NO source',phys_decomp )
-    endif
-    if ( oh_ndx > 0 ) then
-       call addfld( 'OH_SPE',  'molec/cm3/s', pver, 'I', 'solar proton event OH source',  phys_decomp )
-       call addfld( 'OH_GCR',  'molec/cm3/s', pver, 'I', 'galactic cosmic ray OH source',  phys_decomp )
-    endif
+    call addfld( 'NO_Lightning', (/ 'lev' /), 'A','molec/cm3/s', 'lightning NO source' )
+    call addfld( 'NO_Aircraft',  (/ 'lev' /), 'A', 'molec/cm3/s', 'aircraft NO source' )
+    call addfld( 'CO_Aircraft',  (/ 'lev' /), 'A', 'molec/cm3/s', 'aircraft CO source' )
 
+    call addfld( 'EPP_ionpairs', (/ 'lev' /), 'A', 'pairs/cm3/s', 'EPP ionization forcing' )
+    call addfld( 'GCR_ionpairs', (/ 'lev' /), 'A', 'pairs/cm3/s', 'GCR ionization forcing' )
+    
+    if (.not.has_dregion_ions) then 
+       if ( n2d_ndx > 0 .and. n_ndx>0 ) then
+          call addfld( 'N4S_EPP', (/ 'lev' /), 'I', 'molec/cm3/s', 'solar proton event N(4S) source' )
+          call addfld( 'N2D_EPP', (/ 'lev' /), 'I', 'molec/cm3/s', 'solar proton event N(2D) source' )
+       elseif ( no_ndx > 0 .and. n_ndx>0 ) then
+          call addfld( 'N4S_EPP', (/ 'lev' /), 'I', 'molec/cm3/s', 'solar proton event N(4S) source' )
+          call addfld( 'NO_EPP',  (/ 'lev' /), 'I',  'molec/cm3/s', 'solar proton event NO source' )
+       endif
+       if ( oh_ndx > 0 ) then
+          call addfld( 'OH_EPP',  (/ 'lev' /), 'I',  'molec/cm3/s', 'solar proton event OH source' )
+       endif
+    endif
     if ( has_ions ) then
-       call addfld( 'P_Op',   '/s ', pver, 'I', 'production o+', phys_decomp )
-       call addfld( 'P_O2p',  '/s ', pver, 'I', 'production o2+', phys_decomp )
-       call addfld( 'P_N2p',  '/s ', pver, 'I', 'production n2+', phys_decomp )
-       call addfld( 'P_Np',   '/s ', pver, 'I', 'production n+', phys_decomp )
-       call addfld( 'P_IONS', '/s ', pver, 'I', 'total ion production', phys_decomp )
+       call addfld( 'P_Op',    (/ 'lev' /), 'I',   '/s', 'production o+' )
+       call addfld( 'P_O2p',   (/ 'lev' /), 'I',  '/s', 'production o2+' )
+       call addfld( 'P_N2p',   (/ 'lev' /), 'I',  '/s', 'production n2+' )
+       call addfld( 'P_Np',    (/ 'lev' /), 'I',   '/s', 'production n+' )
+       call addfld( 'P_IONS',  (/ 'lev' /), 'I', '/s', 'total ion production' )
     endif
 
     if ( aoa_nh_ndx > 0 ) then
-       call addfld('AOA_NH_XFRC', 'molec/cm3/s', pver, 'A',  'external forcing for AOA_NH',   phys_decomp )
+       call addfld('AOA_NH_XFRC', (/ 'lev' /), 'A', 'molec/cm3/s',  'external forcing for AOA_NH' )
     endif
 
   end subroutine setext_inti
@@ -110,8 +111,9 @@ contains
     use mo_synoz,     only : po3
 
     use mo_aurora,      only : aurora
-    use mo_solarproton, only : spe_prod 
-    use gcr_ionization, only : gcr_ionization_noxhox
+    use gcr_ionization, only : gcr_ionization_ionpairs
+    use epp_ionization, only : epp_ionization_ionpairs
+    use spehox,         only : hox_prod_factor
 
     use physics_buffer, only : physics_buffer_desc
 
@@ -143,16 +145,15 @@ contains
     !--------------------------------------------------------
     !     ... local variables
     !--------------------------------------------------------
-    integer :: i, k, k1, kk, cldind, ii, jj, nlev
+    integer :: i, k, cldind
     real(r8) :: srcs_offline( ncol, pver )
     integer :: ndx
 
     real(r8), dimension(ncol,pver) :: no_lgt
 
-    real(r8) :: spe_nox(ncol,pver)        ! Solar Proton Event NO production
-    real(r8) :: spe_hox(ncol,pver)        ! Solar Proton Event HOx production
-    real(r8) :: gcr_nox(ncol,pver)        ! Galactic comsic rays NO production
-    real(r8) :: gcr_hox(ncol,pver)        ! Galactic comsic rays HOx production
+    real(r8) :: gcr_ipr(ncol,pver)        ! ion pairs production rate associated with galactic comsic rays
+    real(r8) :: epp_ipr(ncol,pver)        ! ion pairs production rate associated with energetic particles
+    real(r8) :: epp_hox(ncol,pver)        ! HOx production rate associated with energetic particles
 
     real(r8), parameter :: rad2deg = 180._r8/pi                ! radians to degrees conversion factor
     real(r8) :: xlat
@@ -248,19 +249,6 @@ contains
           extfrc(:,k,n2d_ndx) = 1.57_r8*.6_r8*extfrc(:,k,n2p_ndx)
           extfrc(:,k,n_ndx) = 1.57_r8*.4_r8*extfrc(:,k,n2p_ndx)
        end do
-       !---------------------------------------------------------------------
-       !     ... set electron auroral production
-       !---------------------------------------------------------------------
-       do k = 1,pver
-          extfrc(:,k,e_ndx) = extfrc(:,k,op_ndx) + extfrc(:,k,o2p_ndx) &
-               + extfrc(:,k,np_ndx) + extfrc(:,k,n2p_ndx)
-       end do
-
-       call outfld( 'P_Op',  extfrc(:,:,op_ndx), ncol, lchnk )
-       call outfld( 'P_O2p', extfrc(:,:,o2p_ndx), ncol, lchnk )
-       call outfld( 'P_Np',  extfrc(:,:,np_ndx), ncol, lchnk )
-       call outfld( 'P_N2p', extfrc(:,:,n2p_ndx), ncol, lchnk )
-       call outfld( 'P_IONS',extfrc(:,:,n2d_ndx), ncol, lchnk )
 
     endif
 
@@ -270,35 +258,75 @@ contains
     !     production of 1.25 Nitrogen atoms/ion pair with branching ratios 
     !     of 0.55 N(4S) and 0.7 N(2D).
     !---------------------------------------------------------------------
-    call spe_prod( spe_nox, spe_hox, pmid, zmid, lchnk, ncol)
+    !---------------------------------------------------------------------
+    ! ion pairs production due to Galactic Cosmic Rays
+    !---------------------------------------------------------------------
+    call gcr_ionization_ionpairs( ncol, lchnk, gcr_ipr )
+    call outfld( 'GCR_ionpairs', gcr_ipr, ncol, lchnk )
 
     !---------------------------------------------------------------------
-    ! NOx and HOx production due to Galactic Cosmic Ray Ionization 
+    ! ion pairs production due to Energetic Particle Precipitation
     !---------------------------------------------------------------------
-    call gcr_ionization_noxhox( ncol, lchnk, zmid, gcr_nox, gcr_hox )
+    call epp_ionization_ionpairs( ncol, lchnk, pmid, tfld, epp_ipr )
+    call outfld( 'EPP_ionpairs', epp_ipr, ncol, lchnk )
 
-    if ( n2d_ndx > 0 .and. n_ndx>0 ) then
-       extfrc(:ncol,:pver,n2d_ndx) = extfrc(:ncol,:pver,n2d_ndx) +  0.7_r8*(spe_nox(:ncol,:pver) + gcr_nox(:ncol,:pver))
-       extfrc(:ncol,:pver,  n_ndx) = extfrc(:ncol,:pver,  n_ndx) + 0.55_r8*(spe_nox(:ncol,:pver) + gcr_nox(:ncol,:pver))
-       call outfld( 'N2D_SPE', 0.7_r8*spe_nox, ncol, lchnk ) ! N(2D) produciton (molec/cm3/s)
-       call outfld( 'N4S_SPE',0.55_r8*spe_nox, ncol, lchnk ) ! N(4S) produciton (molec/cm3/s)
-       call outfld( 'N2D_GCR', 0.7_r8*gcr_nox, ncol, lchnk ) ! N(2D) produciton (molec/cm3/s)
-       call outfld( 'N4S_GCR',0.55_r8*gcr_nox, ncol, lchnk ) ! N(4S) produciton (molec/cm3/s)
-    elseif ( no_ndx > 0 .and. n_ndx>0 ) then
-       ! for mechanisms that do not include N2D the SPEs produce NO 
-       extfrc(:ncol,:pver, no_ndx) = extfrc(:ncol,:pver, no_ndx) +  0.7_r8*(spe_nox(:ncol,:pver) + gcr_nox(:ncol,:pver))
-       extfrc(:ncol,:pver,  n_ndx) = extfrc(:ncol,:pver,  n_ndx) + 0.55_r8*(spe_nox(:ncol,:pver) + gcr_nox(:ncol,:pver))
-       call outfld( 'NO_SPE',  0.7_r8*spe_nox, ncol, lchnk ) ! NO produciton (molec/cm3/s)
-       call outfld( 'N4S_SPE',0.55_r8*spe_nox, ncol, lchnk ) ! N(4S) produciton (molec/cm3/s)
-       call outfld( 'NO_GCR',  0.7_r8*gcr_nox, ncol, lchnk ) ! NO produciton (molec/cm3/s)
-       call outfld( 'N4S_GCR',0.55_r8*gcr_nox, ncol, lchnk ) ! N(4S) produciton (molec/cm3/s)
-    endif
-    if ( oh_ndx > 0 ) then
-       extfrc(:ncol,:pver, oh_ndx) = extfrc(:ncol,:pver, oh_ndx)         + spe_hox(:ncol,:pver) + gcr_hox(:ncol,:pver)
-       call outfld( 'OH_SPE' ,        spe_hox, ncol, lchnk ) ! HOX produciton (molec/cm3/s)
-       call outfld( 'OH_GCR' ,        gcr_hox, ncol, lchnk ) ! HOX produciton (molec/cm3/s)
+    epp_ipr(:ncol,:pver) = epp_ipr(:ncol,:) + gcr_ipr(:ncol,:)
+
+    if (has_dregion_ions) then 
+       ! D-region ion chemistry is active ...
+       ! N2p production
+       extfrc(:ncol,:pver,n2p_ndx) = extfrc(:ncol,:pver,n2p_ndx) + 0.585_r8 * epp_ipr(:ncol,:pver)
+       ! O2p production
+       extfrc(:ncol,:pver,o2p_ndx) = extfrc(:ncol,:pver,o2p_ndx) + 0.15_r8 * epp_ipr(:ncol,:pver)
+       ! Np
+       extfrc(:ncol,:pver,np_ndx)  = extfrc(:ncol,:pver,np_ndx)  + 0.185_r8 * epp_ipr(:ncol,:pver)
+       ! Op
+       extfrc(:ncol,:pver,op_ndx)  = extfrc(:ncol,:pver,op_ndx)  + 0.076_r8 * epp_ipr(:ncol,:pver)
+       ! N2D/N4S branching
+       ! new initial rates
+       extfrc(:ncol,:pver,n2d_ndx) = extfrc(:ncol,:pver,n2d_ndx) + 0.583_r8 * epp_ipr(:ncol,:pver)
+       extfrc(:ncol,:pver,n_ndx)   = extfrc(:ncol,:pver,n_ndx)   + 0.502_r8 * epp_ipr(:ncol,:pver)
+       ! O
+       extfrc(:ncol,:pver,o_ndx)   = extfrc(:ncol,:pver,o_ndx)   + 1.074_r8 * epp_ipr(:ncol,:pver)
+
+    else 
+       ! D-region ion chemistry is NOT active
+       if ( n2d_ndx>0 .and. n_ndx>0 ) then
+          extfrc(:ncol,:pver,n2d_ndx) = extfrc(:ncol,:pver,n2d_ndx) +  0.7_r8*epp_ipr(:ncol,:pver)
+          extfrc(:ncol,:pver,  n_ndx) = extfrc(:ncol,:pver,  n_ndx) + 0.55_r8*epp_ipr(:ncol,:pver)
+          call outfld( 'N2D_EPP', 0.7_r8*epp_ipr(:ncol,:), ncol, lchnk ) ! N(2D) produciton (molec/cm3/s)
+          call outfld( 'N4S_EPP',0.55_r8*epp_ipr(:ncol,:), ncol, lchnk ) ! N(4S) produciton (molec/cm3/s)
+       elseif ( no_ndx>0 .and. n_ndx>0 ) then
+          ! for mechanisms that do not include N2D -- the EPP produce NO 
+          extfrc(:ncol,:pver, no_ndx) = extfrc(:ncol,:pver, no_ndx) +  0.7_r8*epp_ipr(:ncol,:pver)
+          extfrc(:ncol,:pver,  n_ndx) = extfrc(:ncol,:pver,  n_ndx) + 0.55_r8*epp_ipr(:ncol,:pver)
+          call outfld( 'NO_EPP',  0.7_r8*epp_ipr(:ncol,:), ncol, lchnk ) ! NO produciton (molec/cm3/s)
+          call outfld( 'N4S_EPP',0.55_r8*epp_ipr(:ncol,:), ncol, lchnk ) ! N(4S) produciton (molec/cm3/s)
+       endif
+       if ( oh_ndx > 0 ) then
+          do i = 1,ncol
+             epp_hox(i,:pver) = epp_ipr(i,:pver)*hox_prod_factor( epp_ipr(i,:pver), zmid(i,:pver) )
+          end do
+          extfrc(:ncol,:pver, oh_ndx) = extfrc(:ncol,:pver, oh_ndx) + epp_hox(:ncol,:pver)
+          call outfld( 'OH_EPP' ,  epp_hox(:ncol,:), ncol, lchnk ) ! HOX produciton (molec/cm3/s)
+       endif
     endif
 
+    if ( has_ions ) then
+       !---------------------------------------------------------------------
+       !     ... set total electron production
+       !---------------------------------------------------------------------
+       do k = 1,pver
+          extfrc(:,k,e_ndx) = extfrc(:,k,op_ndx) + extfrc(:,k,o2p_ndx) &
+               + extfrc(:,k,np_ndx) + extfrc(:,k,n2p_ndx)
+       end do
+       call outfld( 'P_Op',  extfrc(:,:,op_ndx), ncol, lchnk )
+       call outfld( 'P_O2p', extfrc(:,:,o2p_ndx), ncol, lchnk )
+       call outfld( 'P_Np',  extfrc(:,:,np_ndx), ncol, lchnk )
+       call outfld( 'P_N2p', extfrc(:,:,n2p_ndx), ncol, lchnk )
+       call outfld( 'P_IONS',extfrc(:,:,e_ndx), ncol, lchnk )
+    end if
+    
   end subroutine setext
 
 end module mo_setext

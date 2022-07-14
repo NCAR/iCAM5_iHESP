@@ -6,7 +6,7 @@ module radiation_data
 
   use shr_kind_mod,     only: r8=>shr_kind_r8
   use ppgrid,           only : pcols, pver, pverp, begchunk, endchunk
-  use cam_history,      only: addfld, add_default, phys_decomp, outfld
+  use cam_history,      only: addfld, add_default, horiz_only, outfld
   use rad_constituents, only: rad_cnst_get_info, rad_cnst_get_gas, rad_cnst_get_aer_mmr
   use radconstants,     only: nradgas, gaslist
   use cam_history_support, only: fieldname_len, fillvalue
@@ -26,7 +26,9 @@ module radiation_data
   public :: rad_data_init
   public :: rad_data_write
   public :: rad_data_read
+  public :: rad_data_enable
 
+  integer :: volcgeom_ifld, volcgeom1_ifld, volcgeom2_ifld, volcgeom3_ifld
   integer :: cld_ifld,rel_ifld,rei_ifld
   integer :: dei_ifld,mu_ifld,lambdac_ifld,iciwp_ifld,iclwp_ifld
   integer :: des_ifld,icswp_ifld,cldfsnow_ifld
@@ -76,7 +78,11 @@ module radiation_data
        iclwp_fldn     = 'rad_iclwp       ' , &
        icswp_fldn     = 'rad_icswp       ' , &
        qrs_fldn       = 'rad_qrs         ' , &
-       qrl_fldn       = 'rad_qrl         ' 
+       qrl_fldn       = 'rad_qrl         ' , &
+       volcgeom_fldn  = 'rad_volc_geom   ' , &
+       volcgeom1_fldn = 'rad_volc_geom1  ' , &
+       volcgeom2_fldn = 'rad_volc_geom2  ' , &
+       volcgeom3_fldn = 'rad_volc_geom3  '
 
   ! for modal aerosols
   character(len=fieldname_len), allocatable :: dgnumwet_fldn(:)
@@ -105,6 +111,9 @@ module radiation_data
   integer :: qrsin_idx = -1
   integer :: qrlin_idx = -1
   integer :: tropp_idx = -1
+
+  logical :: enabled = .false.
+  logical :: gmean_3modes = .false.
 
 contains
 
@@ -166,17 +175,29 @@ contains
     call mpibcast (rad_data_avgflag,      1,   mpichar , 0, mpicom)
 #endif
     do_fdh = rad_data_fdh
+    enabled = rad_data_output
 
   end subroutine rad_data_readnl
 
   !================================================================================================
   !================================================================================================
-  subroutine rad_data_init
+  subroutine rad_data_enable()
+    enabled = .true.
+  end subroutine rad_data_enable
+
+  !================================================================================================
+  !================================================================================================
+  subroutine rad_data_init( pbuf2d )
     use phys_control,     only: phys_getopts
     use physics_buffer, only: pbuf_get_index
+    use physics_buffer, only: pbuf_set_field
     implicit none
     
-    integer :: i
+    ! args
+    type(physics_buffer_desc), pointer :: pbuf2d(:,:)
+
+    ! local vars
+    integer :: i, err
     integer :: m,l, nspec
     character(len=64) :: name
     character(len=32) :: aername =  ' '
@@ -185,8 +206,26 @@ contains
     character(len=16)  :: microp_scheme  ! microphysics scheme
     character(len=16)  :: rad_scheme
    
+    if (.not.enabled) return
+
     call phys_getopts(microp_scheme_out=microp_scheme, radiation_scheme_out=rad_scheme)
     mg_microphys =  (trim(microp_scheme) == 'MG')
+
+    volcgeom_ifld = pbuf_get_index('VOLC_RAD_GEOM',errcode=err) ! might need 3 more for 3-mode inputs
+    volcgeom1_ifld = pbuf_get_index('VOLC_RAD_GEOM1',errcode=err) ! might need 3 more for 3-mode inputs
+    volcgeom2_ifld = pbuf_get_index('VOLC_RAD_GEOM2',errcode=err) ! might need 3 more for 3-mode inputs
+    volcgeom3_ifld = pbuf_get_index('VOLC_RAD_GEOM3',errcode=err) ! might need 3 more for 3-mode inputs
+
+    gmean_3modes = volcgeom1_ifld > 0 .and. volcgeom2_ifld > 0 .and. volcgeom3_ifld > 0 .and. volcgeom_ifld < 1
+
+    if (volcgeom_ifld > 0) then
+       call addfld(volcgeom_fldn, (/ 'lev' /), 'I','m', 'combined volcanic aerosol geometric-mode radius' )
+    endif
+    if (gmean_3modes) then
+       call addfld(volcgeom1_fldn, (/ 'lev' /), 'I','m', 'mode 1 volcanic aerosol geometric-mode radius' )
+       call addfld(volcgeom2_fldn, (/ 'lev' /), 'I','m', 'mode 2 volcanic aerosol geometric-mode radius' )
+       call addfld(volcgeom3_fldn, (/ 'lev' /), 'I','m', 'mode 3 volcanic aerosol geometric-mode radius' )
+    endif
 
     cld_ifld    = pbuf_get_index('CLD')
     rel_ifld    = pbuf_get_index('REL')
@@ -212,8 +251,12 @@ contains
     endif
     
     if ( do_fdh ) then
-       call addfld('rad_TROP_P','Pa',    1, 'A','Pressure at which tropopause is defined for radiation',phys_decomp )
-       call addfld('rad_TCORR','K',    pver, 'I','Fixed dynamical heating temperature correction ',phys_decomp )
+       call addfld('rad_TROP_P', horiz_only,  'A','Pa','Pressure at which tropopause is defined for radiation' )
+       call addfld('rad_TCORR',  (/ 'lev' /), 'I','K', 'Fixed dynamical heating temperature correction ' )
+       call pbuf_set_field(pbuf2d, tcorr_idx, 0.0_r8)
+       call pbuf_set_field(pbuf2d, qrsin_idx, 0.0_r8)
+       call pbuf_set_field(pbuf2d, qrlin_idx, 0.0_r8)
+       call pbuf_set_field(pbuf2d, tropp_idx, -1.0_r8)
     endif
 
     call rad_cnst_get_info(0, ngas=ngas, naero=naer, nmodes=nmodes)
@@ -246,99 +289,99 @@ contains
 
     if (.not.rad_data_output) return
 
-    call addfld (lndfrc_fldn, 'fraction', 1,    rad_data_avgflag,&
-         'radiation input: land fraction',phys_decomp)
-    call addfld (icefrc_fldn, 'fraction', 1,    rad_data_avgflag,&
-         'radiation input: ice fraction',phys_decomp)
-    call addfld (snowh_fldn,  'm',        1,    rad_data_avgflag,&
-         'radiation input: water equivalent snow depth',phys_decomp)
-    call addfld (asdir_fldn,  '1',        1,    rad_data_avgflag,&
-         'radiation input: short wave direct albedo',phys_decomp, flag_xyfill=.true.)
-    call addfld (asdif_fldn,  '1',        1,    rad_data_avgflag,&
-         'radiation input: short wave difuse albedo',phys_decomp, flag_xyfill=.true.)
-    call addfld (aldir_fldn,  '1',        1,    rad_data_avgflag,&
-         'radiation input: long wave direct albedo', phys_decomp, flag_xyfill=.true.)
-    call addfld (aldif_fldn,  '1',        1,    rad_data_avgflag,&
-         'radiation input: long wave difuse albedo', phys_decomp, flag_xyfill=.true.)
+    call addfld (lndfrc_fldn,    horiz_only,   rad_data_avgflag, 'fraction', &
+         'radiation input: land fraction')
+    call addfld (icefrc_fldn,    horiz_only,   rad_data_avgflag, 'fraction', &
+         'radiation input: ice fraction')
+    call addfld (snowh_fldn,     horiz_only,   rad_data_avgflag, 'm',        &
+         'radiation input: water equivalent snow depth')
+    call addfld (asdir_fldn,     horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: s     hort wave direct albedo',                    flag_xyfill=.true.)
+    call addfld (asdif_fldn,     horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: s     hort wave difuse albedo',                    flag_xyfill=.true.)
+    call addfld (aldir_fldn,     horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: long wave direct albedo',                          flag_xyfill=.true.)
+    call addfld (aldif_fldn,     horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: long wave difuse albedo',                          flag_xyfill=.true.)
 
-    call addfld (coszen_fldn,     '1', 1,    rad_data_avgflag,&
-         'radiation input: cosine solar zenith when positive', phys_decomp, flag_xyfill=.true.)
-    call addfld (asdir_pos_fldn,  '1', 1,    rad_data_avgflag,&
-         'radiation input: short wave direct albedo weighted by coszen', phys_decomp, flag_xyfill=.true.)
-    call addfld (asdif_pos_fldn,  '1', 1,    rad_data_avgflag,&
-         'radiation input: short wave difuse albedo weighted by coszen', phys_decomp, flag_xyfill=.true.)
-    call addfld (aldir_pos_fldn,  '1', 1,    rad_data_avgflag,&
-         'radiation input: long wave direct albedo weighted by coszen', phys_decomp, flag_xyfill=.true.)
-    call addfld (aldif_pos_fldn,  '1', 1,    rad_data_avgflag,&
-         'radiation input: long wave difuse albedo weighted by coszen', phys_decomp, flag_xyfill=.true.)
+    call addfld (coszen_fldn,    horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: cosine solar zenith when positive',                flag_xyfill=.true.)
+    call addfld (asdir_pos_fldn, horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: s     hort wave direct albedo weighted by coszen', flag_xyfill=.true.)
+    call addfld (asdif_pos_fldn, horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: s     hort wave difuse albedo weighted by coszen', flag_xyfill=.true.)
+    call addfld (aldir_pos_fldn, horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: long wave direct albedo weighted by coszen',       flag_xyfill=.true.)
+    call addfld (aldif_pos_fldn, horiz_only,   rad_data_avgflag, '1',        &
+         'radiation input: long wave difuse albedo weighted by coszen',       flag_xyfill=.true.)
     
-    call addfld (lwup_fldn,   'W/m2',     1,    rad_data_avgflag,&
-         'radiation input: long wave up radiation flux ',phys_decomp)
-    call addfld (ts_fldn,     'K',        1,    rad_data_avgflag,&
-         'radiation input: surface temperature',phys_decomp)
+    call addfld (lwup_fldn,      horiz_only,   rad_data_avgflag, 'W/m2',     &
+         'radiation input: long wave up radiation flux ')
+    call addfld (ts_fldn,        horiz_only,   rad_data_avgflag, 'K',        &
+         'radiation input: surface temperature')
 
-    call addfld (temp_fldn,   'K',        pver, rad_data_avgflag,&
-         'radiation input: midpoint temperature',phys_decomp)
-    call addfld (pdel_fldn,   'Pa',       pver, rad_data_avgflag,&
-         'radiation input: pressure layer thickness',phys_decomp)
-    call addfld (pdeldry_fldn,'Pa',       pver, rad_data_avgflag,&
-         'radiation input: dry pressure layer thickness',phys_decomp)
-    call addfld (pmid_fldn,   'Pa',       pver, rad_data_avgflag,&
-         'radiation input: midpoint pressure',phys_decomp)
-    call addfld (watice_fldn, 'kg/kg',    pver, rad_data_avgflag,&
-         'radiation input: cloud ice',phys_decomp)
-    call addfld (watliq_fldn, 'kg/kg',    pver, rad_data_avgflag,&
-         'radiation input: cloud liquid water',phys_decomp)
-    call addfld (watvap_fldn, 'kg/kg',    pver, rad_data_avgflag,&
-         'radiation input: water vapor',phys_decomp)
+    call addfld (temp_fldn,      (/ 'lev' /),  rad_data_avgflag, 'K',        &
+         'radiation input: midpoint temperature')
+    call addfld (pdel_fldn,      (/ 'lev' /),  rad_data_avgflag, 'Pa',       &
+         'radiation input: pressure layer thickness')
+    call addfld (pdeldry_fldn,   (/ 'lev' /),  rad_data_avgflag,'Pa',        &
+         'radiation input: dry pressure layer thickness')
+    call addfld (pmid_fldn,      (/ 'lev' /),  rad_data_avgflag, 'Pa',       &
+         'radiation input: midpoint pressure')
+    call addfld (watice_fldn,    (/ 'lev' /),  rad_data_avgflag, 'kg/kg',    &
+         'radiation input: cloud ice')
+    call addfld (watliq_fldn,    (/ 'lev' /),  rad_data_avgflag, 'kg/kg',    &
+         'radiation input: cloud liquid water')
+    call addfld (watvap_fldn,    (/ 'lev' /),  rad_data_avgflag, 'kg/kg',    &
+         'radiation input: water vapor')
 
-    call addfld (zint_fldn,   'km',       pverp,rad_data_avgflag,&
-         'radiation input: interface height',phys_decomp)
-    call addfld (pint_fldn,   'Pa',       pverp,rad_data_avgflag,&
-         'radiation input: interface pressure',phys_decomp)
+    call addfld (zint_fldn,      (/ 'ilev' /), rad_data_avgflag, 'km',       &
+         'radiation input: interface height')
+    call addfld (pint_fldn,      (/ 'ilev' /), rad_data_avgflag, 'Pa',       &
+         'radiation input: interface pressure')
 
-    call addfld (cld_fldn,    'fraction', pver, rad_data_avgflag,&
-         'radiation input: cloud fraction',phys_decomp)
-    call addfld (rel_fldn,    'micron',   pver, rad_data_avgflag,&
-         'radiation input: effective liquid drop radius',phys_decomp)
-    call addfld (rei_fldn,    'micron',   pver, rad_data_avgflag,&
-         'radiation input: effective ice partical radius',phys_decomp)
-    call addfld (qrs_fldn,    'J/s/kg',      pver, rad_data_avgflag,&
-         'radiation input: solar heating rate',phys_decomp)
-    call addfld (qrl_fldn,    'J/s/kg',      pver, rad_data_avgflag,&
-         'radiation input: longwave heating rate',phys_decomp)
+    call addfld (cld_fldn,       (/ 'lev' /),  rad_data_avgflag, 'fraction', &
+         'radiation input: cloud fraction')
+    call addfld (rel_fldn,       (/ 'lev' /),  rad_data_avgflag, 'micron',   &
+         'radiation input: effective liquid drop radius')
+    call addfld (rei_fldn,       (/ 'lev' /),  rad_data_avgflag, 'micron',   &
+         'radiation input: effective ice partical radius')
+    call addfld (qrs_fldn,       (/ 'lev' /),  rad_data_avgflag, 'J/s/kg',   &
+         'radiation input: solar heating rate')
+    call addfld (qrl_fldn,       (/ 'lev' /),  rad_data_avgflag, 'J/s/kg',   &
+         'radiation input: longwave heating rate')
 
     if (mg_microphys) then
-       call addfld (dei_fldn,    'micron',   pver, rad_data_avgflag,&
-            'radiation input: effective ice partical diameter',phys_decomp)
-       call addfld (des_fldn,    'micron',   pver, rad_data_avgflag,&
-            'radiation input: effective snow partical diameter',phys_decomp)
-       call addfld (mu_fldn,     ' ',        pver, rad_data_avgflag,&
-            'radiation input: ice gamma parameter for optics (radiation)',phys_decomp)
-       call addfld (lambdac_fldn,' ',        pver, rad_data_avgflag,&
-            'radiation input: slope of droplet distribution for optics (radiation)',phys_decomp)
-       call addfld (iciwp_fldn,  'kg/m2',    pver, rad_data_avgflag,&
-            'radiation input: In-cloud ice water path',phys_decomp)
-       call addfld (iclwp_fldn,  'kg/m2',    pver, rad_data_avgflag,&
-            'radiation input: In-cloud liquid water path',phys_decomp)
-       call addfld (icswp_fldn,  'kg/m2',    pver, rad_data_avgflag,&
-            'radiation input: In-cloud snow water path',phys_decomp)
-       call addfld (cldfsnow_fldn, 'fraction', pver, rad_data_avgflag,&
-            'radiation input: cloud liquid drops + snow',phys_decomp)
+       call addfld (dei_fldn,      (/ 'lev' /), rad_data_avgflag, 'micron',   &
+            'radiation input: effective ice partical diameter')
+       call addfld (des_fldn,      (/ 'lev' /), rad_data_avgflag, 'micron',   &
+            'radiation input: effective snow partical diameter')
+       call addfld (mu_fldn,       (/ 'lev' /), rad_data_avgflag, ' ',        &
+            'radiation input: ice gamma parameter for optics (radiation)')
+       call addfld (lambdac_fldn,  (/ 'lev' /), rad_data_avgflag,' ',         &
+            'radiation input: slope of droplet distribution for optics (radiation)')
+       call addfld (iciwp_fldn,    (/ 'lev' /), rad_data_avgflag, 'kg/m2',    &
+            'radiation input: In-cloud ice water path')
+       call addfld (iclwp_fldn,    (/ 'lev' /), rad_data_avgflag, 'kg/m2',    &
+            'radiation input: In-cloud liquid water path')
+       call addfld (icswp_fldn,    (/ 'lev' /), rad_data_avgflag, 'kg/m2',    &
+            'radiation input: In-cloud snow water path')
+       call addfld (cldfsnow_fldn, (/ 'lev' /), rad_data_avgflag, 'fraction', &
+            'radiation input: cloud liquid drops + snow')
     else
 
-      call addfld (nmxrgn_fldn, ' ',        1,    rad_data_avgflag,&
-         'radiation input: ',phys_decomp)
-      call addfld (pmxrgn_fldn, 'Pa',       pverp, rad_data_avgflag,&
-         'radiation input: ',phys_decomp)
-      call addfld (cldemis_fldn, ' ',       pver, rad_data_avgflag,&
-         'radiation input: cloud property ',phys_decomp)
-      call addfld (cldtau_fldn, ' ',        pver, rad_data_avgflag,&
-         'radiation input: cloud property ',phys_decomp)
-      call addfld (cicewp_fldn, ' ',        pver, rad_data_avgflag,&
-         'radiation input: cloud property ',phys_decomp)
-      call addfld (cliqwp_fldn, ' ',        pver, rad_data_avgflag,&
-         'radiation input: cloud property ',phys_decomp)
+      call addfld (nmxrgn_fldn,    horiz_only,   rad_data_avgflag, ' ',       &
+         'radiation input: ')
+      call addfld (pmxrgn_fldn,    (/ 'ilev' /), rad_data_avgflag, 'Pa',      &
+         'radiation input: ')
+      call addfld (cldemis_fldn,   (/ 'lev' /), rad_data_avgflag, ' ',        &
+         'radiation input: cloud property ')
+      call addfld (cldtau_fldn,    (/ 'lev' /), rad_data_avgflag, ' ',        &
+         'radiation input: cloud property ')
+      call addfld (cicewp_fldn,    (/ 'lev' /), rad_data_avgflag, ' ',        &
+         'radiation input: cloud property ')
+      call addfld (cliqwp_fldn,    (/ 'lev' /), rad_data_avgflag, ' ',        &
+         'radiation input: cloud property ')
     endif
 
     call add_default (lndfrc_fldn,    rad_data_histfile_num, ' ')
@@ -390,7 +433,17 @@ contains
        call add_default (nmxrgn_fldn,    rad_data_histfile_num, ' ')
        call add_default (pmxrgn_fldn,    rad_data_histfile_num, ' ')
     endif
-    
+
+    ! stratospheric aersols geometric mean radius
+    if (volcgeom_ifld > 0) then
+       call add_default (volcgeom_fldn, rad_data_histfile_num, ' ')
+    endif
+    if (gmean_3modes) then
+       call add_default (volcgeom1_fldn, rad_data_histfile_num, ' ')
+       call add_default (volcgeom2_fldn, rad_data_histfile_num, ' ')
+       call add_default (volcgeom3_fldn, rad_data_histfile_num, ' ')
+    endif
+
     ! rad constituents
 
     long_name_description = ' mass mixing ratio used in rad climate calculation'
@@ -398,7 +451,7 @@ contains
     do i = 1, ngas
        long_name = trim(gasnames(i))//trim(long_name_description)
        name = 'rad_'//gasnames(i)
-       call addfld(trim(name), 'kg/kg', pver, rad_data_avgflag, trim(long_name), phys_decomp)
+       call addfld(trim(name), (/ 'lev' /), rad_data_avgflag, 'kg/kg', trim(long_name))
        call add_default (trim(name), rad_data_histfile_num, ' ')
     end do
     
@@ -407,7 +460,7 @@ contains
        do i = 1, naer
           long_name = trim(aernames(i))//trim(long_name_description)
           name = 'rad_'//aernames(i)
-          call addfld(trim(name), 'kg/kg', pver, rad_data_avgflag, trim(long_name), phys_decomp)
+          call addfld(trim(name), (/ 'lev' /), rad_data_avgflag, 'kg/kg', trim(long_name))
           call add_default (trim(name), rad_data_histfile_num, ' ')
        end do
     endif
@@ -416,11 +469,11 @@ contains
        ! for modal aerosol model
        do m = 1, nmodes
           write(long_name, 1002) m
-          call addfld ( dgnumwet_fldn(m), '',  pver, rad_data_avgflag, trim(long_name), phys_decomp )
+          call addfld ( dgnumwet_fldn(m), (/ 'lev' /), rad_data_avgflag, '', trim(long_name) )
           call add_default (dgnumwet_fldn(m), rad_data_histfile_num, ' ')
 
           write(long_name, 1004) m
-          call addfld ( qaerwat_fldn(m), '',  pver, rad_data_avgflag, trim(long_name), phys_decomp )
+          call addfld ( qaerwat_fldn(m),  (/ 'lev' /), rad_data_avgflag, '', trim(long_name) )
           call add_default (qaerwat_fldn(m), rad_data_histfile_num, ' ')
 
           ! get mode info
@@ -429,7 +482,7 @@ contains
           do l = 1, nspec
              call rad_cnst_get_info(0,m,l, spec_name=aername)
              name = 'rad_'//trim(aername)
-             call addfld(trim(name), 'kg/kg', pver, rad_data_avgflag, trim(long_name), phys_decomp)
+             call addfld(trim(name),      (/ 'lev' /), rad_data_avgflag, 'kg/kg', trim(long_name))
              call add_default (trim(name), rad_data_histfile_num, ' ')
           end do
        end do
@@ -493,6 +546,7 @@ contains
     real(r8), pointer, dimension(:,:,:) :: dgnumwet_ptr
     real(r8), pointer, dimension(:,:,:) :: qaerwat_ptr
 
+    if (.not.enabled) return
     call pbuf_get_field(pbuf, qrs_ifld, qrs )    
     call pbuf_get_field(pbuf, qrl_ifld, qrl )
 
@@ -663,6 +717,20 @@ contains
        enddo
     endif
 
+    ! stratospheric aersols geometric mean radius
+    if (volcgeom_ifld > 0) then
+       call pbuf_get_field(pbuf, volcgeom_ifld, ptr)
+       call outfld(volcgeom_fldn, ptr, pcols, lchnk)
+    endif
+    if (gmean_3modes) then
+       call pbuf_get_field(pbuf, volcgeom1_ifld, ptr)
+       call outfld(volcgeom1_fldn, ptr, pcols, lchnk)
+       call pbuf_get_field(pbuf, volcgeom2_ifld, ptr)
+       call outfld(volcgeom2_fldn, ptr, pcols, lchnk)
+       call pbuf_get_field(pbuf, volcgeom3_ifld, ptr)
+       call outfld(volcgeom3_fldn, ptr, pcols, lchnk)
+    endif
+
   end subroutine rad_data_write
 
 !=================================================================================
@@ -733,6 +801,11 @@ contains
 
     type(drv_input_2d_t) :: lwup_ptrs(begchunk:endchunk)
     type(drv_input_2d_t) :: ts_ptrs(begchunk:endchunk)
+
+    type(drv_input_3d_t) :: volcgeom_ptrs(begchunk:endchunk)
+    type(drv_input_3d_t) :: volcgeom1_ptrs(begchunk:endchunk)
+    type(drv_input_3d_t) :: volcgeom2_ptrs(begchunk:endchunk)
+    type(drv_input_3d_t) :: volcgeom3_ptrs(begchunk:endchunk)
 
     integer :: i, k, c, ncol, itim
 
@@ -816,6 +889,16 @@ contains
           call pbuf_get_field(pbuf, qaerwat_ifld, qaerwat_ptrs(c)%array )
        endif
 
+       ! stratospheric aersols geometric mean radius
+       if (volcgeom_ifld > 0) then
+          call pbuf_get_field(pbuf, volcgeom_ifld, volcgeom_ptrs(c)%array )
+       endif
+       if (gmean_3modes) then
+          call pbuf_get_field(pbuf, volcgeom1_ifld, volcgeom1_ptrs(c)%array )
+          call pbuf_get_field(pbuf, volcgeom2_ifld, volcgeom2_ptrs(c)%array )
+          call pbuf_get_field(pbuf, volcgeom3_ifld, volcgeom3_ptrs(c)%array )
+       endif
+
     enddo
 
     
@@ -862,6 +945,16 @@ contains
        call drv_input_data_get( indata, cliqwp_fldn, 'lev', pver, recno, cliqwp_ptrs )
     endif
 
+    ! stratospheric aersols geometric mean radius
+    if (volcgeom_ifld > 0) then
+       call drv_input_data_get( indata, volcgeom_fldn, 'lev', pver, recno, volcgeom_ptrs )
+    endif
+    if (gmean_3modes) then
+       call drv_input_data_get( indata, volcgeom1_fldn, 'lev', pver, recno, volcgeom1_ptrs )
+       call drv_input_data_get( indata, volcgeom2_fldn, 'lev', pver, recno, volcgeom2_ptrs )
+       call drv_input_data_get( indata, volcgeom3_fldn, 'lev', pver, recno, volcgeom3_ptrs )
+    endif
+
     call drv_input_data_get( indata, watvap_fldn, 'lev', pver, recno, watvap_ptrs )
     call drv_input_data_get( indata, watliq_fldn, 'lev', pver, recno, watliq_ptrs )
     call drv_input_data_get( indata, watice_fldn, 'lev', pver, recno, watice_ptrs )
@@ -891,7 +984,8 @@ contains
           call pbuf_get_field(pbuf, qrsin_idx, qrsin)
           call pbuf_get_field(pbuf, qrlin_idx, qrlin)
 
-          call tropopause_find(phys_state(c), troplev, tropP=tropp(:), primary=TROP_ALG_HYBSTOB, backup=TROP_ALG_CLIMATE)
+          call tropopause_find(phys_state(c), troplev, tropP=tropp(:), primary=TROP_ALG_CLIMATE, &
+                               backup=TROP_ALG_CLIMATE)
 
           qrsin(:,:) = qrs_ptrs(c)%array(:,:)
           qrlin(:,:) = qrl_ptrs(c)%array(:,:)

@@ -9,7 +9,7 @@ module drv_input_data
   use ppgrid,           only: pcols, pver, pverp, begchunk, endchunk
   use cam_logfile,      only: iulog
   use pio,              only: file_desc_t
-  use time_manager,     only: dtime
+  use time_manager,     only: get_step_size
 
   implicit none
   private
@@ -81,18 +81,19 @@ contains
     character(len=*), intent(in) :: infile
     type(drv_input_data_t), intent(out) :: indata
 
-    character(len=cl) :: filen
     integer :: id, ierr
     integer :: hdim1_d,hdim2_d, nlons
+    integer :: dtime
     integer :: data_dtime
     character(len=*), parameter :: sub = 'drv_input_data_open: '
 
-    !
+    dtime = get_step_size()
+
     ! open file and get fileid
     !
     call cam_pio_openfile( indata%piofile, infile, PIO_NOCLOBBER)
 
-    if(masterproc) write(iulog,*) sub // 'opened: ',trim(filen)
+    if(masterproc) write(iulog,*) sub // 'opened: ',trim(infile)
 
     !
     ! check horizontal grid ...
@@ -191,7 +192,7 @@ contains
     endif
 
     call infld( fldname, indata%piofile, trim(lonname), trim(latname), 1,pcols, begchunk,endchunk, &
-                field_array, found, grid_map='PHYS',timelevel=recno)
+                field_array, found, gridname='physgrid',timelevel=recno)
 
     if (.not.found) then
        if ( abort_run ) then
@@ -228,7 +229,7 @@ contains
     endif
 
     call infld( fldname, indata%piofile, lonname, vertname, latname, 1,pcols, 1,vertsize, begchunk,endchunk, &
-                field_array, found, grid_map='PHYS',timelevel=recno)
+                field_array, found, gridname='physgrid',timelevel=recno)
 
     if (.not.found) then
        if ( abort_run ) then

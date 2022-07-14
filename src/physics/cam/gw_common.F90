@@ -19,6 +19,7 @@ public :: GWBand
 public :: gw_common_init
 public :: gw_prof
 public :: gw_drag_prof
+public :: qbo_hdepth_scaling
 public :: calc_taucd, momentum_flux, momentum_fixer
 public :: energy_change, energy_fixer
 public :: coriolis_speed, adjust_inertial
@@ -40,6 +41,9 @@ integer, parameter :: west = 1
 integer, parameter :: east = 2
 integer, parameter :: south = 3
 integer, parameter :: north = 4
+
+! Scaling factor for generating QBO
+real(r8), protected :: qbo_hdepth_scaling
 
 ! 3.14159...
 real(r8), parameter :: pi = acos(-1._r8)
@@ -65,6 +69,9 @@ real(r8) :: rog = huge(1._r8)
 
 ! Newtonian cooling coefficients.
 real(r8), allocatable :: alpha(:)
+
+! Inverse Prandtl number.
+real(r8) :: prndl
 
 !
 ! Limits to keep values reasonable.
@@ -140,7 +147,8 @@ end function new_GWBand
 !==========================================================================
 
 subroutine gw_common_init(pver_in, &
-     tau_0_ubc_in, ktop_in, gravit_in, rair_in, alpha_in, errstring)
+     tau_0_ubc_in, ktop_in, gravit_in, rair_in, alpha_in, & 
+     prndl_in, qbo_hdepth_scaling_in, errstring)
 
   integer,  intent(in) :: pver_in
   logical,  intent(in) :: tau_0_ubc_in
@@ -148,6 +156,8 @@ subroutine gw_common_init(pver_in, &
   real(r8), intent(in) :: gravit_in
   real(r8), intent(in) :: rair_in
   real(r8), intent(in) :: alpha_in(:)
+  real(r8), intent(in) :: prndl_in
+  real(r8), intent(in) :: qbo_hdepth_scaling_in
   ! Report any errors from this routine.
   character(len=*), intent(out) :: errstring
 
@@ -163,6 +173,8 @@ subroutine gw_common_init(pver_in, &
   allocate(alpha(pver+1), stat=ierr, errmsg=errstring)
   if (ierr /= 0) return
   alpha = alpha_in
+  prndl = prndl_in
+  qbo_hdepth_scaling = qbo_hdepth_scaling_in
 
   rog = rair/gravit
 
@@ -253,10 +265,11 @@ end subroutine gw_prof
 !==========================================================================
 
 subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
-     t,    &
+     t, vramp,   &
      piln, rhoi,    nm,   ni,  ubm,  ubi,  xv,    yv,   &
      effgw,      c, kvtt, q,   dse,  tau,  utgw,  vtgw, &
-     ttgw, qtgw, egwdffi,   gwut, dttdf, dttke, ro_adjust)
+     ttgw, qtgw, egwdffi,   gwut, dttdf, dttke, ro_adjust, &
+     kwvrdg, satfac_in, lapply_effgw_in, lapply_vdiff )
 
   !-----------------------------------------------------------------------
   ! Solve for the drag profile from the multiple gravity wave drag
@@ -313,6 +326,8 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
   real(r8), intent(in) :: q(:,:,:)
   ! Dry static energy.
   real(r8), intent(in) :: dse(ncol,pver)
+  ! Coefficient to ramp down diffusion coeff.
+  real(r8), pointer, intent(in) :: vramp(:)
 
   ! Wave Reynolds stress.
   real(r8), intent(inout) :: tau(ncol,-band%ngwv:band%ngwv,pver+1)
@@ -337,10 +352,22 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
   real(r8), intent(in), optional :: &
        ro_adjust(ncol,-band%ngwv:band%ngwv,pver+1)
 
+  ! Diagnosed horizontal wavenumber for ridges.
+  real(r8), intent(in), optional :: &
+       kwvrdg(ncol)
+
+  ! Factor for saturation calculation. Here backwards 
+  ! compatibility. I believe it should be 1.0 (jtb). 
+  ! Looks like it has been 2.0 for a while in CAM.
+  real(r8), intent(in), optional :: &
+       satfac_in
+
+  logical, intent(in), optional :: lapply_effgw_in, lapply_vdiff
+
   !---------------------------Local storage-------------------------------
 
-  ! Level, wavenumber, and constituent loop indices.
-  integer :: k, l, m
+  ! Level, wavenumber, constituent and column loop indices.
+  integer :: k, l, m, i
 
   ! Lowest tendency and source levels.
   integer :: kbot_tend, kbot_src
@@ -361,11 +388,42 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
   ! Ratio used for ubt tndmax limiting.
   real(r8) :: ubt_lim_ratio(ncol)
 
+  ! saturation factor. Defaults to 2.0
+  ! unless overidden by satfac_in
+  real(r8) :: satfac
+
+  logical :: lapply_effgw,do_vertical_diffusion
+
   ! LU decomposition.
   type(TriDiagDecomp) :: decomp
 
   !------------------------------------------------------------------------
 
+  if (present(satfac_in)) then
+     satfac = satfac_in
+  else
+     satfac = 2._r8
+  endif
+
+  ! Default behavior is to apply vertical diffusion.
+  ! The user has the option to turn off vert diffusion
+  do_vertical_diffusion = .true.
+  if (present(lapply_vdiff)) then
+     do_vertical_diffusion = lapply_vdiff
+  endif
+
+  ! Default behavior is to apply effgw and
+  ! tendency limiters as designed by Sean
+  ! Santos (lapply_effgw=.TRUE.). However,
+  ! WACCM non-oro GW need to be retuned before
+  ! this can done to them. --jtb 03/02/16
+  if (present(lapply_effgw_in)) then
+      lapply_effgw = lapply_effgw_in
+  else
+      lapply_effgw = .TRUE.
+  endif
+
+  
   ! Lowest levels that loops need to iterate over.
   kbot_tend = maxval(tend_level)
   kbot_src = maxval(src_level)
@@ -379,6 +437,9 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
 
   dttke = 0._r8
   ttgw = 0._r8
+
+  dttdf = 0._r8
+  qtgw = 0._r8
 
   ! Workaround floating point exception issues on Intel by initializing
   ! everything that's first set in a where block.
@@ -394,8 +455,9 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
   !------------------------------------------------------------------------
 
   ! Loop from bottom to top to get stress profiles.
-  do k = kbot_src, ktop, -1
-
+  ! do k = kbot_src-1, ktop, -1 !++jtb I think this is right 
+  do k = kbot_src, ktop, -1  !++ but this is in model now 
+     
      ! Determine the diffusivity for each column.
 
      d = dback + kvtt(:,k)
@@ -408,13 +470,24 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
         ubmc = ubi(:,k) - c(:,l)
 
         tausat = 0.0_r8
-        where (src_level >= k)
-           ! Test to see if u-c has the same sign here as the level below.
-           where (ubmc > 0.0_r8 .eqv. ubi(:,k+1) > c(:,l))
-              tausat = abs(band%effkwv * rhoi(:,k) * ubmc**3 / &
-                   (2._r8*ni(:,k)))
+
+        if (present(kwvrdg)) then
+           where (src_level >= k)
+              ! Test to see if u-c has the same sign here as the level below.
+              where (ubmc > 0.0_r8 .eqv. ubi(:,k+1) > c(:,l))
+                 tausat = abs(  kwvrdg  * rhoi(:,k) * ubmc**3 / &
+                    (satfac*ni(:,k)))
+              end where
            end where
-        end where
+        else
+           where (src_level >= k)
+              ! Test to see if u-c has the same sign here as the level below.
+              where (ubmc > 0.0_r8 .eqv. ubi(:,k+1) > c(:,l))
+                 tausat = abs(band%effkwv * rhoi(:,k) * ubmc**3 / &
+                    (satfac*ni(:,k)))
+              end where
+           end where
+        end if
 
         if (present(ro_adjust)) then
            where (src_level >= k)
@@ -422,43 +495,69 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
            end where
         end if
 
-        where (src_level >= k)
+        if (present(kwvrdg)) then
+           where (src_level >= k)
+              ! Compute stress for each wave. The stress at this level is the
+              ! min of the saturation stress and the stress at the level below
+              ! reduced by damping. The sign of the stress must be the same as
+              ! at the level below.
 
-           ! Compute stress for each wave. The stress at this level is the
-           ! min of the saturation stress and the stress at the level below
-           ! reduced by damping. The sign of the stress must be the same as
-           ! at the level below.
+              ubmc2 = max(ubmc**2, ubmc2mn)
+              mi = ni(:,k) / (2._r8 *   kwvrdg * ubmc2) * &  ! Is this 2._r8 related to satfac?
+                 (alpha(k) + ni(:,k)**2/ubmc2 * d)
+              wrk = -2._r8*mi*rog*t(:,k)*(piln(:,k+1) - piln(:,k))
 
-           ubmc2 = max(ubmc**2, ubmc2mn)
-           mi = ni(:,k) / (2._r8 * band%kwv * ubmc2) * &
-                (alpha(k) + ni(:,k)**2/ubmc2 * d)
-           wrk = -2._r8*mi*rog*t(:,k)*(piln(:,k+1) - piln(:,k))
+              taudmp = tau(:,l,k+1)
 
-           taudmp = tau(:,l,k+1) * exp(wrk)
+              ! For some reason, PGI 14.1 loses bit-for-bit reproducibility if
+              ! we limit tau, so instead limit the arrays used to set it.
+              where (tausat <= taumin) tausat = 0._r8
+              where (taudmp <= taumin) taudmp = 0._r8
 
-           ! For some reason, PGI 14.1 loses bit-for-bit reproducibility if
-           ! we limit tau, so instead limit the arrays used to set it.
-           where (tausat <= taumin) tausat = 0._r8
-           where (taudmp <= taumin) taudmp = 0._r8
+              tau(:,l,k) = min(taudmp, tausat)
+           end where
 
-           tau(:,l,k) = min(taudmp, tausat)
+        else
 
-        end where
+           where (src_level >= k)
+
+              ! Compute stress for each wave. The stress at this level is the
+              ! min of the saturation stress and the stress at the level below
+              ! reduced by damping. The sign of the stress must be the same as
+              ! at the level below.
+
+              ubmc2 = max(ubmc**2, ubmc2mn)
+              mi = ni(:,k) / (2._r8 * band%kwv * ubmc2) * &
+                 (alpha(k) + ni(:,k)**2/ubmc2 * d)
+              wrk = -2._r8*mi*rog*t(:,k)*(piln(:,k+1) - piln(:,k))
+
+              taudmp = tau(:,l,k+1) * exp(wrk)
+
+              ! For some reason, PGI 14.1 loses bit-for-bit reproducibility if
+              ! we limit tau, so instead limit the arrays used to set it.
+              where (tausat <= taumin) tausat = 0._r8
+              where (taudmp <= taumin) taudmp = 0._r8
+
+              tau(:,l,k) = min(taudmp, tausat)
+           end where
+        endif
+
      end do
-
   end do
 
   ! Force tau at the top of the model to zero, if requested.
   if (tau_0_ubc) tau(:,:,ktop) = 0._r8
 
   ! Apply efficiency to completed stress profile.
-  do k = ktop, kbot_tend+1
-     do l = -band%ngwv, band%ngwv
-        where (k-1 <= tend_level)
-           tau(:,l,k) = tau(:,l,k) * effgw
-        end where
+  if (lapply_effgw) then
+     do k = ktop, kbot_tend+1
+        do l = -band%ngwv, band%ngwv
+           where (k-1 <= tend_level)
+              tau(:,l,k) = tau(:,l,k) * effgw
+           end where
+        end do
      end do
-  end do
+  end if
 
   !------------------------------------------------------------------------
   ! Compute the tendencies from the stress divergence.
@@ -483,9 +582,13 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
         ! near reversing c-u.
         ubtl = min(ubtl, umcfac * abs(c(:,l)-ubm(:,k)) / dt)
 
+        if (.not. lapply_effgw) ubtl = min(ubtl, tndmax)
+        
         where (k <= tend_level)
 
-           ! Save tendency for each wave (for later computation of kzz):
+           ! Save tendency for each wave (for later computation of kzz).
+           ! sign function returns magnitude of ubtl with sign of c-ubm 
+           ! Renders ubt/ubm check for mountain waves unecessary
            gwut(:,k,l) = sign(ubtl, c(:,l)-ubm(:,k))
            ubt(:,k) = ubt(:,k) + gwut(:,k,l)
 
@@ -493,18 +596,22 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
 
      end do
 
-     ! Apply second tendency limit to maintain numerical stability.
-     ! Enforce du/dt < tndmax so that ridicuously large tendencies are not
-     ! permitted.
-     ! This can only happen above tend_level, so don't bother checking the
-     ! level explicitly.
-     where (abs(ubt(:,k)) > tndmax)
-        ubt_lim_ratio = tndmax/abs(ubt(:,k))
-        ubt(:,k) = ubt_lim_ratio * ubt(:,k)
-     elsewhere
+     if (lapply_effgw) then
+        ! Apply second tendency limit to maintain numerical stability.
+        ! Enforce du/dt < tndmax so that ridicuously large tendencies are not
+        ! permitted.
+        ! This can only happen above tend_level, so don't bother checking the
+        ! level explicitly.
+        where (abs(ubt(:,k)) > tndmax)
+           ubt_lim_ratio = tndmax/abs(ubt(:,k))
+           ubt(:,k) = ubt_lim_ratio * ubt(:,k)
+        elsewhere
+           ubt_lim_ratio = 1._r8
+        end where
+     else
         ubt_lim_ratio = 1._r8
-     end where
-
+     end if
+     
      do l = -band%ngwv, band%ngwv
         gwut(:,k,l) = ubt_lim_ratio*gwut(:,k,l)
         ! Redetermine the effective stress on the interface below from the
@@ -513,8 +620,8 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
         ! divergence in the next layer down. This smoothes large stress
         ! divergences downward while conserving total stress.
         where (k <= tend_level)
-           tau(:,l,k+1) = tau(:,l,k) + &
-                abs(gwut(:,k,l)) * p%del(:,k) / gravit
+           tau(:,l,k+1) = tau(:,l,k) + & 
+                abs(gwut(:,k,l)) * p%del(:,k) / gravit 
         end where
      end do
 
@@ -524,25 +631,57 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
         vtgw(:,k) = ubt(:,k) * yv
      end where
 
+     if (associated(vramp)) then
+        utgw(:,k) = utgw(:,k) * vramp(k)
+        vtgw(:,k) = vtgw(:,k) * vramp(k)
+     endif
+
      ! End of level loop.
   end do
 
-  ! Calculate effective diffusivity and LU decomposition for the
-  ! vertical diffusion solver.
-  call gw_ediff (ncol, pver, band%ngwv, kbot_tend, ktop, tend_level, &
-       gwut, ubm, nm, rhoi, dt, gravit, p, c, &
-       egwdffi, decomp, ro_adjust=ro_adjust)
 
-  ! Calculate tendency on each constituent.
-  do m = 1, size(q,3)
+  ! Block to undo Sean Santos mods to effgw and limiters.
+  ! Here because non-oro GW in WACCM need extensive re-tuning
+  ! before Sean's mods can be adopted. --jtb 03/02/16
+  !==========================================
+  if (.not.(lapply_effgw)) then
+     do k = ktop, kbot_tend+1
+        do l = -band%ngwv, band%ngwv
+           where (k-1 <= tend_level)
+              tau(:,l,k) = tau(:,l,k) * effgw
+           end where
+        end do
+     end do
+     do k = ktop, kbot_tend
+        do l = -band%ngwv, band%ngwv
+           gwut(:,k,l) = gwut(:,k,l) * effgw
+        end do
+        utgw(:,k) = utgw(:,k) * effgw
+        vtgw(:,k) = vtgw(:,k) * effgw
+     end do
+  end if
+  !===========================================
 
-     call gw_diff_tend(ncol, pver, kbot_tend, ktop, q(:,:,m), &
-          dt, decomp, qtgw(:,:,m))
+  if (do_vertical_diffusion) then
 
-  enddo
+     ! Calculate effective diffusivity and LU decomposition for the
+     ! vertical diffusion solver.
+     call gw_ediff (ncol, pver, band%ngwv, kbot_tend, ktop, tend_level, &
+          gwut, ubm, nm, rhoi, dt, prndl, gravit, p, c, vramp, &
+          egwdffi, decomp, ro_adjust=ro_adjust)
 
-  ! Calculate tendency from diffusing dry static energy (dttdf).
-  call gw_diff_tend(ncol, pver, kbot_tend, ktop, dse, dt, decomp, dttdf)
+     ! Calculate tendency on each constituent.
+     do m = 1, size(q,3)
+
+        call gw_diff_tend(ncol, pver, kbot_tend, ktop, q(:,:,m), &
+             dt, decomp, qtgw(:,:,m))
+
+     enddo
+
+     ! Calculate tendency from diffusing dry static energy (dttdf).
+     call gw_diff_tend(ncol, pver, kbot_tend, ktop, dse, dt, decomp, dttdf)
+
+  endif
 
   ! Evaluate second temperature tendency term: Conversion of kinetic
   ! energy into thermal.
@@ -553,6 +692,12 @@ subroutine gw_drag_prof(ncol, band, p, src_level, tend_level, dt, &
   end do
 
   ttgw = dttke + dttdf
+
+  if (associated(vramp)) then
+     do k = ktop, kbot_tend
+        ttgw(:,k) = ttgw(:,k) * vramp(k)
+     enddo
+  endif
 
   ! Deallocate decomp.
   call decomp%finalize()

@@ -73,13 +73,12 @@
 
         subroutine strat_aer_settl_init
 
-          use cam_history,  only : addfld, phys_decomp
-          use ppgrid,       only : pver
+          use cam_history,  only : addfld
 
           implicit none
 
-          call addfld( 'VEL_NAT1', 'cm/s', pver, 'I', 'small nat settling velocity', phys_decomp )
-          call addfld( 'VEL_NAT2', 'cm/s', pver, 'I', 'large nat settling velocity', phys_decomp )
+          call addfld( 'VEL_NAT1', (/ 'lev' /), 'I', 'cm/s', 'small nat settling velocity' )
+          call addfld( 'VEL_NAT2', (/ 'lev' /), 'I', 'cm/s', 'large nat settling velocity' )
 
         end subroutine strat_aer_settl_init
 
@@ -88,7 +87,6 @@
                                      hno3_cond, radius_nat, ncol, lchnk, aero_ndx )
 
       use ppgrid,      only : pcols, pver
-      use chem_mods,   only : adv_mass
       use physconst,   only : gravit
       use cam_history, only : outfld
 

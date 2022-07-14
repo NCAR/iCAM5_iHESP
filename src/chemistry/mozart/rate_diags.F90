@@ -4,35 +4,32 @@
 module rate_diags
 
   use shr_kind_mod,     only : r8 => shr_kind_r8
-  use shr_kind_mod,     only : CL => SHR_KIND_CL, CX => SHR_KIND_CX
+  use shr_kind_mod,     only : CL => SHR_KIND_CL
   use cam_history,      only : fieldname_len
-  use cam_history,      only : addfld,phys_decomp
+  use cam_history,      only : addfld, add_default
   use cam_history,      only : outfld
   use chem_mods,        only : rxt_tag_cnt, rxt_tag_lst, rxt_tag_map
   use ppgrid,           only : pver
   use spmd_utils,       only : masterproc
   use cam_abortutils,   only : endrun
+  use sums_utils,       only : sums_grp_t, parse_sums
 
   implicit none
   private 
   public :: rate_diags_init
   public :: rate_diags_calc
   public :: rate_diags_readnl
+  public :: rate_diags_o3s_loss
 
   character(len=fieldname_len) :: rate_names(rxt_tag_cnt)
 
-  type rate_grp_t
-    character(len=24) :: name
-    integer :: nmembers = 0
-    integer, allocatable :: map(:)
-    real(r8), allocatable :: multipler(:)
-  endtype rate_grp_t
-
   integer :: ngrps = 0
-  type(rate_grp_t), allocatable :: grps(:)  
+  type(sums_grp_t), allocatable :: grps(:)  
 
-  integer, parameter :: maxsums = 100
-  character(len=CX) :: rxn_rate_sums(maxsums) = ' '
+  integer, parameter :: maxlines = 200
+  character(len=CL), allocatable :: rxn_rate_sums(:)
+
+  integer :: o3_ndx = -1
 
 contains
 
@@ -42,7 +39,7 @@ contains
 
     use namelist_utils,  only: find_group_name
     use units,           only: getunit, freeunit
-    use mpishorthand
+    use spmd_utils,      only: mpicom, mpi_character, masterprocid
 
     ! args 
     character(len=*), intent(in) :: nlfile  ! filepath for file containing namelist input
@@ -51,6 +48,9 @@ contains
     integer :: unitn, ierr
 
     namelist /rxn_rate_diags_nl/ rxn_rate_sums
+
+    allocate( rxn_rate_sums( maxlines ) )
+    rxn_rate_sums(:) = ' '
 
     ! Read namelist
     if (masterproc) then
@@ -67,18 +67,21 @@ contains
        call freeunit(unitn)
     end if
 
-#ifdef SPMD
     ! Broadcast namelist variables
-    call mpibcast(rxn_rate_sums,len(rxn_rate_sums(1))*maxsums, mpichar, 0, mpicom)
-#endif
+    call mpi_bcast(rxn_rate_sums,len(rxn_rate_sums(1))*maxlines, mpi_character, masterprocid, mpicom, ierr)
+
   end subroutine rate_diags_readnl
 !--------------------------------------------------------------------------------
 !--------------------------------------------------------------------------------
   subroutine rate_diags_init
+    use phys_control, only : phys_getopts
+    use mo_chem_utls, only : get_spc_ndx
 
     integer :: i, len, pos
-
     character(len=64) :: name
+    logical :: history_scwaccm_forcing
+
+    call phys_getopts( history_scwaccm_forcing_out = history_scwaccm_forcing )
 
     do i = 1,rxt_tag_cnt
        pos = 0
@@ -93,14 +96,21 @@ contains
        endif
        len = min(fieldname_len,len_trim(name))
        rate_names(i) = trim(name(1:len))
-       call addfld(rate_names(i), 'molecules/cm3/sec', pver,'A','reaction rate', phys_decomp)
+       call addfld(rate_names(i), (/ 'lev' /),'A', 'molecules/cm3/sec','reaction rate')
+       if (history_scwaccm_forcing .and. rate_names(i) == 'r_O1D_H2O') then
+          call add_default( rate_names(i), 1, ' ')
+       endif
     enddo
 
-    call parse_rate_sums()
+    ! parse the terms of the summations
+    call parse_sums(rxn_rate_sums, ngrps, grps)
+    deallocate( rxn_rate_sums )
 
     do i = 1, ngrps
-       call addfld( grps(i)%name, 'molecules/cm3/sec', pver,'A','reaction rate group', phys_decomp)
+       call addfld( grps(i)%name, (/ 'lev' /),'A', 'molecules/cm3/sec','reaction rate group')
     enddo
+
+    o3_ndx = get_spc_ndx('O3')
 
   end subroutine rate_diags_init
 
@@ -115,7 +125,7 @@ contains
     real(r8), intent(in)    :: m(:,:)           ! air density (molecules/cm3)
     integer,  intent(in)    :: ncol, lchnk
 
-    integer :: i, j
+    integer :: i, j, ndx
     real(r8) :: group_rate(ncol,pver)
 
     call set_rates( rxt_rates, vmr, ncol )
@@ -131,99 +141,54 @@ contains
     do i = 1, ngrps
        group_rate(:,:) = 0._r8
        do j = 1, grps(i)%nmembers
-         group_rate(:ncol,:) = group_rate(:ncol,:) + grps(i)%multipler(j)*rxt_rates(:ncol,:,grps(i)%map(j))
+         ndx = lookup_tag_ndx(grps(i)%term(j))
+         group_rate(:ncol,:) = group_rate(:ncol,:) + grps(i)%multipler(j)*rxt_rates(:ncol,:,ndx)
        enddo 
        call outfld( grps(i)%name, group_rate(:ncol,:), ncol, lchnk )       
     end do
 
   end subroutine rate_diags_calc
 
+!--------------------------------------------------------------------------------
+!--------------------------------------------------------------------------------
+  function rate_diags_o3s_loss( rxt_rates, vmr, ncol ) result(o3s_loss)
+    use mo_rxt_rates_conv, only: set_rates
+    use chem_mods,         only: rxntot
+
+    real(r8), intent(in) :: rxt_rates(:,:,:)
+    real(r8), intent(in) :: vmr(:,:,:)
+    integer,  intent(in) :: ncol
+
+    real(r8) :: o3s_loss(ncol,pver) ! /sec
+
+    integer :: i, j, ndx
+    real(r8) :: group_rate(ncol,pver)
+    real(r8) :: lcl_rxt_rates(ncol,pver,rxntot)
+
+    o3s_loss(:,:) = 0._r8
+
+    if (o3_ndx>0) then
+       lcl_rxt_rates(:ncol,:,:) = rxt_rates(:ncol,:,:)
+       call set_rates( lcl_rxt_rates, vmr, ncol )
+
+       do i = 1, ngrps
+          if (trim(grps(i)%name)=='O3S_Loss') then
+             group_rate(:,:) = 0._r8
+             do j = 1, grps(i)%nmembers
+                ndx = lookup_tag_ndx(grps(i)%term(j))
+                group_rate(:ncol,:) = group_rate(:ncol,:) + grps(i)%multipler(j)*lcl_rxt_rates(:ncol,:,ndx)
+             enddo
+             o3s_loss(:ncol,:) = group_rate(:ncol,:)/vmr(:ncol,:,o3_ndx)
+          endif
+       end do
+    endif
+
+  end function rate_diags_o3s_loss
+
 !-------------------------------------------------------------------
 ! Private routines :
 !-------------------------------------------------------------------
 !-------------------------------------------------------------------
-  
-  subroutine parse_rate_sums
-
-    integer :: ndxs(512)
-    integer :: nelem, spc_len, i,j,k, rxt_ndx
-    character(len=CL) :: tmp_str, tmp_name
-
-    character(len=8) :: xchr ! multipler
-    real(r8) :: xdbl
-
-    character(len=CX) :: sum_string
-
-    ! a group is  a sum of reaction rates 
-
-    ! count the numger of sums (or groups)
-    sumcnt: do i = 1,maxsums
-       spc_len=len_trim(rxn_rate_sums(i))
-       if ( spc_len > 0 ) then
-          ngrps = ngrps+1
-       else
-          exit sumcnt
-       endif
-    enddo sumcnt
-
-    ! parse the individual sum strings...  and form the groupings
-    has_grps: if (ngrps>0) then
-
-       allocate( grps(ngrps) )
-
-       ! from shr_megan_mod ... should be generalized and shared...
-       grploop: do i = 1,ngrps
-
-          ! parse out the rxn names and multipliers
-          ! from first parsing out the terms in the summation equation ("+" separates the terms)
-
-          sum_string = rxn_rate_sums(i)
-          j = scan( sum_string, '=' )
-          nelem = 1
-          ndxs(nelem) = j ! ndxs stores the index of each term of the equation
-
-          ! find indices of all the terms in the equation
-          tmp_str = trim( sum_string(j+1:) )
-          j = scan( tmp_str, '+' )
-          do while(j>0)
-             nelem = nelem+1
-             ndxs(nelem) = ndxs(nelem-1) + j
-             tmp_str = tmp_str(j+1:)
-             j = scan( tmp_str, '+' )
-          enddo
-          ndxs(nelem+1) = len(sum_string)+1
-
-          grps(i)%nmembers = nelem ! number of terms 
-          grps(i)%name =  trim(adjustl( sum_string(:ndxs(1)-1))) ! thing to the left of the "=" is used as the name of the group
-
-          ! now that we have the number of terms in the summation allocate memory for the map (reaction indices) and multipliers
-          allocate(grps(i)%map(nelem)) 
-          allocate(grps(i)%multipler(nelem))
-
-          ! now parse out the  rxn names and multiplers from the terms 
-          elmloop: do k = 1,nelem
-             grps(i)%multipler(k) = 1._r8
-             ! get the rxn name which follows the '*' operator if the is one
-             tmp_name = adjustl(sum_string(ndxs(k)+1:ndxs(k+1)-1))
-             j = scan( tmp_name, '*' )
-             if (j>0) then
-                xchr = tmp_name(1:j-1) ! get the multipler (left of the '*')
-                read( xchr, * ) xdbl   ! convert the string to a real
-                grps(i)%multipler(k) = xdbl ! store the multiplier
-                tmp_name = adjustl(tmp_name(j+1:)) ! get the rxn name (right of the '*')
-             endif
-             ! look up the corresponding reaction index ...
-             rxt_ndx = lookup_tag_ndx( tmp_name )
-             if ( rxt_ndx > 0 ) then
-                grps(i)%map(k) = rxt_ndx
-             else
-                call endrun('rate_diags::parse_rate_sums rate name not found : '//trim(tmp_name))
-             endif
-          enddo elmloop
-       enddo grploop
-    endif has_grps
-
-  end subroutine parse_rate_sums
 
 !-------------------------------------------------------------------
 ! finds the index corresponging to a given reacton name
@@ -243,6 +208,10 @@ contains
        endif
     end do findloop
 
+    if (ndx<0) then
+       call endrun('rate_diags: not able to find rxn tag name: '//trim(name))
+    endif
+    
   end function lookup_tag_ndx
 
 end module rate_diags

@@ -1,178 +1,247 @@
 #!/bin/sh -f
 #
-# test_driver.sh:  driver script for the testing of CAM in Sequential CCSM
+# test_driver.sh:  driver for the testing of CAM with standalone scripts
 #
-# usage on goldbach, leehill, firefly, yellowstone, jaguarpf/titan, lynx:
+# usage on hobart, izumi, leehill, cheyenne
 # ./test_driver.sh
 #
-# valid arguments: 
-# -i    interactive usage
-# -f    force batch submission (avoids user prompt)
-# -j    number of jobs for gmake
-# -b    support baseline scripts for cam5_2_12 and earlier.
-# -h    displays this help message
-#
-# **pass environment variables by preceding above commands 
-#   with 'env var1=setting var2=setting '
-# **more details in the CAM testing user's guide, accessible 
+# **more details in the CAM testing user's guide, accessible
 #   from the CAM developers web page
 
-interactive=false
-force=false
-gmake_j=8
+##
+## General syntax help function
+## Usage: help <exit status>
+##
 
-while [ -n "$(echo $1 | grep '-')" ]; do
+help () {
+  local hname="Usage: `basename ${0}` [ OPTION [ OPTION ... ] ]"
+  local hprefix="`echo ${hname} | tr '[!-~]' ' '`"
+  hprefix="  "
+  echo "${hname}  "
+  echo "${hprefix} [ -b ] (support baseline scripts for cam5_2_12 and earlier)"
+  echo "${hprefix} [ -e ] (email summary to $USER)"
+  echo "${hprefix} [ -f ] (force batch submission -- avoids user prompt)"
+  echo "${hprefix} [ -h ] (displays this help message)"
+  echo "${hprefix} [ -i ] (interactive usage)"
+  echo "${hprefix} [ -j ] (number of jobs for gmake)"
+  echo "${hprefix} [ --archive-cime <directory> ] (directory for archiving baselines of cime tests)"
+  echo "${hprefix} [ --cesm <test_name(s)> ] (default aux_cam)"
+  echo "${hprefix} [ --no-cesm ] (do not run any CESM test or test suite)"
+  echo "${hprefix} [ --no-cam ] (do not run CAM regression tests"
+  echo "${hprefix} [ --rerun-cesm <test_id> ] (rerun the cesm tests with the --use-existing-flag)"
+  echo ""
+  echo "${hprefix} **pass environment variables by preceding above commands with:"
+  echo "${hprefix}   'env var1=setting var2=setting '"
+  echo ""
+  echo "Supported ENVIRONMENT variables"
+  echo "BL_TESTDIR:        Default = none (used to set CESM baseline compare dir)"
+  echo "CAM_ACCOUNT:       Default = none"
+  echo "CAM_BATCHQ:        Default = machine dependent"
+  echo "CAM_FC:            Default = machine dependent"
+  echo "CAM_INPUT_TESTS:   Default = tests_pretag_<machine>[_<compiler>]"
+  echo "CAM_RESTART_TASKS: Default = 64"
+  echo "CAM_RETAIN_FILES:  Default = FALSE"
+  echo "CAM_ROOT:          Default = set relative to CAM_SCRIPTDIR"
+  echo "NB: If script is not called as ./`basename ${0}`, CAM_ROOT must be specified"
+  echo "CAM_SCRIPTDIR:     Default = <current directory>"
+  echo "CAM_TAG:           Default = none (used to set CESM baseline dir)"
+  echo "CAM_TASKS:         Default = 32"
+  echo "CAM_TESTDIR:       Default = <user_scratch_dir>/test-driver.<jobid>"
+  echo ""
+  echo "Less common ENVIRONMENT variables"
+  echo "CALDERA_BATCHQ:    Default = caldera"
+  echo "CAM_RBOPTIONS:     Default = build_only"
+  echo "CAM_SOFF:          Default = none (stop of first test fail if TRUE)"
+  echo "CIME_MODEL:        Default = none (should be set to cesm)"
+  echo "EMAIL:             Default = $USER@ucar.edu"
+  echo "SUMMARY_FILE:      Default = `pwd -P`/cam_test_summaries}"
+  exit $1
+}
+
+##
+## Error output function (should be handed a string)
+##
+perr() {
+  echo -e "\nERROR: ${@}\n"
+  help 1
+}
+
+## These variables may be overridden from the user's environment
+EMAIL=${EMAIL:-"${USER}@ucar.edu"}
+SUMMARY_FILE="${SUMMARY_FILE:-`pwd -P`/cam_test_summaries}"
+
+# These variables may be modified by script switches (./test_driver.sh -h)
+cam_email_summary=false
+cesm_test_suite="aux_cam"
+force=false
+gmake_j=0
+interactive=false
+run_cam_regression=true
+use_existing=''
+
+# Initialize variables which may not be set
+submit_script=''
+submit_script_cb=''
+submit_script_cime=''
+
+while [ "${1:0:1}" == "-" ]; do
     case $1 in
 
-	-i ) interactive=true ;;
+        --archive-cime )
+            if [ $# -lt 2 ]; then
+                perr "${1} requires a directory name)"
+            fi
+            archive_dir="${2}"
+            shift
+            ;;
 
-	-f ) force=true 
+        -b ) export CAM_BASEBACK="YES"
+             ;;
+
+        --cesm )
+            if [ $# -lt 2 ]; then
+                perr "${1} requires a CESM test name or test suite name (e.g., aux_cam)"
+            fi
+            if [ "${2:0:1}" == "-" ]; then
+                perr "Invalid CESM test name, '${2}'"
+            fi
+            cesm_test_suite="${2}"
+            shift
+            ;;
+
+        -e ) cam_email_summary=true
+             ;;
+
+	-f ) force=true
              if  $interactive ; then
                echo "test_driver.sh: FATAL ERROR: -i and -f were set"
-             exit 1
+               exit 1
              fi
              ;;
 
-	-j ) shift; gmake_j=$1 ;;
+	-h | --help )
+             help 0
+             ;;
 
-        -b ) export CAM_BASEBACK="YES"
-             ;; 
+	-i ) interactive=true
+             if  $force ; then
+               echo "test_driver.sh: FATAL ERROR: -i and -f were set"
+               exit 1
+             fi
+             ;;
 
-	-h ) echo 'usage: test_driver.sh [-i] [-f] [-h] [-j N] [-b]...'; exit 1 ;;
+	-j ) shift; gmake_j=$1
+             ;;
 
-	* ) echo "test_driver.sh: FATAL ERROR: unrecognized arg: $1"; exit 1 ;;
+        --no-cam )
+            run_cam_regression=false
+            ;;
+
+        --no-cesm )
+            cesm_test_suite="none"
+            ;;
+
+        --rerun-cesm )
+            if [ $# -lt 2 ]; then
+                perr "${1} requires a test_id from a previous run)"
+            fi
+            use_existing="${2}"
+            shift
+            ;;
 
     esac
     shift
 done
 
+# Currently, we don't support non-options, should we?
+if [ $# -gt 0 ]; then
+  perr "Unrecognized arguments: '$*'"
+fi
 
 #will attach timestamp onto end of script name to prevent overwriting
-cur_time=`date '+%H:%M:%S'`
+start_date="`date --iso-8601=seconds`"
+cur_time=`date '+%H%M%S'`
 
 hostname=`hostname`
 
 case $hostname in
 
-    ##yellowstone (or caldera)
-    ye* | ys* | ca* )
-    submit_script="`pwd -P`/test_driver_yellowstone_${cur_time}.sh"
-    submit_script_cb="`pwd -P`/test_driver_yellowstone_cb_${cur_time}.sh"
+    ##cheyenne
+    ch* | r* )
+    submit_script="`pwd -P`/test_driver_cheyenne_${cur_time}.sh"
+    submit_script_cb="`pwd -P`/test_driver_cheyenne_cb_${cur_time}.sh"
+    submit_script_cime="`pwd -P`/test_driver_cheyenne_cime_${cur_time}.sh"
 
     if [ -z "$CAM_ACCOUNT" ]; then
-        export CAM_ACCOUNT=`grep -i "^${LOGNAME}:" /glade/u/ssg/ys/opt/lsf/conf/configdir/project.ncar | cut -f 1 -d "," | cut -f 2 -d ":" `
-        if [ -z "${CAM_ACCOUNT}" ]; then
-            echo "ERROR: unable to locate an account number to charge for this job under user: $LOGNAME"
-            exit 2
-        fi
+        echo "ERROR: Must set the environment variable CAM_ACCOUNT"
+        exit 2
     fi
- 
+
     if [ -z "$CAM_BATCHQ" ]; then
         export CAM_BATCHQ="regular"
     fi
 
-    if [ -z "$CALDERA_BATCHQ" ]; then
-       export CALDERA_BATCHQ="caldera"
-    fi
-
-    if [ "$CALDERA_BATCHQ" = "gpgpu" ]; then
-      exclsnode="#BSUB -x"
-      cald_nodes="#BSUB -n 32"                          # exclusive use of node (not_shared)
-    else
-      cald_nodes="#BSUB -n 15"                          # exclusive use of node (not_shared)
-    fi
-
-    if [ "$CAM_BATCHQ" = "small" ]; then
-        wallclock_limit="2:00"
-    else
-        wallclock_limit="8:00"
-    fi
+    # wallclock for run job
+    wallclock_limit="5:00:00"
 
     if [ $gmake_j = 0 ]; then
-        gmake_j=16
+        gmake_j=36
     fi
 
-    if [ -z "$CAM_TASKS" ]; then
-        CAM_TASKS=32
-    fi
-    if [ -z "$CAM_RESTART_TASKS" ]; then
-        CAM_RESTART_TASKS=$(( 2 * $CAM_TASKS ))
-    fi
+    # run tests on 2 nodes using 18 tasks/node, 2 threads/task
+    CAM_TASKS=36
+    CAM_THREADS=2
+
+    # change parallel configuration on 2 nodes using 32 tasks, 1 threads/task
+    CAM_RESTART_TASKS=32
+    CAM_RESTART_THREADS=1
+
+    mach_workspace="/glade/scratch"
 
 ##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
+
 cat > ${submit_script_cb} << EOF
 #!/bin/sh
 #
+#PBS -N test_dr
+#PBS -q $CAM_BATCHQ
+#PBS -A $CAM_ACCOUNT
+#PBS -l walltime=2:00:00
+#PBS -l select=1:ncpus=36:mpiprocs=36
+#PBS -j oe
+#PBS -l inception=login
 
-#BSUB -a poe                    # use LSF poe elim
-${exclsnode}
-${cald_nodes}
-#BSUB -R "span[ptile=32]"          # max number of tasks (MPI) per node
-#BSUB -o test_dr.o%J              # output filename
-#BSUB -e test_dr.o%J              # error filename
-#BSUB -q $CALDERA_BATCHQ
-#BSUB -W 6:00
-#BSUB -P $CAM_ACCOUNT    
-#BSUB -J test_dr
-if [ -n "\$LSB_JOBID" ]; then   #batch job
-    export JOBID=\${LSB_JOBID}
-    initdir=\${LS_SUBCWD}
-    interactive=false
+export TMPDIR=/glade/scratch/$USER
+
+if [ -n "\$PBS_JOBID" ]; then    #batch job
+   export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
+   initdir=`pwd -P`
+   interactive=false
 else
-    interactive=true
+   interactive=true
 fi
 
-if [ -z "$CAM_RBOPTIONS" ]; then
-    export CAM_RBOPTIONS="build_only"
-fi
+export CAM_RBOPTIONS="build_only"
 
 ## create_newcase looks for account number in ACCOUNT environment variable
 export ACCOUNT=$CAM_ACCOUNT
 
-##omp threads
-export CAM_THREADS=2
-export CAM_RESTART_THREADS=1
-
-##mpi tasks
+# tasks and threads need to be set in the cb script because TCB_ccsm.sh uses
+# them to set the pe_layout
+export CAM_THREADS=$CAM_THREADS
 export CAM_TASKS=$CAM_TASKS
-export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
 
-# This is a floor preventing the use of 32 MPI tasks per node, which is
-# frequently broken, but allowing 32 threads.
-export min_cpus_per_task=1
+module load intel/17.0.1
+module load mkl
+module list
 
-source /glade/apps/opt/lmod/lmod/init/bash
-module purge
-
-if [ "\$CAM_FC" = "PGI" ]; then
-  module load ncarenv/1.0
-  module load ncarbinlibs/1.0
-  module load pgi/12.5
-  module load ncarcompilers
-  module load netcdf/4.2
-  module load pnetcdf/1.3.0
-  module load perlmods
-  export CFG_STRING=" -cc mpicc -fc_type pgi -fc mpif90 -cppdefs -DNO_MPI2 -cppdefs -DNO_MPIMOD "
-else
-  module load intel/15.0.1
-  module load ncarenv/1.0
-  module load ncarbinlibs/1.0
-  module load ncarcompilers/1.0
-  module load netcdf-mpi/4.3.0
-  module load pnetcdf/1.3.0
-  module load mkl/11.0.1
-  module load perlmods
-  export CFG_STRING="-cc mpicc -fc mpif90 -fc_type intel "
-fi
-
+export CFG_STRING="-cc mpicc -fc mpif90 -fc_type intel "
 export MAKE_CMD="gmake -j $gmake_j"
-export CCSM_MACH="yellowstone"
-export MACH_WORKSPACE="/glade/scratch"
-export CPRNC_EXE=${CESMDATAROOT}/tools/cprnc/cprnc
-export ADDREALKIND_EXE=/fs/cgd/csm/tools/addrealkind/addrealkind
+export CCSM_MACH="cheyenne"
+export MACH_WORKSPACE="$mach_workspace"
 dataroot=${CESMDATAROOT}
 echo_arg="-e"
-input_file="tests_pretag_yellowstone"
+input_file="tests_pretag_cheyenne"
 
 EOF
 
@@ -181,95 +250,79 @@ EOF
 cat > ${submit_script} << EOF
 #!/bin/sh
 #
+#PBS -N test_dr
+#PBS -q $CAM_BATCHQ
+#PBS -A $CAM_ACCOUNT
+#PBS -l walltime=$wallclock_limit
+#PBS -l select=2:ncpus=36:mpiprocs=18:ompthreads=2
+#PBS -j oe
 
-#BSUB -a poe                     # use LSF poe elim
-#BSUB -x                          # exclusive use of node (not_shared)
-#BSUB -n 64                       # total tasks needed
-#BSUB -R "span[ptile=16]"          # max number of tasks (MPI) per node
-#BSUB -o test_dr.o%J              # output filename
-#BSUB -e test_dr.o%J              # error filename
-#BSUB -q $CAM_BATCHQ
-#BSUB -W $wallclock_limit
-#BSUB -P $CAM_ACCOUNT   
-#BSUB -J test_dr
-if [ -n "\$LSB_JOBID" ]; then   #batch job
-    export JOBID=\${LSB_JOBID}
-    initdir=\${LS_SUBCWD}
-    interactive=false
+export TMPDIR=/glade/scratch/$USER
+
+if [ -n "\$PBS_JOBID" ]; then    #batch job
+   export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
+   initdir=`pwd -P`
+   interactive=false
 else
-    interactive=true
+   interactive=true
 fi
 
-if [ -z "$CAM_RBOPTIONS" ]; then
-    export CAM_RBOPTIONS="run_only"
-fi
+export CAM_RBOPTIONS="run_only"
+ulimit -c unlimited
 
 ##omp threads
-export CAM_THREADS=2
-export CAM_RESTART_THREADS=1
+export OMP_STACKSIZE=256M
+export CAM_THREADS=$CAM_THREADS
+export CAM_RESTART_THREADS=$CAM_RESTART_THREADS
 
 ##mpi tasks
 export CAM_TASKS=$CAM_TASKS
 export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
 
-# This is a floor preventing the use of 32 MPI tasks per node, which is
-# frequently broken, but allowing 32 threads.
-export min_cpus_per_task=1
+module load intel/17.0.1
+module load mkl
+module list
 
-source /glade/apps/opt/lmod/lmod/init/bash
-module purge
+export CCSM_MACH="cheyenne"
+export MACH_WORKSPACE="$mach_workspace"
+export CPRNC_EXE=${CESMDATAROOT}/tools/cime/tools/cprnc/cprnc.cheyenne
 
-if [ "\$CAM_FC" = "PGI" ]; then
-  module load ncarenv
-  module load ncarbinlibs
-  module load pgi
-  module load ncarcompilers
-  module load netcdf
-  module load pnetcdf
-  module load perlmods
-  export CFG_STRING=" -cc mpicc -fc_type pgi -fc mpif90 -cppdefs -DNO_MPI2 -cppdefs -DNO_MPIMOD "
-else
-  module load intel/15.0.1
-  module load ncarenv/1.0
-  module load ncarbinlibs/1.0
-  module load ncarcompilers/1.0
-  module load netcdf-mpi/4.3.0
-  module load pnetcdf/1.3.0
-  module load mkl/11.0.1
-  module load perlmods
-  export CFG_STRING="-cc mpicc -fc mpif90 -fc_type intel "
-fi
-
-
-
-#export MP_MPILIB=\${MPILIB}
-#CAF export INC_NETCDF=\${NETCDF}/include
-#CAF export LIB_NETCDF=\${NETCDF}/lib
-#export INC_PNETCDF=/contrib/parallel-netcdf-1.2.0-svn961/include
-#export LIB_PNETCDF=/contrib/parallel-netcdf-1.2.0-svn961/lib
-export MAKE_CMD="gmake -j $gmake_j"
-export CCSM_MACH="yellowstone"
-export MACH_WORKSPACE="/glade/scratch"
-export CPRNC_EXE=${CESMDATAROOT}/tools/cprnc/cprnc
-export ADDREALKIND_EXE=/fs/cgd/csm/tools/addrealkind/addrealkind
 dataroot=${CESMDATAROOT}
+
 echo_arg="-e"
-input_file="tests_pretag_yellowstone"
-#input_file="mylist"
+
+input_file="tests_pretag_cheyenne"
+
+EOF
+
+#-------------------------------------------
+
+cat > ${submit_script_cime} << EOF
+#!/bin/bash
+#
+#PBS -N cime-tests
+#PBS -q $CAM_BATCHQ
+#PBS -A $CAM_ACCOUNT
+#PBS -l walltime=4:00:00
+#PBS -l select=1:ncpus=36:mpiprocs=36
+#PBS -j oe
+#PBS -l inception=login
 
 EOF
 
 ##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
     ;;
 
-    ##goldbach
-    go* | g[[:digit:]]* )
-    submit_script="`pwd -P`/test_driver_goldbach_${cur_time}.sh"
+    ##hobart
+    hob* | h[[:digit:]]* )
+    submit_script="`pwd -P`/test_driver_hobart_${cur_time}.sh"
+    submit_script_cime="`pwd -P`/test_driver_hobart_cime_${cur_time}.sh"
     export PATH=/cluster/torque/bin:${PATH}
 
     # Default setting is 12 hr in the long queue; the short queue only
     # allows 1 hr runs.
     wallclock_limit="12:00:00"
+    gmake_j=24
     if [ -z "$CAM_BATCHQ" ]; then
         export CAM_BATCHQ="long"
     elif [[ "$CAM_BATCHQ" == short ]]; then
@@ -277,15 +330,17 @@ EOF
     fi
 
     if [ $gmake_j = 0 ]; then
-        gmake_j=8
+        gmake_j=24
     fi
 
     if [ -z "$CAM_TASKS" ]; then
-        CAM_TASKS=16
+        CAM_TASKS=24
     fi
     if [ -z "$CAM_RESTART_TASKS" ]; then
-        CAM_RESTART_TASKS=$(( $CAM_TASKS / 2 ))
+        CAM_RESTART_TASKS=$(( $CAM_TASKS / 2))
     fi
+
+    mach_workspace="/scratch/cluster"
 
 ##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
 cat > ${submit_script} << EOF
@@ -295,7 +350,7 @@ cat > ${submit_script} << EOF
 # Name of the queue (CHANGE THIS if needed)
 #PBS -q $CAM_BATCHQ
 # Number of nodes (CHANGE THIS if needed)
-#PBS -l walltime=$wallclock_limit,nodes=1:ppn=16
+#PBS -l walltime=$wallclock_limit,nodes=1:ppn=24
 # output file base name
 #PBS -N test_dr
 # Put standard error and standard out in same file
@@ -334,44 +389,203 @@ export P4_GLOBMEMSIZE=500000000
 source /usr/share/Modules/init/sh
 module purge
 
-/usr/local/bin/make_ib_hosts.sh
+export LAPACK_LIBDIR=/usr/lib64
+
 if [ "\$CAM_FC" = "INTEL" ]; then
     module load compiler/intel/14.0.2
     export CFG_STRING=" -cc mpicc -fc_type intel -fc mpif90 -cppdefs -DNO_MPI2 -cppdefs -DNO_MPIMOD "
     export INC_NETCDF=\${NETCDF_PATH}/include
     export LIB_NETCDF=\${NETCDF_PATH}/lib
-#    input_file="tests_posttag_goldbach"
-    input_file="tests_pretag_goldbach_nag"
-    export CCSM_MACH="goldbach_intel"
+    input_file="tests_pretag_hobart_nag"
+    export CCSM_MACH="hobart_intel"
 elif [ "\$CAM_FC" = "NAG" ]; then
-    module load compiler/nag/5.3.1-907
+    module load compiler/nag/6.2
+
     export CFG_STRING="-cc mpicc -fc mpif90 -fc_type nag "
     export INC_NETCDF=\${NETCDF_PATH}/include
     export LIB_NETCDF=\${NETCDF_PATH}/lib
-    input_file="tests_pretag_goldbach_nag"
-    export CCSM_MACH="goldbach_nag"
+    input_file="tests_pretag_hobart_nag"
+    export CCSM_MACH="hobart_nag"
 else
-    module load compiler/pgi/14.10
+    module load compiler/pgi/18.1
     export CFG_STRING=" -cc mpicc -fc_type pgi -fc mpif90 -cppdefs -DNO_MPI2 -cppdefs -DNO_MPIMOD "
     export INC_NETCDF=\${NETCDF_PATH}/include
     export LIB_NETCDF=\${NETCDF_PATH}/lib
-    input_file="tests_pretag_goldbach_pgi"
-    export CCSM_MACH="goldbach_pgi"
+    input_file="tests_pretag_hobart_pgi"
+    export CCSM_MACH="hobart_pgi"
 fi
-export MAKE_CMD="gmake -j $gmake_j"
-export MACH_WORKSPACE="/scratch/cluster"
-export CPRNC_EXE=/fs/cgd/csm/tools/cprnc_64/cprnc
+export MAKE_CMD="gmake --output-sync -j $gmake_j"
+export MACH_WORKSPACE="$mach_workspace"
+export CPRNC_EXE=/fs/cgd/csm/tools/bin/cprnc
 export ADDREALKIND_EXE=/fs/cgd/csm/tools/addrealkind/addrealkind
 dataroot="/fs/cgd/csm"
 echo_arg="-e"
 
 EOF
+
+#-------------------------------------------
+
+cat > ${submit_script_cime} << EOF
+#!/bin/bash
+#
+# Name of the queue (CHANGE THIS if needed)
+#PBS -q $CAM_BATCHQ
+# Number of nodes (CHANGE THIS if needed)
+#PBS -l walltime=$wallclock_limit,nodes=1:ppn=24
+# output file base name
+#PBS -N cime-tests
+# Put standard error and standard out in same file
+#PBS -j oe
+# Export all Environment variables
+#PBS -V
+# End of options
+
+EOF
+
+# To lower number of nodes required for regression testing on Hobart,
+# run CIME test suites sequentially after standalone regression tests
+submit_script_cime="${submit_script}"
+##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
+    ;;
+
+    ##izumi
+    izu* | i[[:digit:]]* )
+    submit_script="`pwd -P`/test_driver_izumi${cur_time}.sh"
+    submit_script_cime="`pwd -P`/test_driver_izumi_cime_${cur_time}.sh"
+    export PATH=/cluster/torque/bin:${PATH}
+
+    # Default setting is 12 hr in the long queue; the short queue only
+    # allows 1 hr runs.
+    wallclock_limit="12:00:00"
+    gmake_j=24
+    if [ -z "$CAM_BATCHQ" ]; then
+        export CAM_BATCHQ="long"
+    elif [[ "$CAM_BATCHQ" == short ]]; then
+        wallclock_limit="1:00:00"
+    fi
+
+    if [ $gmake_j = 0 ]; then
+        gmake_j=24
+    fi
+
+    if [ -z "$CAM_TASKS" ]; then
+        CAM_TASKS=24
+    fi
+    if [ -z "$CAM_RESTART_TASKS" ]; then
+        CAM_RESTART_TASKS=$(( $CAM_TASKS / 2))
+    fi
+
+    mach_workspace="/scratch/cluster"
+
+##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
+cat > ${submit_script} << EOF
+#!/bin/sh
+#
+
+# Name of the queue (CHANGE THIS if needed)
+#PBS -q $CAM_BATCHQ
+# Number of nodes (CHANGE THIS if needed)
+#PBS -l walltime=$wallclock_limit,nodes=1:ppn=24
+# output file base name
+#PBS -N test_dr
+# Put standard error and standard out in same file
+#PBS -j oe
+# Export all Environment variables
+#PBS -V
+# End of options
+
+# Make sure core dumps are created
+ulimit -c unlimited
+
+if [ -n "\$PBS_JOBID" ]; then    #batch job
+    export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
+    initdir=\${PBS_O_WORKDIR}
+fi
+
+if [ "\$PBS_ENVIRONMENT" = "PBS_BATCH" ]; then
+    interactive=false
+else
+    interactive=true
+fi
+
+if [ -z "$CAM_RBOPTIONS" ]; then
+    export CAM_RBOPTIONS="run_and_build"
+fi
+
+##omp threads
+export CAM_THREADS=1
+export CAM_RESTART_THREADS=2
+
+##mpi tasks
+export CAM_TASKS=$CAM_TASKS
+export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
+
+export P4_GLOBMEMSIZE=500000000
+source /usr/share/Modules/init/sh
+module purge
+
+export LAPACK_LIBDIR=/usr/lib64
+
+if [ "\$CAM_FC" = "INTEL" ]; then
+    module load compiler/intel/14.0.2
+    export CFG_STRING=" -cc mpicc -fc_type intel -fc mpif90 -cppdefs -DNO_MPI2 -cppdefs -DNO_MPIMOD "
+    export INC_NETCDF=\${NETCDF_PATH}/include
+    export LIB_NETCDF=\${NETCDF_PATH}/lib
+    input_file="tests_pretag_izumi_nag"
+    export CCSM_MACH="izumi_intel"
+elif [ "\$CAM_FC" = "NAG" ]; then
+    module load compiler/nag/6.2
+
+    export CFG_STRING="-cc mpicc -fc mpif90 -fc_type nag "
+    export INC_NETCDF=\${NETCDF_PATH}/include
+    export LIB_NETCDF=\${NETCDF_PATH}/lib
+    input_file="tests_pretag_izumi_nag"
+    export CCSM_MACH="izumi_nag"
+else
+    module load compiler/pgi/18.1
+    export CFG_STRING=" -cc mpicc -fc_type pgi -fc mpif90 -cppdefs -DNO_MPI2 -cppdefs -DNO_MPIMOD "
+    export INC_NETCDF=\${NETCDF_PATH}/include
+    export LIB_NETCDF=\${NETCDF_PATH}/lib
+    input_file="tests_pretag_izumi_pgi"
+    export CCSM_MACH="izumi_pgi"
+fi
+export MAKE_CMD="gmake --output-sync -j $gmake_j"
+export MACH_WORKSPACE="$mach_workspace"
+export CPRNC_EXE=/fs/cgd/csm/tools/bin/cprnc
+export ADDREALKIND_EXE=/fs/cgd/csm/tools/addrealkind/addrealkind
+dataroot="/fs/cgd/csm"
+echo_arg="-e"
+
+EOF
+
+#-------------------------------------------
+
+cat > ${submit_script_cime} << EOF
+#!/bin/bash
+#
+# Name of the queue (CHANGE THIS if needed)
+#PBS -q $CAM_BATCHQ
+# Number of nodes (CHANGE THIS if needed)
+#PBS -l walltime=$wallclock_limit,nodes=1:ppn=24
+# output file base name
+#PBS -N cime-tests
+# Put standard error and standard out in same file
+#PBS -j oe
+# Export all Environment variables
+#PBS -V
+# End of options
+
+EOF
+
+# To lower number of nodes required for regression testing on izumi,
+# run CIME test suites sequentially after standalone regression tests
+submit_script_cime="${submit_script}"
 ##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
     ;;
 
     ##leehill - always run with CAM_FC=PGI and -i
     le* )
-    submit_script="`pwd -P`/test_driver_leehill${cur_time}.sh"
+    submit_script="`pwd -P`/test_driver_leehill_${cur_time}.sh"
     export PATH=/cluster/torque/bin:${PATH}
 
     # Default setting is 12 hr in the long queue; the short queue only
@@ -387,7 +601,10 @@ EOF
         gmake_j=8
     fi
 
+    mach_workspace="/scratch/cluster"
+
 ##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
+
 cat > ${submit_script} << EOF
 #!/bin/sh
 #
@@ -406,7 +623,7 @@ else
     interactive=true
 fi
 
-echo ${interactive}
+echo "interactive = ${interactive}"
 
 if [ -z "$CAM_RBOPTIONS" ]; then
     export CAM_RBOPTIONS="run_and_build"
@@ -431,382 +648,14 @@ export P4_GLOBMEMSIZE=500000000
     export CCSM_MACH="leehill_pgi"
 #fi
 export MAKE_CMD="gmake -j $gmake_j"
-export MACH_WORKSPACE="/scratch/cluster"
+export MACH_WORKSPACE="$mach_workspace"
 export CPRNC_EXE=/fs/cgd/csm/tools/cprnc_64/cprnc
 export ADDREALKIND_EXE=/fs/cgd/csm/tools/addrealkind/addrealkind
 dataroot="/fs/cgd/csm"
 echo_arg="-e"
 
 EOF
-##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
-    ;;
 
-    ##edison
-    ed* )
-    submit_script="`pwd -P`/test_driver_edison_${cur_time}.sh"
-
-    if [ -z "$CAM_BATCHQ" ]; then
-        export CAM_BATCHQ="regular"
-    fi
-
-    if [ -z "$CAM_TASKS" ]; then
-        CAM_TASKS=16
-    fi
-    if [ -z "$CAM_RESTART_TASKS" ]; then
-        CAM_RESTART_TASKS=$(( $CAM_TASKS / 2 ))
-    fi
-
-##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
-cat > ${submit_script} << EOF
-#!/bin/sh
-#
-
-# Name of the queue (CHANGE THIS if needed)
-#PBS -q $CAM_BATCHQ
-# Number of procs and walltime (CHANGE THIS if needed)
-#PBS -l mppwidth=16,walltime=04:30:00
-# output file base name
-#PBS -N test_dr
-# Put standard error and standard out in same file
-#PBS -j oe
-# Export all Environment variables
-#PBS -V
-# End of options
-
-if [ -n "\$PBS_JOBID" ]; then    #batch job
-    export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
-    initdir=\${PBS_O_WORKDIR}
-fi
-
-if [ "\$PBS_ENVIRONMENT" = "PBS_BATCH" ]; then
-    interactive=false
-else
-    interactive=true
-fi
-
-if [ -z "$CAM_RBOPTIONS" ]; then
-    export CAM_RBOPTIONS="run_and_build"
-fi
-##omp threads
-export CAM_THREADS=1
-export CAM_RESTART_THREADS=2
-
-##mpi tasks
-export CAM_TASKS=$CAM_TASKS
-export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
-
-. /opt/modules/default/init/sh
-module load cray-netcdf
-
-export CFG_STRING="-fc ftn -cc cc -fc_type intel "
-export CCSM_MACH="edison_intel"
-module list
-
-export MPICH_MAX_SHORT_MSG_SIZE=1024
-
-export MAKE_CMD="gmake -j 8"
-export MACH_WORKSPACE="/scratch1/scratchdirs"
-export CPRNC_EXE=/project/projectdirs/ccsm1/tools/cprnc/cprnc
-export ADDREALKIND_EXE=/project/projectdir/ccsm1/tools/addrealkind/addrealkind
-dataroot="/project/projectdirs/ccsm1"
-echo_arg="-e"
-input_file="tests_pretag_edison_intel"
-
-EOF
-##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
-    ;;
-
-
-    ##titan
-    ti* | ti* )
-    submit_script="`pwd -P`/test_driver_titanpf_${cur_time}.sh"
-
-    if [ -z "$CAM_ACCOUNT" ]; then
-	export CAM_ACCOUNT=`showproj -s jaguarpf | tail -1 `
-	if [ -z "${CAM_ACCOUNT}" ]; then
-	    echo "ERROR: unable to locate an account number to charge for this job under user: $LOGNAME"
-	    exit 2
-	fi
-    fi
-
-    if [ -z "$CAM_BATCHQ" ]; then
-        export CAM_BATCHQ="batch"
-    fi
-
-    if [ $gmake_j = 0 ]; then
-        gmake_j=8
-    fi
-
-    machine="titan"
-
-    if [ -z "$CAM_TASKS" ]; then
-        CAM_TASKS=8
-    fi
-    if [ -z "$CAM_RESTART_TASKS" ]; then
-        CAM_RESTART_TASKS=$(( $CAM_TASKS / 2 ))
-    fi
-
-##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
-cat > ${submit_script} << EOF
-#!/bin/sh
-#
-
-# Name of the queue (CHANGE THIS if needed)
-#PBS -q $CAM_BATCHQ
-# Number of procs and walltime (CHANGE THIS if needed)
-#PBS -l walltime=11:58:00,size=12
-# output file base name
-#PBS -N test_dr
-# Put standard error and standard out in same file
-#PBS -j oe
-# Export all Environment variables
-#PBS -V
-#PBS -A $CAM_ACCOUNT
-# End of options
-
-if [ -n "\$PBS_JOBID" ]; then    #batch job
-    export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
-    initdir=\${PBS_O_WORKDIR}
-fi
-
-if [ "\$PBS_ENVIRONMENT" = "PBS_BATCH" ]; then
-    interactive=false
-else
-    interactive=true
-fi
-
-##omp threads
-export CAM_THREADS=1
-export CAM_RESTART_THREADS=2
-
-##mpi tasks
-export CAM_TASKS=$CAM_TASKS
-export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
-
-. /opt/modules/default/init/sh
-module load netcdf
-module switch pgi/10.9.0 pgi/11.8.0
-module list
-
-export INC_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-pgi/include
-export LIB_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-pgi/lib
-
-export MPICH_MAX_SHORT_MSG_SIZE=1024
-
-export MAKE_CMD="gmake -j $gmake_j"
-export CFG_STRING="-fc ftn "
-export CCSM_MACH="$machine"
-export MACH_WORKSPACE="/tmp/work"
-export CPRNC_EXE=/tmp/proj/ccsm/tools/ccsm_cprnc/cprnc
-export ADDREALKIND_EXE=/tmp/proj/ccsm/tools/addrealkind/addrealkind
-dataroot="/tmp/proj/ccsm"
-echo_arg="-e"
-input_file="tests_posttag_titan"
-
-EOF
-##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
-    ;;
-
-    ##hopper
-    ho* | ni* )
-    submit_script="`pwd -P`/test_driver_hopper_${cur_time}.sh"
-
-    if [ -z "$CAM_BATCHQ" ]; then
-        export CAM_BATCHQ="regular"
-    fi
-
-    if [ $gmake_j = 0 ]; then
-        gmake_j=8
-    fi
-
-    if [ -z "$CAM_TASKS" ]; then
-        CAM_TASKS=8
-    fi
-    if [ -z "$CAM_RESTART_TASKS" ]; then
-        CAM_RESTART_TASKS=$(( $CAM_TASKS / 2 ))
-    fi
-
-##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
-cat > ${submit_script} << EOF
-#!/bin/sh
-#
-
-# Name of the queue (CHANGE THIS if needed)
-#PBS -q $CAM_BATCHQ
-# Number of procs and walltime (CHANGE THIS if needed)
-#PBS -l mppwidth=24,walltime=05:58:00
-# output file base name
-#PBS -N test_dr
-# Put standard error and standard out in same file
-#PBS -j oe
-# Export all Environment variables
-#PBS -V
-# End of options
-
-if [ -n "\$PBS_JOBID" ]; then    #batch job
-    export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
-    initdir=\${PBS_O_WORKDIR}
-fi
-
-if [ "\$PBS_ENVIRONMENT" = "PBS_BATCH" ]; then
-    interactive=false
-else
-    interactive=true
-fi
-
-##omp threads
-export CAM_THREADS=1
-export CAM_RESTART_THREADS=2
-
-##mpi tasks
-export CAM_TASKS=$CAM_TASKS
-export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
-
-. /opt/modules/default/init/sh
-module unload PrgEnv-pathscale
-module unload PrgEnv-intel
-module unload PrgEnv-pgi
-module load netcdf
-
-if [ "\$CAM_FC" = "PATHSCALE" ]; then
-    module load PrgEnv-pathscale
-    export INC_NETCDF=\${CRAY_NETCDF_DIR}/pathscale/109/include
-    export LIB_NETCDF=\${CRAY_NETCDF_DIR}/pathscale/109/lib
-    export CFG_STRING="-fc ftn -cc cc -linker ftn -fc_type pathscale "
-    export CCSM_MACH="hopper_pathscale"
-    export USER_CC="cc"
-elif [ "\$CAM_FC" = "INTEL" ]; then
-    module load PrgEnv-intel
-    export INC_NETCDF=\${CRAY_NETCDF_DIR}/intel/109/include
-    export LIB_NETCDF=\${CRAY_NETCDF_DIR}/intel/109/lib
-    export CFG_STRING="-fc ftn -cc cc -fc_type intel "
-    export CCSM_MACH="hopper_intel"
-else
-    module load PrgEnv-pgi
-    export INC_NETCDF=\${CRAY_NETCDF_DIR}/pgi/109/include
-    export LIB_NETCDF=\${CRAY_NETCDF_DIR}/pgi/109/lib
-    export CFG_STRING="-fc ftn -cc cc -fc_type pgi "
-    export CCSM_MACH="hopper_pgi"
-fi
-module list
-
-export MPICH_MAX_SHORT_MSG_SIZE=1024
-
-export MAKE_CMD="gmake -j $gmake_j"
-export MACH_WORKSPACE="/scratch/scratchdirs"
-export CPRNC_EXE=/project/projectdirs/ccsm1/tools/cprnc/cprnc
-export ADDREALKIND_EXE=/project/projectdir/ccsm1/tools/addrealkind/addrealkind
-dataroot="/project/projectdirs/ccsm1"
-echo_arg="-e"
-input_file="tests_pretag_goldbach_pgi"
-
-EOF
-##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
-    ;;
-
-
-    ##lynx
-    ly* )
-    submit_script="`pwd -P`/test_driver_lynx_${cur_time}.sh"
-
-    if [ -z "$CAM_BATCHQ" ]; then
-        export CAM_BATCHQ="regular"
-    fi
-
-    if [ $gmake_j = 0 ]; then
-        gmake_j=8
-    fi
-
-    if [ -z "$CAM_TASKS" ]; then
-        CAM_TASKS=18
-    fi
-    if [ -z "$CAM_RESTART_TASKS" ]; then
-        CAM_RESTART_TASKS=$(( $CAM_TASKS * 4 / 3 ))
-    fi
-
-##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
-cat > ${submit_script} << EOF
-#!/bin/sh
-#
-
-# Name of the queue (CHANGE THIS if needed)
-#PBS -q $CAM_BATCHQ
-# Number of procs and walltime (CHANGE THIS if needed)
-#PBS -l mppwidth=72,walltime=05:58:00
-# output file base name
-#PBS -N test_dr
-# Put standard error and standard out in same file
-#PBS -j oe
-# Export all Environment variables
-#PBS -V
-# #PBS -A $CAM_ACCOUNT
-#PBS -A UT-NTNL0121
-# End of options
-
-if [ -n "\$PBS_JOBID" ]; then    #batch job
-    export JOBID=\`echo \${PBS_JOBID} | cut -f1 -d'.'\`
-    initdir=\${PBS_O_WORKDIR}
-fi
-
-if [ "\$PBS_ENVIRONMENT" = "PBS_BATCH" ]; then
-    interactive=false
-else
-    interactive=true
-fi
-
-##omp threads
-export CAM_THREADS=4
-export CAM_RESTART_THREADS=3
-
-##mpi tasks
-export CAM_TASKS=$CAM_TASKS
-export CAM_RESTART_TASKS=$CAM_RESTART_TASKS
-
-. /opt/modules/default/init/sh
-module unload PrgEnv-pathscale
-module unload PrgEnv-intel
-module unload PrgEnv-pgi
-module unload pgi
-module unload intel
-module unload pathscale
-
-module load netcdf
-
-if [ "\$CAM_FC" = "PATHSCALE" ]; then
-    module load PrgEnv-pathscale
-    export INC_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-pathscale/include
-    export LIB_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-pathscale/lib
-    export CFG_STRING="-fc ftn -cc cc -linker ftn -fc_type pathscale "
-    export CCSM_MACH="lynx_pathscale"
-    export USER_CC="cc"
-elif [ "\$CAM_FC" = "INTEL" ]; then
-    module load PrgEnv-intel
-    module switch intel intel/12.1.0
-    export INC_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-intel/include
-    export LIB_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-intel/lib
-    export CFG_STRING="-fc ftn -cc cc -fc_type intel "
-    export CCSM_MACH="lynx_intel"
-else
-    module load PrgEnv-pgi
-    module switch pgi pgi/11.10.0
-    export INC_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-pgi/include
-    export LIB_NETCDF=\${CRAY_NETCDF_DIR}/netcdf-pgi/lib
-    export CFG_STRING="-fc ftn -cc cc -fc_type pgi "
-    export CCSM_MACH="lynx_pgi"
-fi
-module list
-
-export MPICH_MAX_SHORT_MSG_SIZE=1024
-
-export MAKE_CMD="gmake -j $gmake_j"
-export MACH_WORKSPACE="/ptmp"
-export CPRNC_EXE=/glade/proj3/cseg/tools/cprnc.lynx/cprnc
-export ADDREALKIND_EXE=/glade/proj3/cseg/tools/addrealkind/addrealkind
-dataroot="/glade/proj3/cseg"
-echo_arg="-e"
-input_file="tests_posttag_titan"
-
-EOF
 ##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
     ;;
 
@@ -816,17 +665,9 @@ esac
 
 ##vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv writing to batch script vvvvvvvvvvvvvvvvvvv
 
-cb_flag=0
-
-
 for file in ${submit_script} ${submit_script_cb}
 do
 cat >> ${file} << EOF
-
-## Most machines don't need to set this, so default to 1.
-if [[ -z "\$min_cpus_per_task" ]]; then
-    export min_cpus_per_task=1
-fi
 
 ##check if interactive job
 if  \$interactive ; then
@@ -843,16 +684,24 @@ fi
 ##establish script dir and cam_root
 if [ -f \${initdir}/test_driver.sh ]; then
     export CAM_SCRIPTDIR=\`cd \${initdir}; pwd \`
-    export CAM_ROOT=\`cd \${CAM_SCRIPTDIR}/../../../../.. ; pwd \`
-else
-    if [ -n "\${CAM_ROOT}" ] && [ -f \${CAM_ROOT}/models/atm/cam/test/system/test_driver.sh ]; then
-	export CAM_SCRIPTDIR=\`cd \${CAM_ROOT}/models/atm/cam/test/system; pwd \`
+    if [ -d "\${CAM_SCRIPTDIR}/../../components" ]; then
+        export CAM_ROOT=\`cd \${CAM_SCRIPTDIR}/../.. ; pwd \`
     else
-	echo "ERROR: unable to determine script directory "
-	echo "       if initiating batch job from directory other than the one containing test_driver.sh, "
-	echo "       you must set the environment variable CAM_ROOT to the full path of directory containing "
-        echo "       <models>. "
-	exit 3
+        export CAM_ROOT=\`cd \${CAM_SCRIPTDIR}/../../../.. ; pwd \`
+    fi
+else
+    if [ -n "\${CAM_ROOT}" ] && [ -f \${CAM_ROOT}/components/cam/test/system/test_driver.sh ]; then
+	export CAM_SCRIPTDIR=\`cd \${CAM_ROOT}/components/cam/test/system; pwd \`
+    else
+	if [ -n "\${CAM_ROOT}"  -a  -f "\${CAM_ROOT}/test/system/test_driver.sh" ]; then
+            export CAM_SCRIPTDIR=\`cd \${CAM_ROOT}/test/system; pwd \`
+        else
+            echo "ERROR: unable to determine script directory "
+	    echo "       if initiating batch job from directory other than the one containing test_driver.sh, "
+	    echo "       you must set the environment variable CAM_ROOT to the full path of directory containing "
+            echo "       <components>. "
+	    exit 3
+        fi
     fi
 fi
 
@@ -868,7 +717,7 @@ fi
 
 ##setup test work directory
 if [ -z "\$CAM_TESTDIR" ]; then
-    export CAM_TESTDIR=\${MACH_WORKSPACE}/\$LOGNAME/test-driver.\${JOBID}
+    export CAM_TESTDIR=$mach_workspace/\$LOGNAME/test-driver.\${JOBID}
     if [ -d \$CAM_TESTDIR ]; then
         rm -rf \$CAM_TESTDIR
     fi
@@ -900,7 +749,7 @@ if [ ! -f \${input_file} ]; then
     exit 5
 fi
 
-if \$interactive ; then
+if  \$interactive ; then
     echo "reading tests from \${input_file}"
 else
     echo "reading tests from \${input_file}" >> \${cam_log}
@@ -910,7 +759,11 @@ num_tests=\`wc -w < \${input_file}\`
 echo "STATUS OF CAM TESTING UNDER JOB \${JOBID};  scheduled to run \$num_tests tests from:" >> \${cam_status}
 echo "\$input_file" >> \${cam_status}
 echo "" >> \${cam_status}
-if [ ! \$interactive ]; then
+echo "Start testing at \$(date)" >> \${cam_status}
+echo "On node \$(hostname)" >> \${cam_status}
+uptime >> \${cam_status}
+echo "" >> \${cam_status}
+if  \$interactive ; then
     echo "see \${cam_log} for more detailed output" >> \${cam_status}
 fi
 echo "" >> \${cam_status}
@@ -957,9 +810,6 @@ for test_id in \${test_list}; do
             >> \${cam_log}
     fi
 
-#    if [ \${#status_out} -gt 64 ]; then
-#        status_out=\`echo "\${status_out}" | cut -c1-70\`
-#    fi
     while [ \${#status_out} -lt 95 ]; do
         status_out="\${status_out}."
     done
@@ -968,7 +818,7 @@ for test_id in \${test_list}; do
 
 
 
-    if \$interactive ; then
+    if  \$interactive ; then
         \${CAM_SCRIPTDIR}/\${test_cmd} \$CAM_RBOPTIONS
         rc=\$?
     else
@@ -989,14 +839,14 @@ for test_id in \${test_list}; do
         pending_tests="YES"
     else
         echo "FAIL! rc= \$rc at \$(date)" >> \${cam_status}
-	if \$interactive ; then
+        if  \$interactive ; then
 	    if [ "\$CAM_SOFF" != "FALSE" ]; then
 		echo "stopping on first failure"
 		echo "stopping on first failure" >> \${cam_status}
 		exit 6
 	    fi
 	else
-	    if [ "\$CAM_SOFF" = "TRUE" ]; then
+	    if [ "\$CAM_SOFF" == "TRUE" ]; then
 		echo "stopping on first failure" >> \${cam_status}
 		echo "stopping on first failure" >> \${cam_log}
 		exit 6
@@ -1013,39 +863,87 @@ else
     echo "end of input" >> \${cam_log}
 fi
 
-if [ \$skipped_tests = "YES" ]; then
+if [ "\$skipped_tests" = "YES" ]; then
     echo "*  please verify that any skipped tests are not required of your cam commit" >> \${cam_status}
 fi
-if [ \$pending_tests = "YES" ]; then
+if [ "\$pending_tests" = "YES" ]; then
     echo "** tests that are pending must be checked manually for a successful completion" >> \${cam_status}
-    if  ! \$interactive ; then
+    if  \$interactive ; then
 	echo "   see the test's output in \${cam_log} " >> \${cam_status}
 	echo "   for the location of test results" >> \${cam_status}
     fi
 fi
-
 EOF
+
 ##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ writing to batch script ^^^^^^^^^^^^^^^^^^^
 
-cb_flag=`expr $cb_flag + 1`
 done
-cat >> ${submit_script} << EOF
-exit 0
-EOF
-if [ ${submit_script_cb} ]; then
-cat >> ${submit_script_cb} << EOF
-echo "bsub < ${submit_script}" >> \${cam_log}
-bsub < ${submit_script} >> \${cam_log} 2>&1
-exit 0
-EOF
+
+## Make sure we have a place to store test summaries
+if [ ! -f "${SUMMARY_FILE}" ]; then
+  touch "${SUMMARY_FILE}"
 fi
 
+##vvvvvvvvvvvvvvvvvvvvvvvvvvvvv add summary to output or email vvvvvvvvvvvvvvv
+
+cat >> ${submit_script} << EOF
+banner="========================================"
+subj="CAM regression test summary from \$CCSM_MACH"
+np="Num PASS = \$( grep PASS \${cam_status} | wc -l )"
+nf="Num FAIL = \$( grep FAIL \${cam_status} | wc -l )"
+js="$CAM_FC job started at ${start_date}"
+je="$CAM_FC job finished at \$( date --iso-8601=seconds )"
+echo "${banner}" | tee -a ${SUMMARY_FILE}
+echo "\${js}" | tee -a ${SUMMARY_FILE}
+echo "" | tee -a ${SUMMARY_FILE}
+echo "\${np}" | tee -a ${SUMMARY_FILE}
+echo "\${nf}" | tee -a ${SUMMARY_FILE}
+if [ "${nf}" != "Num FAIL = 0" ]; then
+  grep FAIL \${cam_status} | tee -a ${SUMMARY_FILE}
+fi
+echo "" | tee -a ${SUMMARY_FILE}
+echo "\${je}" | tee -a ${SUMMARY_FILE}
+echo "" | tee -a ${SUMMARY_FILE}
+EOF
+
+if $cam_email_summary; then
+  cat >> ${submit_script} << EOF
+echo -e "\${js}\n\n\${np}\n\${nf}\n\n${je}" | mail -s "\${subj}" ${EMAIL}
+EOF
+fi
+if [ "${submit_script}" != "${submit_script_cime}" ]; then
+  echo "exit 0" >> ${submit_script}
+fi
+
+# If setting up a separate "configure and build" script then add command to
+# submit the run script after builds are done.
+if [ -n "${submit_script_cb}" ]; then
+
+    case $hostname in
+        # cheyenne
+        chey* | r* )
+            batch_queue_submit='qsub '
+	    ;;
+        *)
+            echo "ERROR: machine $hostname not currently supported for batch builds"
+            exit 1
+            ;;
+    esac
+
+cat >> ${submit_script_cb} << EOF
+echo "$batch_queue_submit ${submit_script}" >> \${cam_log}
+$batch_queue_submit ${submit_script} >> \${cam_log} 2>&1
+exit 0
+EOF
+
+fi
+
+##^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ add summary to output or email ^^^^^^^^^^^^^^^
 
 for file in ${submit_script} ${submit_script_cb}
 do
   chmod a+x $file
 done
-
 
 if $interactive ; then
     if [ ${submit_script_cb} ]; then
@@ -1056,45 +954,179 @@ if $interactive ; then
     exit 0
 fi
 
-if ! $force ; then 
+if ! $force ; then
     echo ""
     echo "**********************"
     echo "$submit_script has been created and will be submitted to the batch queue..."
     echo "(ret) to continue, (a) to abort"
     read ans
     case $ans in
-	[aA]* ) 
+	[aA]* )
 	echo "aborting...type ./test_driver.sh -h for help message"
 	exit 0
 	;;
     esac
 fi
 
-echo "submitting..."
-case $hostname in
-    ##firefly
-    ff* )  bsub < ${submit_script};;
+##vvvvvvvvvvvvvvvvvvvvvv start CAM aux test suite vvvvvvvvvvvvvvvvvvvvvvvvvvvv
 
-    ##yellowstone
-    ye* | ys* | ca*)  bsub < ${submit_script_cb};;
+cesm_test_mach=""
+comp=""
+if [ "${hostname:0:4}" == "chey" ]; then
+  cesm_test_mach="cheyenne"
+fi
+if [ "${hostname:0:6}" == "hobart" ]; then
+  cesm_test_mach="hobart"
+fi
+if [ "${hostname:0:5}" == "izumi" ]; then
+  cesm_test_mach="izumi"
+fi
+if [ -n "${CAM_FC}" ]; then
+  comp="_${CAM_FC,,}"
+fi
 
-    ##goldbach
-    go* | g[[:digit:]]* )  qsub ${submit_script};;
+if [ "${cesm_test_suite}" != "none" -a -n "${cesm_test_mach}" ]; then
+  if [ "${hostname:0:6}" != "hobart" ]; then
+    module load python
+  fi
+  if [ "${hostname:0:5}" != "izumi" ]; then
+    module load python
+  fi
+
+  for cesm_test in ${cesm_test_suite}; do
+    testargs="--xml-category ${cesm_test} --xml-machine ${cesm_test_mach}"
+
+    if [ -n "${use_existing}" ]; then
+      test_id="${use_existing}"
+    else
+      idstr="`date '+%Y%m%d%H%M%S'`"
+      test_id=${cesm_test}${comp}"_"${idstr}
+    fi
+    currdir="`pwd -P`"
+    logfile="${currdir}/${test_id}.log"
+    tdir="$( cd $( dirname $0 ); pwd -P )"
+    trial_dir="$( dirname $( dirname $( dirname $( dirname ${tdir} ) ) ) )"
+    if [ -d "${trial_dir}/cime/scripts" ]; then
+      root_dir=$trial_dir
+    else
+      root_dir="$( dirname $( dirname ${tdir} ) )"
+    fi
+
+    script_dir="${root_dir}/cime/scripts"
+    if [ ! -d "${script_dir}" ]; then
+      echo "ERROR: CIME scripts dir not found at ${script_dir}"
+      exit 1
+    fi
+    if [ ! -x "${script_dir}/create_test" ]; then
+      echo "ERROR: create_test script dir not found in ${script_dir}"
+      exit 1
+    fi
+
+    ##setup CESM work directory
+    cesm_testdir=$mach_workspace/$LOGNAME/$test_id
+
+    if [ -e ${cesm_testdir} ]; then
+      if [ -n "${use_existing}" ]; then
+        echo " Using existing tests in ${cesm_testdir}"
+      else
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! "
+        echo "!! ERROR: ${cesm_testdir} already exists and << --rerun-cesm >> was not specified "
+        echo "!!        Either remove ${cesm_testdir} or specify << --rerun-cesm >> "
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! "
+        exit 1
+      fi
+    else
+      mkdir $cesm_testdir
+    fi
+
+    if [ -n "${CAM_FC}" ]; then
+      testargs="${testargs} --xml-compiler ${CAM_FC,,}"
+    else
+      testargs="${testargs} --xml-compiler intel"
+    fi
+    testargs="${testargs} --queue ${CAM_BATCHQ} --test-root ${cesm_testdir} --output-root ${cesm_testdir}"
+    if [ -n "${CAM_ACCOUNT}" ]; then
+      testargs="${testargs} --project ${CAM_ACCOUNT}"
+    fi
+    testargs="${testargs} --test-id ${test_id}"
+    if [ -n "${BL_TESTDIR}" ]; then
+      testargs="${testargs} --compare $( basename ${BL_TESTDIR} )"
+    fi
+    if [ -n "${use_existing}" ]; then
+      testargs="${testargs} --use-existing"
+    fi
+    if [ -n "${archive_dir}" ]; then
+      testargs="${testargs} --generate ${archive_dir}"
+    fi
+
+    echo ""
+    echo "CESM test results will be in: ${cesm_testdir}" | tee ${logfile}
+    echo "Running ./create_test ${testargs}"             | tee -a ${logfile}
+
+    if [ "${hostname:0:2}" == "ch" ]; then
+      echo "cd ${script_dir}" >> ${submit_script_cime}
+      echo './create_test' ${testargs} >> ${submit_script_cime}
+      chmod u+x ${submit_script_cime}
+      qsub ${submit_script_cime}
+    fi
+
+    if [ "${hostname:0:6}" == "hobart" ]; then
+      echo "cd ${script_dir}" >> ${submit_script_cime}
+      echo './create_test' ${testargs} >> ${submit_script_cime}
+      if [ "${submit_script}" != "${submit_script_cime}" ]; then
+        chmod u+x ${submit_script_cime}
+        qsub ${submit_script_cime}
+      fi
+    fi
+
+    if [ "${hostname:0:5}" == "izumi" ]; then
+      echo "cd ${script_dir}" >> ${submit_script_cime}
+      echo './create_test' ${testargs} >> ${submit_script_cime}
+      if [ "${submit_script}" != "${submit_script_cime}" ]; then
+        chmod u+x ${submit_script_cime}
+        qsub ${submit_script_cime}
+      fi
+    fi
+
+  done
+fi
+
+##^^^^^^^^^^^^^^^^^^^^^^ start CAM aux test suite ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+if $run_cam_regression; then
+
+  echo ""
+  echo "submitting cam regression tests..."
+
+  case $hostname in
+    ##cheyenne
+    ch* | r* )
+	qsub ${submit_script_cb}
+	;;
+
+    ##hobart
+    hob* | h[[:digit:]]* )
+#        qsub ${submit_script}
+    echo "************************************************************************************************************"
+    echo "****************   IMPORTANT *******************************************************************************"
+    echo "************************************************************************************************************"
+    echo "hobart testing is disabled - use izumi or find this message in test_driver.sh and uncomment the qsub command"
+    echo "************************************************************************************************************"
+    echo "************************************************************************************************************"
+        ;;
+
+    ##izumi
+    izu* | i[[:digit:]]* )
+        qsub ${submit_script}
+        ;;
 
     ##leehill
-    le* ) ${submit_script};;
+    le* )
+        ${submit_script}
+        ;;
 
-    ##edison
-    ed* ) qsub ${submit_script};;
+  esac
 
-    ##jaguarpf/titan
-    ja* | yo* ) qsub ${submit_script};;
+fi
 
-    ##hopper
-    ho* | ni* ) qsub ${submit_script};;
-
-    ##lynx
-    ly* ) qsub ${submit_script};;
-
-esac
 exit 0

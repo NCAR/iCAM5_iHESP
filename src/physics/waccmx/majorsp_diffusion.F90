@@ -24,7 +24,7 @@ module majorsp_diffusion
   use shr_kind_mod, only: r8 => shr_kind_r8
   use ppgrid,       only: pcols, pver, pverp
   use constituents, only: pcnst, cnst_name, cnst_get_ind, cnst_mw
-  use spmd_utils,   only: masterproc
+  use cam_history,  only: outfld
 
   implicit none
 
@@ -60,8 +60,6 @@ module majorsp_diffusion
 
   real(r8) :: o2mmr_ubc(pcols)                           ! MMR of O2 at top boundary (specified)
   real(r8) :: ommr_ubc(pcols)                            ! MMR of O at top boundary
-  real(r8) :: t_ubc(pcols)                               ! T at top boundary
-
 
   character(len=8), private :: mjdiffnam(2)              ! names of v-diff tendencies
 
@@ -74,14 +72,12 @@ contains
     ! Define constants and coeficient matrices, phi and delta, in the initialization.
     !-------------------------------------------------------------------------------
     use constituents, only: cnst_mw, cnst_fixed_ubc
-    use cam_history,  only: addfld, add_default, phys_decomp
+    use cam_history,  only: addfld, add_default
     use phys_control, only: phys_getopts
 
     !------------------------------Arguments--------------------------------
 
     !---------------------------Local storage-------------------------------
-    integer :: k, m
-
     logical :: history_waccmx
 
     call phys_getopts(history_waccmx_out=history_waccmx)
@@ -89,9 +85,9 @@ contains
     !-----------------------------------------------------------
     ! Get required molecular weights
     !-----------------------------------------------------------
-    call cnst_get_ind('O2', indx_O2, abort=.false.)
-    call cnst_get_ind('O',  indx_O, abort=.false.)
-    call cnst_get_ind('H',  indx_H, abort=.false.)
+    call cnst_get_ind('O2', indx_O2, abort=.true.)
+    call cnst_get_ind('O',  indx_O, abort=.true.)
+    call cnst_get_ind('H',  indx_H, abort=.true.)
 
     rmass_o2 = cnst_mw(indx_O2)
     rmass_o1 = cnst_mw(indx_O)
@@ -118,13 +114,16 @@ contains
 
    ! Set names of major diffusion tendencies and declare them as history variables
     mjdiffnam(1) = 'MD'//cnst_name(indx_O2)
-    call addfld (mjdiffnam(1),'kg/kg/s ',pver, 'A','Major diffusion of '//cnst_name(indx_O2),phys_decomp)
+    call addfld (mjdiffnam(1),(/ 'lev' /), 'A','kg/kg/s','Major diffusion of '//cnst_name(indx_O2))
     mjdiffnam(2) = 'MD'//cnst_name(indx_O)
-    call addfld (mjdiffnam(2),'kg/kg/s ',pver, 'A','Major diffusion of '//cnst_name(indx_O),phys_decomp)
+    call addfld (mjdiffnam(2),(/ 'lev' /), 'A','kg/kg/s','Major diffusion of '//cnst_name(indx_O))
+
+    call addfld ('MBARV' , (/ 'lev' /),'I','g/mole','Variable Mean Mass')
 
     if (history_waccmx) then
        call add_default (mjdiffnam(1), 1, ' ')
        call add_default (mjdiffnam(2), 1, ' ')
+       call add_default ('MBARV', 1, ' ')
     end if
 
   end subroutine mspd_init
@@ -136,10 +135,8 @@ contains
 ! interface routine. output tendency.
 !-------------------------------------------------------------------------------
     use physics_types,  only: physics_state, physics_ptend
-    use cam_history,    only: outfld
     use upper_bc,       only: ubc_get_vals
     use physconst,      only: rairv, mbarv
-    use ref_pres,       only: ntop_molec
 
 !------------------------------Arguments--------------------------------
     real(r8), intent(in) :: ztodt                  ! 2 delta-t
@@ -150,10 +147,10 @@ contains
     real(r8) :: tendo2o(pcols,pver,2)              ! temporary array for o2 and o tendency
     real(r8) :: ubc_mmr(pcols,pcnst)               ! upper bndy mixing ratios (kg/kg)
     real(r8) :: ubc_t(pcols)                       ! upper bndy temperature (K)
-    real(r8) :: ubc_flux(pcnst)                    ! upper bndy flux (kg/s/m^2)
+    real(r8) :: ubc_flux(pcols,pcnst)              ! upper bndy flux (kg/s/m^2)
     integer :: lchnk                               ! chunk identifier
     integer :: ncol                                ! number of atmospheric columns
-    integer :: i, k, m                             ! indexing integers
+    integer :: i, k                                ! indexing integers
 
     !--------------------------------------------------------------------------------------------
     ! local constants
@@ -178,10 +175,10 @@ contains
        !-------------------------------------------
        ! set upper boundary values of O2 and O MMR.
        !-------------------------------------------
-       call ubc_get_vals (lchnk, ncol, ntop_molec, state%pint, state%zi, ubc_t, ubc_mmr, ubc_flux)
+       call ubc_get_vals( lchnk, ncol, state%pint, state%zi, state%t, state%q, &
+                          state%omega, state%phis, ubc_t, ubc_mmr, ubc_flux )
        o2mmr_ubc(:ncol) = ubc_mmr(:ncol,indx_O2)
        ommr_ubc(:ncol) = ubc_mmr(:ncol,indx_O)
-       t_ubc(:ncol) = ubc_t(:ncol)
     endif
 
     ! Since this is a combined tendency, retain the old name for output
@@ -194,7 +191,7 @@ contains
     !---------------------------------------------
     call mspdiff (lchnk      ,ncol       ,                                     &
                   state%t    ,ptend%q    ,state%pmid ,state%pint ,             &
-                  state%pdel ,state%rpdel,ztodt      ,rairv(:,:,lchnk),  mbarv(:,:,lchnk))
+                  state%pdel ,ztodt      ,rairv(:,:,lchnk),  mbarv(:,:,lchnk))
 
     !---------------------------------------------
     ! Update O2 and O tendencies and output
@@ -217,14 +214,14 @@ contains
 !===============================================================================
   subroutine mspdiff (lchnk      ,ncol       ,                                     &
                       t          ,q          ,pmid       ,pint       ,             &
-                      pdel       ,rpdel      ,ztodt      ,rairv      ,mbarv)
+                      pdel       ,ztodt      ,rairv      ,mbarv)
 !-----------------------------------------------------------------------
 ! Driver routine to compute major species diffusion (O2 and O).
 
 ! Turbulent diffusivities and boundary layer nonlocal transport terms are 
 ! obtained from the turbulence module.
 !---------------------------Arguments------------------------------------
-    use ref_pres,     only: lev1 => ntop_molec, lev0 => nbot_molec
+    use ref_pres,     only: lev0 => nbot_molec
     use physconst,    only: gravit
 
     integer, intent(in) :: lchnk                   ! chunk identifier
@@ -233,7 +230,6 @@ contains
     real(r8), intent(in) :: pmid(pcols,pver)       ! midpoint pressures
     real(r8), intent(in) :: pint(pcols,pverp)      ! interface pressures
     real(r8), intent(in) :: pdel(pcols,pver)       ! thickness between interfaces
-    real(r8), intent(in) :: rpdel(pcols,pver)      ! 1./pdel
     real(r8), intent(in) :: ztodt                  ! 2 delta-t
     real(r8), intent(in) :: rairv(pcols,pver)                  ! composition dependent gas "constant"
     real(r8), intent(in) :: mbarv(pcols,pver)                  ! composition dependent mean mass
@@ -253,7 +249,7 @@ contains
     real(r8) :: difk(pcols,pverp)                  ! eddy diffusion normalized by scale height (1/sec)
     real(r8) :: expzm(pcols,pver)                  ! exp(-z)=pmid/ptref
     real(r8) :: expzi(pcols,pverp)                 ! exp(-z)=pint/ptref
-    real(r8) :: wks1(pcols),wks2(pcols)
+    real(r8) :: wks1(pcols)
     real(r8) :: wks3(pcols),wks4(pcols)            ! temporary working arrays
     real(r8) :: psclht(pcols,pverp)                ! pressure scale height
     real(r8) :: p_ubc(pcols)                       ! extrapolated pressure at upper boundary level, pmid(1)^2=pmid(2)*p_ubc
@@ -275,15 +271,14 @@ contains
     real(r8) :: gammawk(2,2,pcols,pver)            ! working arrays for blktri solver.
     real(r8) :: ywk(2,pcols,pver)                  ! working arrays for blktri solver.
     real(r8) :: xwk(2,pcols,pver)                  ! working arrays for blktri solver.
-    integer  :: lev1p1                             ! ntop_molec+1
-    integer  :: nlevs                              ! lev0-lev1p1+1
+    integer  :: nlevs                              ! number of levels
+    real(r8) :: t_ubc(pcols)                       ! Temperature at top boundary
     integer  :: i, k, km, kp, m, ktmp, isp, kk, kr
 
     !---------------------------------------------------
     ! Set vertical grid and get time step for diffusion
     !---------------------------------------------------
-    lev1p1 = lev1+1
-    nlevs = lev0-lev1+1
+    nlevs = lev0
     rztodt = 1._r8/ztodt
 
     !------------------------------------------------------
@@ -337,6 +332,7 @@ contains
     enddo
     do i=1,ncol
        rair_ubc(i) = 1.5_r8*rairv(i,1)-.5_r8*rairv(i,2)
+       t_ubc(i) = 1.5_r8*t(i,1)-.5_r8*t(i,2)
        psclht(i,1) = .5_r8*(rairv(i,1)*t(i,1)+rair_ubc(i)*t_ubc(i))/gravit
        psclht(i,pverp) = psclht(i,pver)
     enddo
@@ -350,6 +346,7 @@ contains
        enddo
     enddo
 
+    call outfld ('MBARV', mbarv(:,:), pcols, lchnk)
 
     !------------------------------------------------------------------
     ! Set up mean mass working array
@@ -407,7 +404,7 @@ contains
 
     km = 1
     kp = 2
-    do k=lev0,lev1p1,-1
+    do k=lev0,2,-1
        ktmp = km
        km = kp
        kp = ktmp
@@ -514,7 +511,7 @@ contains
     !----------------------------
     ! Upper boundary
     !----------------------------
-    k=lev1
+    k=1
     ktmp = km
     km = kp
     kp = ktmp
@@ -644,7 +641,7 @@ contains
     call blktri(apk,aqk,ark,rfk,pcols,1,ncol,pver,1,nlevs,    &
                 betawk, gammawk, ywk, xwk)
 
-    do k=lev0,lev1,-1
+    do k=lev0,1,-1
        kr = lev0-k+1
        do i=1,ncol
           o2(i,k) = xwk(1,i,kr)
@@ -656,7 +653,7 @@ contains
     ! Ensure non-negative O2 and O and check for N2 greater than one
     !---------------------------------------------------------------
     do i=1,ncol
-       do k=lev1,lev0
+       do k=1,lev0
 
           if (o2(i,k) < mmrMin) o2(i,k) = mmrMin
           if (o1(i,k) < mmrMin) o1(i,k) = mmrMin

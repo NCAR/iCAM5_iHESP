@@ -147,7 +147,7 @@ contains
 
 !===============================================================================
 
-  subroutine chem_timestep_tend( state, ptend, cam_in, cam_out, dt, pbuf, fh2o, fsds )
+  subroutine chem_timestep_tend( state, ptend, cam_in, cam_out, dt, pbuf, fh2o)
     use physics_buffer,           only: physics_buffer_desc
     use cam_history,      only: outfld
     use camsrfexch,       only: cam_in_t, cam_out_t
@@ -155,26 +155,26 @@ contains
     !
     ! Arguments:
     !
-    real(r8),            intent(in)    :: dt              ! time step
-    type(physics_state), intent(in)    :: state           ! Physics state variables
-    type(physics_ptend), intent(out)   :: ptend           ! indivdual parameterization tendencies
+    real(r8),            intent(in)    :: dt          ! time step
+    type(physics_state), intent(in)    :: state       ! Physics state variables
+    type(physics_ptend), intent(out)   :: ptend       ! indivdual parameterization tendencies
     type(cam_in_t),      intent(inout) :: cam_in
     type(cam_out_t),     intent(in)    :: cam_out
-    real(r8),            intent(out)   :: fh2o(pcols)     ! h2o flux to balance source from chemistry
     type(physics_buffer_desc), pointer :: pbuf(:)
+    real(r8), optional,  intent(out)   :: fh2o(pcols) ! h2o flux to balance source from chemistry
     
-    real(r8),            intent(in)    :: fsds(pcols)     ! longwave down at sfc
-
     return
   end subroutine chem_timestep_tend
 
 !===============================================================================
 
-  subroutine chem_init_cnst(name, q, gcid)
+  subroutine chem_init_cnst(name, latvals, lonvals, mask, q)
 
-    character(len=*), intent(in) :: name         ! constituent name
-    real(r8), intent(out) :: q(:,:)   !  mass mixing ratio (gcol, plev)
-    integer, intent(in) :: gcid(:)    !  global column id
+    character(len=*), intent(in)  :: name       ! constituent name
+    real(r8),         intent(in)  :: latvals(:) ! lat in degrees (ncol)
+    real(r8),         intent(in)  :: lonvals(:) ! lon in degrees (ncol)
+    logical,          intent(in)  :: mask(:)    ! Only initialize where .true.
+    real(r8),         intent(out) :: q(:,:)     ! kg tracer/kg dry air (gcol, plev
 
     return
   end subroutine chem_init_cnst

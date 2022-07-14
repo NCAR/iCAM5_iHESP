@@ -40,8 +40,6 @@ module cloud_fraction
   real(r8) :: cldfrc_rhminl = unset_r8    ! minimum rh for low stable clouds
   real(r8) :: cldfrc_rhminl_adj_land = unset_r8   ! rhminl adjustment for snowfree land
   real(r8) :: cldfrc_rhminh = unset_r8    ! minimum rh for high stable clouds
-  real(r8) :: cldfrc_rhminp = unset_r8    ! minimum rh for high stable clouds poleward of 60 degrees
-  real(r8) :: cldfrc_rhminp_botmb = 300._r8 ! and pressures less than cldfrc_rhminp_botmb (hPa)
   real(r8) :: cldfrc_sh1    = unset_r8    ! parameter for shallow convection cloud fraction
   real(r8) :: cldfrc_sh2    = unset_r8    ! parameter for shallow convection cloud fraction
   real(r8) :: cldfrc_dp1    = unset_r8    ! parameter for deep convection cloud fraction
@@ -56,7 +54,6 @@ module cloud_fraction
   real(r8) :: rhminl             ! set from namelist input cldfrc_rhminl
   real(r8) :: rhminl_adj_land    ! set from namelist input cldfrc_rhminl_adj_land
   real(r8) :: rhminh             ! set from namelist input cldfrc_rhminh
-  real(r8) :: rhminp             ! set from namelist input cldfrc_rhminp
   real(r8) :: sh1, sh2           ! set from namelist input cldfrc_sh1, cldfrc_sh2
   real(r8) :: dp1,dp2            ! set from namelist input cldfrc_dp1, cldfrc_dp2
   real(r8) :: premit             ! set from namelist input cldfrc_premit
@@ -93,7 +90,6 @@ subroutine cldfrc_readnl(nlfile)
 
    namelist /cldfrc_nl/ cldfrc_freeze_dry,      cldfrc_ice,    cldfrc_rhminl, &
                         cldfrc_rhminl_adj_land, cldfrc_rhminh, cldfrc_sh1,    &
-                        cldfrc_rhminp,          cldfrc_rhminp_botmb, &
                         cldfrc_sh2,             cldfrc_dp1,    cldfrc_dp2,    &
                         cldfrc_premit,          cldfrc_premib, cldfrc_iceopt, &
                         cldfrc_icecrit
@@ -116,7 +112,6 @@ subroutine cldfrc_readnl(nlfile)
       rhminl = cldfrc_rhminl
       rhminl_adj_land = cldfrc_rhminl_adj_land
       rhminh = cldfrc_rhminh
-      rhminp = cldfrc_rhminp
       sh1    = cldfrc_sh1
       sh2    = cldfrc_sh2
       dp1    = cldfrc_dp1
@@ -135,7 +130,6 @@ subroutine cldfrc_readnl(nlfile)
    call mpibcast(rhminl,            1, mpir8,  0, mpicom)
    call mpibcast(rhminl_adj_land,   1, mpir8,  0, mpicom)
    call mpibcast(rhminh,            1, mpir8,  0, mpicom)
-   call mpibcast(rhminp,            1, mpir8,  0, mpicom)
    call mpibcast(sh1   ,            1, mpir8,  0, mpicom)
    call mpibcast(sh2   ,            1, mpir8,  0, mpicom)
    call mpibcast(dp1   ,            1, mpir8,  0, mpicom)
@@ -166,7 +160,7 @@ end subroutine cldfrc_register
 !================================================================================================
 
 subroutine cldfrc_getparams(rhminl_out, rhminl_adj_land_out, rhminh_out,  premit_out, &
-                            rhminp_out, premib_out, iceopt_out, icecrit_out)
+                            premib_out, iceopt_out,          icecrit_out)
 !-----------------------------------------------------------------------
 ! Purpose: Return cldfrc tuning parameters
 !-----------------------------------------------------------------------
@@ -174,7 +168,6 @@ subroutine cldfrc_getparams(rhminl_out, rhminl_adj_land_out, rhminh_out,  premit
    real(r8),          intent(out), optional :: rhminl_out
    real(r8),          intent(out), optional :: rhminl_adj_land_out
    real(r8),          intent(out), optional :: rhminh_out
-   real(r8),          intent(out), optional :: rhminp_out
    real(r8),          intent(out), optional :: premit_out
    real(r8),          intent(out), optional :: premib_out
    integer,           intent(out), optional :: iceopt_out
@@ -183,7 +176,6 @@ subroutine cldfrc_getparams(rhminl_out, rhminl_adj_land_out, rhminh_out,  premit
    if ( present(rhminl_out) )      rhminl_out = rhminl
    if ( present(rhminl_adj_land_out) ) rhminl_adj_land_out = rhminl_adj_land
    if ( present(rhminh_out) )      rhminh_out = rhminh
-   if ( present(rhminp_out) )      rhminp_out = rhminp
    if ( present(premit_out) )      premit_out = premit
    if ( present(premib_out) )      premib_out  = premib
    if ( present(iceopt_out) )      iceopt_out  = iceopt
@@ -197,12 +189,8 @@ subroutine cldfrc_init
 
    ! Initialize cloud fraction run-time parameters
 
-   use cam_history,   only:  phys_decomp, addfld
-   use dycore,        only:  dycore_is, get_resolution
+   use cam_history,   only:  addfld
    use phys_control,  only:  phys_getopts
-
-   ! horizontal grid specifier
-   character(len=32) :: hgrid
 
    ! query interfaces for scheme settings
    character(len=16) :: shallow_scheme, eddy_scheme, macrop_scheme
@@ -215,12 +203,11 @@ subroutine cldfrc_init
                      macrop_scheme_out  = macrop_scheme  )
 
    ! Limit CAM5 cloud physics to below top cloud level.
-   if (macrop_scheme /= "rk") top_lev = trop_cloud_top_lev
-
-   hgrid = get_resolution()
+   if ( .not. (macrop_scheme == "rk" .or. macrop_scheme == "SPCAM_sam1mom")) top_lev = trop_cloud_top_lev
 
    ! Turn off inversion_cld if any UW PBL scheme is being used
-   if ( (eddy_scheme .eq. 'diag_TKE' ) .or. (shallow_scheme .eq.  'UW' )) then
+   if ( (eddy_scheme .eq. 'diag_TKE' ) .or. (shallow_scheme .eq.  'UW' ) .or.&
+        (shallow_scheme .eq. 'SPCAM_m2005') ) then
       inversion_cld_off = .true.
    else
       inversion_cld_off = .false.
@@ -229,7 +216,7 @@ subroutine cldfrc_init
    if ( masterproc ) then 
       write(iulog,*)'tuning parameters cldfrc_init: inversion_cld_off',inversion_cld_off
       write(iulog,*)'tuning parameters cldfrc_init: dp1',dp1,'dp2',dp2,'sh1',sh1,'sh2',sh2
-      if (shallow_scheme .ne. 'UW' ) then
+      if (shallow_scheme .ne. 'UW' .or. shallow_scheme .eq. 'SPCAM_m2005' ) then
          write(iulog,*)'tuning parameters cldfrc_init: rhminl',rhminl,'rhminl_adj_land',rhminl_adj_land, &
                        'rhminh',rhminh,'premit',premit,'premib',premib
          write(iulog,*)'tuning parameters cldfrc_init: iceopt',iceopt,'icecrit',icecrit
@@ -246,8 +233,8 @@ subroutine cldfrc_init
       write(iulog,*)'cldfrc_init: model level nearest 700 mb is',k700,'which is',pref_mid(k700),'pascals'
    end if
 
-   call addfld ('SH_CLD   ', 'fraction', pver, 'A', 'Shallow convective cloud cover'                          ,phys_decomp)
-   call addfld ('DP_CLD   ', 'fraction', pver, 'A', 'Deep convective cloud cover'                             ,phys_decomp)
+   call addfld ('SH_CLD', (/ 'lev' /), 'A', 'fraction', 'Shallow convective cloud cover' )
+   call addfld ('DP_CLD', (/ 'lev' /), 'A', 'fraction', 'Deep convective cloud cover'    )
 
 end subroutine cldfrc_init
 
@@ -279,7 +266,6 @@ subroutine cldfrc(lchnk   ,ncol    , pbuf,  &
     use physconst,     only: cappa, gravit, rair, tmelt
     use wv_saturation, only: qsat, qsat_water, svp_ice
     use phys_grid,     only: get_rlat_all_p, get_rlon_all_p
-    use dycore,        only: dycore_is, get_resolution
 
    
 !RBN - Need this to write shallow,deep fraction to phys buffer.
@@ -538,7 +524,7 @@ subroutine cldfrc(lchnk   ,ncol    , pbuf,  &
              ! This is the high cloud (above premit) block
              !==============================================================
              !
-             rhlim = relhum_min(pref_mid(k),clat(i))
+             rhlim = rhminh
              !
              rhdif = (rh(i,k) - rhlim)/(1.0_r8-rhlim)
              rhcloud(i,k) = min(0.999_r8,(max(rhdif,0.0_r8))**2)
@@ -552,9 +538,9 @@ subroutine cldfrc(lchnk   ,ncol    , pbuf,  &
              rhwght = (premib-(max(pmid(i,k),premit)))/(premib-premit)
              
              if (land(i) .and. (snowh(i) <= 0.000001_r8)) then
-                rhlim = relhum_min(pref_mid(k),clat(i))*rhwght + (rhminl - rhminl_adj_land)*(1.0_r8-rhwght)
+                rhlim = rhminh*rhwght + (rhminl - rhminl_adj_land)*(1.0_r8-rhwght)
              else
-                rhlim = relhum_min(pref_mid(k),clat(i))*rhwght + rhminl*(1.0_r8-rhwght)
+                rhlim = rhminh*rhwght + rhminl*(1.0_r8-rhwght)
              endif
              rhdif = (rh(i,k) - rhlim)/(1.0_r8-rhlim)
              rhcloud(i,k) = min(0.999_r8,(max(rhdif,0.0_r8))**2)
@@ -823,26 +809,5 @@ subroutine cldfrc(lchnk   ,ncol    , pbuf,  &
     end do
 
   end subroutine cldfrc_fice
-
-  !-----------------------------------------------------------------------------
-  ! Sets rhmin to a different value (rhminp) poleward of +/- 60 deg latitude and 
-  ! pressure levels less than cldfrc_rhminp_botmb (hPa) if cldfrc_rhminp is specified
-  ! ** This is used only for special waccm/cam-chem cases with cam4 physics **
-  !-----------------------------------------------------------------------------
-  function relhum_min(press,lat) result(rh)
-    use physconst, only: pi
-
-    real(r8), intent(in) :: press, lat
-    real(r8) :: rh
-
-    rh = rhminh
-    if (rhminp .eq. unset_r8 ) return
-
-    if ((press .lt. cldfrc_rhminp_botmb*1.e2_r8) .and. &
-        ( abs( lat*180._r8/pi ) .gt. 60._r8 ) ) then
-       rh = rhminp
-    endif
-
-  end function relhum_min
 
 end module cloud_fraction

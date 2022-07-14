@@ -20,6 +20,7 @@ module tropopause
   !---------------------------------------------------------------
 
   use shr_kind_mod,         only : r8 => shr_kind_r8
+  use shr_const_mod,        only : pi => shr_const_pi
   use ppgrid,               only : pcols, pver, begchunk, endchunk
   use cam_abortutils,       only : endrun
   use cam_logfile,          only : iulog
@@ -33,8 +34,11 @@ module tropopause
   private
   
   public  :: tropopause_readnl, tropopause_init, tropopause_find, tropopause_output
+  public  :: tropopause_findChemTrop
   public  :: TROP_ALG_NONE, TROP_ALG_ANALYTIC, TROP_ALG_CLIMATE
   public  :: TROP_ALG_STOBIE, TROP_ALG_HYBSTOB, TROP_ALG_TWMO, TROP_ALG_WMO
+  public  :: TROP_ALG_CPP
+  public  :: NOTFOUND
 
   save
 
@@ -50,9 +54,10 @@ module tropopause
   integer, parameter    :: TROP_ALG_TWMO      = 5    ! WMO Definition, Reichler et al. [2003]
   integer, parameter    :: TROP_ALG_WMO       = 6    ! WMO Definition
   integer, parameter    :: TROP_ALG_HYBSTOB   = 7    ! Hybrid Stobie Algorithm
+  integer, parameter    :: TROP_ALG_CPP       = 8    ! Cold Point Parabolic
   
-  integer, parameter    :: TROP_NALG          = 7    ! Number of Algorithms  
-  character,parameter   :: TROP_LETTER(TROP_NALG) = (/ ' ', 'A', 'C', 'S', 'T', 'W', 'H' /)
+  integer, parameter    :: TROP_NALG          = 8    ! Number of Algorithms  
+  character,parameter   :: TROP_LETTER(TROP_NALG) = (/ ' ', 'A', 'C', 'S', 'T', 'W', 'H', 'F' /)
                                                      ! unique identifier for output, don't use P
 
   ! These variables should probably be controlled by namelist entries.
@@ -127,10 +132,7 @@ contains
   ! is taken from mo_tropopause.
   subroutine tropopause_init()
   
-
-    use ppgrid,        only: pver
-    use cam_pio_utils, only: phys_decomp
-    use cam_history,   only: addfld
+    use cam_history,   only: addfld, horiz_only
 
 
     implicit none
@@ -141,63 +143,70 @@ contains
     cnst_ka1    = cnst_kap - 1._r8
 
     ! Define the output fields.
-    call addfld('TROP_P',  'Pa',          1,    'A', 'Tropopause Pressure',    phys_decomp, flag_xyfill=.True.)
-    call addfld('TROP_T',  'K',           1,    'A', 'Tropopause Temperature', phys_decomp, flag_xyfill=.True.)
-    call addfld('TROP_Z',  'm',           1,    'A', 'Tropopause Height',      phys_decomp, flag_xyfill=.True.)
-    call addfld('TROP_DZ', 'm',           pver, 'A', 'Relative Tropopause Height',  phys_decomp)
-    call addfld('TROP_PD', 'probability', pver, 'A', 'Tropopause Probabilty',  phys_decomp)
-    call addfld('TROP_FD', 'probability', 1,    'A', 'Tropopause Found',       phys_decomp)
+    call addfld('TROP_P',          horiz_only,  'A', 'Pa',          'Tropopause Pressure',              flag_xyfill=.True.)
+    call addfld('TROP_T',          horiz_only,  'A', 'K',           'Tropopause Temperature',           flag_xyfill=.True.)
+    call addfld('TROP_Z',          horiz_only,  'A', 'm',           'Tropopause Height',                flag_xyfill=.True.)
+    call addfld('TROP_DZ',         (/ 'lev' /), 'A', 'm',           'Relative Tropopause Height')
+    call addfld('TROP_PD',         (/ 'lev' /), 'A', 'probability', 'Tropopause Probabilty')
+    call addfld('TROP_FD',         horiz_only,  'A', 'probability', 'Tropopause Found')
     
-    call addfld('TROPP_P',  'Pa',          1,    'A', 'Tropopause Pressure (primary)',     phys_decomp, flag_xyfill=.True.)
-    call addfld('TROPP_T',  'K',           1,    'A', 'Tropopause Temperature (primary)',  phys_decomp, flag_xyfill=.True.)
-    call addfld('TROPP_Z',  'm',           1,    'A', 'Tropopause Height (primary)',       phys_decomp, flag_xyfill=.True.)
-    call addfld('TROPP_DZ', 'm',         pver,   'A', 'Relalive Tropopause Height (primary)',  phys_decomp)
-    call addfld('TROPP_PD', 'probability', pver, 'A', 'Tropopause Distribution (primary)', phys_decomp)
-    call addfld('TROPP_FD', 'probability', 1,    'A', 'Tropopause Found (primary)',        phys_decomp)
+    call addfld('TROPP_P',         horiz_only,  'A', 'Pa',          'Tropopause Pressure (primary)',    flag_xyfill=.True.)
+    call addfld('TROPP_T',         horiz_only,  'A', 'K',           'Tropopause Temperature (primary)', flag_xyfill=.True.)
+    call addfld('TROPP_Z',         horiz_only,  'A', 'm',           'Tropopause Height (primary)',      flag_xyfill=.True.)
+    call addfld('TROPP_DZ',        (/ 'lev' /), 'A', 'm',           'Relative Tropopause Height (primary)')
+    call addfld('TROPP_PD',        (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (primary)')
+    call addfld('TROPP_FD',        horiz_only,  'A', 'probability', 'Tropopause Found (primary)')
     
-    call addfld( 'hstobie_trop',   'fraction of model time', pver, 'I', 'Lowest level with stratospheric chemsitry', phys_decomp )
-    call addfld( 'hstobie_linoz',  'fraction of model time', pver, 'I', 'Lowest possible Linoz level', phys_decomp )
-    call addfld( 'hstobie_tropop', 'fraction of model time', pver, 'I', &
-         'Troposphere boundary calculated in chemistry', phys_decomp )
+    call addfld('TROPF_P',         horiz_only,  'A',  'Pa',         'Tropopause Pressure (cold point)',    flag_xyfill=.True.)
+    call addfld('TROPF_T',         horiz_only,  'A',  'K',          'Tropopause Temperature (cold point)', flag_xyfill=.True.)
+    call addfld('TROPF_Z',         horiz_only,  'A',  'm',          'Tropopause Height (cold point)',      flag_xyfill=.True.)
+    call addfld('TROPF_DZ',        (/ 'lev' /),  'A', 'm',          'Relative Tropopause Height (cold point)', flag_xyfill=.True.)
+    call addfld('TROPF_PD',        (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (cold point)')
+    call addfld('TROPF_FD',        horiz_only,  'A', 'probability', 'Tropopause Found (cold point)')
+
+    call addfld( 'hstobie_trop',   (/ 'lev' /), 'I',  'fraction of model time', 'Lowest level with stratospheric chemsitry')
+    call addfld( 'hstobie_linoz',  (/ 'lev' /), 'I',  'fraction of model time', 'Lowest possible Linoz level')
+    call addfld( 'hstobie_tropop', (/ 'lev' /), 'I', 'fraction of model time', &
+         'Troposphere boundary calculated in chemistry' )
 
     ! If requested, be prepared to output results from all of the methods.
     if (output_all) then
-      call addfld('TROPA_P',  'Pa',          1,    'A', 'Tropopause Pressure (analytic)',     phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPA_T',  'K',           1,    'A', 'Tropopause Temperature (analytic)',  phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPA_Z',  'm',           1,    'A', 'Tropopause Height (analytic)',       phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPA_PD', 'probability', pver, 'A', 'Tropopause Distribution (analytic)', phys_decomp)
-      call addfld('TROPA_FD', 'probability', 1,    'A', 'Tropopause Found (analytic)',        phys_decomp)
+      call addfld('TROPA_P',  horiz_only,  'A',  'Pa',          'Tropopause Pressure (analytic)',        flag_xyfill=.True.)
+      call addfld('TROPA_T',  horiz_only,  'A',  'K',          'Tropopause Temperature (analytic)',      flag_xyfill=.True.)
+      call addfld('TROPA_Z',  horiz_only,  'A',  'm',          'Tropopause Height (analytic)',           flag_xyfill=.True.)
+      call addfld('TROPA_PD', (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (analytic)')
+      call addfld('TROPA_FD', horiz_only,  'A', 'probability', 'Tropopause Found (analytic)')
 
-      call addfld('TROPC_P',  'Pa',          1,    'A', 'Tropopause Pressure (climatology)',     phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPC_T',  'K',           1,    'A', 'Tropopause Temperature (climatology)',  phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPC_Z',  'm',           1,    'A', 'Tropopause Height (climatology)',       phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPC_PD', 'probability', pver, 'A', 'Tropopause Distribution (climatology)', phys_decomp)
-      call addfld('TROPC_FD', 'probability', 1,    'A', 'Tropopause Found (climatology)',        phys_decomp)
+      call addfld('TROPC_P',  horiz_only,  'A',  'Pa',         'Tropopause Pressure (climatology)',      flag_xyfill=.True.)
+      call addfld('TROPC_T',  horiz_only,  'A',  'K',          'Tropopause Temperature (climatology)',   flag_xyfill=.True.)
+      call addfld('TROPC_Z',  horiz_only,  'A',  'm',          'Tropopause Height (climatology)',        flag_xyfill=.True.)
+      call addfld('TROPC_PD', (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (climatology)')
+      call addfld('TROPC_FD', horiz_only,  'A', 'probability', 'Tropopause Found (climatology)')
 
-      call addfld('TROPS_P',  'Pa',          1,    'A', 'Tropopause Pressure (stobie)',     phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPS_T',  'K',           1,    'A', 'Tropopause Temperature (stobie)',  phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPS_Z',  'm',           1,    'A', 'Tropopause Height (stobie)',       phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPS_PD', 'probability', pver, 'A', 'Tropopause Distribution (stobie)', phys_decomp)
-      call addfld('TROPS_FD', 'probability', 1,    'A', 'Tropopause Found (stobie)',        phys_decomp)
+      call addfld('TROPS_P',  horiz_only,  'A',  'Pa',         'Tropopause Pressure (stobie)',           flag_xyfill=.True.)
+      call addfld('TROPS_T',  horiz_only,  'A',  'K',          'Tropopause Temperature (stobie)',        flag_xyfill=.True.)
+      call addfld('TROPS_Z',  horiz_only,  'A',  'm',          'Tropopause Height (stobie)',             flag_xyfill=.True.)
+      call addfld('TROPS_PD', (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (stobie)')
+      call addfld('TROPS_FD', horiz_only,  'A', 'probability', 'Tropopause Found (stobie)')
 
-      call addfld('TROPT_P',  'Pa',          1,    'A', 'Tropopause Pressure (twmo)',     phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPT_T',  'K',           1,    'A', 'Tropopause Temperature (twmo)',  phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPT_Z',  'm',           1,    'A', 'Tropopause Height (twmo)',       phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPT_PD', 'probability', pver, 'A', 'Tropopause Distribution (twmo)', phys_decomp)
-      call addfld('TROPT_FD', 'probability', 1,    'A', 'Tropopause Found (twmo)',        phys_decomp)
+      call addfld('TROPT_P',  horiz_only,  'A',  'Pa',         'Tropopause Pressure (twmo)',             flag_xyfill=.True.)
+      call addfld('TROPT_T',  horiz_only,  'A',  'K',          'Tropopause Temperature (twmo)',          flag_xyfill=.True.)
+      call addfld('TROPT_Z',  horiz_only,  'A',  'm',          'Tropopause Height (twmo)',               flag_xyfill=.True.)
+      call addfld('TROPT_PD', (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (twmo)')
+      call addfld('TROPT_FD', horiz_only,  'A', 'probability', 'Tropopause Found (twmo)')
 
-      call addfld('TROPW_P',  'Pa',          1,    'A', 'Tropopause Pressure (WMO)',     phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPW_T',  'K',           1,    'A', 'Tropopause Temperature (WMO)',  phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPW_Z',  'm',           1,    'A', 'Tropopause Height (WMO)',       phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPW_PD', 'probability', pver, 'A', 'Tropopause Distribution (WMO)', phys_decomp)
-      call addfld('TROPW_FD', 'probability', 1,    'A', 'Tropopause Found (WMO)',        phys_decomp)
+      call addfld('TROPW_P',  horiz_only,  'A',  'Pa',         'Tropopause Pressure (WMO)',              flag_xyfill=.True.)
+      call addfld('TROPW_T',  horiz_only,  'A',  'K',          'Tropopause Temperature (WMO)',           flag_xyfill=.True.)
+      call addfld('TROPW_Z',  horiz_only,  'A',  'm',          'Tropopause Height (WMO)',                flag_xyfill=.True.)
+      call addfld('TROPW_PD', (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (WMO)')
+      call addfld('TROPW_FD', horiz_only,  'A', 'probability', 'Tropopause Found (WMO)')
 
-      call addfld('TROPH_P',  'Pa',          1,    'A', 'Tropopause Pressure (Hybrid Stobie)',     phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPH_T',  'K',           1,    'A', 'Tropopause Temperature (Hybrid Stobie)',  phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPH_Z',  'm',           1,    'A', 'Tropopause Height (Hybrid Stobie)',       phys_decomp, flag_xyfill=.True.)
-      call addfld('TROPH_PD', 'probability', pver, 'A', 'Tropopause Distribution (Hybrid Stobie)', phys_decomp)
-      call addfld('TROPH_FD', 'probability', 1,    'A', 'Tropopause Found (Hybrid Stobie)',        phys_decomp)
-     end if
+      call addfld('TROPH_P',  horiz_only,  'A',  'Pa',         'Tropopause Pressure (Hybrid Stobie)',    flag_xyfill=.True.)
+      call addfld('TROPH_T',  horiz_only,  'A',  'K',          'Tropopause Temperature (Hybrid Stobie)', flag_xyfill=.True.)
+      call addfld('TROPH_Z',  horiz_only,  'A',  'm',          'Tropopause Height (Hybrid Stobie)',      flag_xyfill=.True.)
+      call addfld('TROPH_PD', (/ 'lev' /), 'A', 'probability', 'Tropopause Distribution (Hybrid Stobie)')
+      call addfld('TROPH_FD', horiz_only,  'A', 'probability', 'Tropopause Found (Hybrid Stobie)')
+    end if
 
 
     call tropopause_read_file()
@@ -966,6 +975,128 @@ contains
   end subroutine tropopause_wmo
   
   
+  ! This routine searches for the cold point tropopause, and uses a parabolic
+  ! fit of the coldest point and two adjacent points to interpolate the cold point
+  ! between model levels.
+  subroutine tropopause_cpp(pstate, tropLev, tropP, tropT, tropZ)
+
+    implicit none
+
+    type(physics_state), intent(in)    :: pstate 
+    integer,            intent(inout)  :: tropLev(pcols)            ! tropopause level index   
+    real(r8), optional, intent(inout)  :: tropP(pcols)              ! tropopause pressure (Pa)   
+    real(r8), optional, intent(inout)  :: tropT(pcols)              ! tropopause temperature (K)
+    real(r8), optional, intent(inout)  :: tropZ(pcols)              ! tropopause height (m)
+
+    ! Local Variables 
+    real(r8), parameter    :: ztrop_low   = 5000._r8        ! lowest tropopause level allowed (m)
+    real(r8), parameter    :: ztrop_high  = 25000._r8       ! highest tropopause level allowed (m)
+
+    integer                 :: i
+    integer                 :: k, firstk, lastk
+    integer                 :: k2
+    integer                 :: ncol                         ! number of columns in the chunk
+    integer                 :: lchnk                        ! chunk identifier
+    real(r8)                :: tZ                           ! tropopause height (m)
+    real(r8)                :: tmin
+    real(r8)                :: f0, f1, f2
+    real(r8)                :: x0, x1, x2
+    real(r8)                :: c0, c1, c2
+    real(r8)                :: a, b, c
+
+    ! Information about the chunk.  
+    lchnk = pstate%lchnk
+    ncol  = pstate%ncol
+
+    ! Iterate over all of the columns.
+    do i = 1, ncol
+     
+      firstk = 0
+      lastk  = pver+1
+
+      ! Skip column in which the tropopause has already been found.
+      if (tropLev(i) == NOTFOUND) then
+        tmin = 1e6_r8
+
+        kloop: do k = pver-1, 2, -1
+         
+          ! Skip levels below the minimum and stop if nothing is found
+          ! before the maximum.
+          if (pstate%zm(i, k) < ztrop_low) then
+            firstk = k
+            cycle kloop
+          else if (pstate%zm(i, k) > ztrop_high) then
+            lastk = k
+            exit kloop
+          end if
+          
+          ! Find the coldest point
+          if (pstate%t(i, k) < tmin) then
+            tropLev(i) = k
+            tmin = pstate%t(i,k)
+          end if
+        end do kloop
+
+        
+        ! If the minimum is at the edge of the search range, then don't
+        ! consider this to be a minima
+        if ((tropLev(i) >= (firstk-1)) .or. (tropLev(i) <= (lastk+1))) then
+          tropLev(i) = NOTFOUND
+        else
+
+          ! If returning P, Z, or T, then do a parabolic fit using the
+          ! cold point and it its 2 surrounding points to interpolate
+          ! between model levels.
+          if (present(tropP) .or. present(tropZ) .or. present(tropT)) then
+            f0 = pstate%t(i, tropLev(i)-1)
+            f1 = pstate%t(i, tropLev(i))
+            f2 = pstate%t(i, tropLev(i)+1)
+
+            x0 = pstate%zm(i, tropLev(i)-1)
+            x1 = pstate%zm(i, tropLev(i))
+            x2 = pstate%zm(i, tropLev(i)+1)
+
+            c0 = (x0-x1)*(x0-x2)
+            c1 = (x1-x0)*(x1-x2)
+            c2 = (x2-x0)*(x2-x1)
+
+            ! Determine the quadratic coefficients of:
+            !   T = a * z^2 - b*z + c
+            a = (f0/c0 + f1/c1 + f2/c2)
+            b = (f0/c0*(x1+x2) + f1/c1*(x0+x2) + f2/c2*(x0+x1))
+            c = f0/c0*x1*x2 + f1/c1*x0*x2 + f2/c2*x0*x1
+
+            ! Find the altitude of the minimum temperature
+            tZ = 0.5_r8 * b / a
+            
+            ! The fit should be between the upper and lower points,
+            ! so skip the point if the fit fails.
+            if ((tZ >= x0) .or. (tZ <= x2)) then
+              tropLev(i) = NOTFOUND
+            else
+
+              ! Return the optional outputs
+              if (present(tropP)) then
+                tropP(i) = tropopause_interpolateP(pstate, i, tropLev(i), tZ)
+              end if
+            
+              if (present(tropT)) then
+                tropT(i) = a * tZ*tZ - b*tZ + c
+              end if
+
+              if (present(tropZ)) then
+                tropZ(i) = tZ
+              end if
+            end if
+          end if
+        end if
+      end if
+    end do
+    
+    return
+  end subroutine tropopause_cpp
+
+
   ! Searches all the columns in the chunk and attempts to identify the tropopause.
   ! Two routines can be specifed, a primary routine which is tried first and a
   ! backup routine which will be tried only if the first routine fails. If the
@@ -1019,6 +1150,63 @@ contains
     return
   end subroutine tropopause_find
   
+  ! Searches all the columns in the chunk and attempts to identify the "chemical"
+  ! tropopause. This is the lapse rate tropopause, backed up by the climatology
+  ! if the lapse rate fails to find the tropopause at pressures higher than a certain
+  ! threshold. This pressure threshold depends on latitude. Between 50S and 50N, 
+  ! the climatology is used if the lapse rate tropopause is not found at P > 75 hPa. 
+  ! At high latitude (poleward of 50), the threshold is increased to 125 hPa to 
+  ! eliminate false events that are sometimes detected in the cold polar stratosphere.
+  !
+  ! NOTE: This routine was adapted from code in chemistry.F90 and mo_gasphase_chemdr.F90.
+  subroutine tropopause_findChemTrop(pstate, tropLev, primary, backup)
+
+    implicit none
+
+    type(physics_state), intent(in)     :: pstate 
+    integer, optional, intent(in)       :: primary                   ! primary detection algorithm
+    integer, optional, intent(in)       :: backup                    ! backup detection algorithm
+    integer,            intent(out)     :: tropLev(pcols)            ! tropopause level index   
+
+    ! Local Variable
+    real(r8), parameter :: rad2deg = 180._r8/pi                      ! radians to degrees conversion factor
+    real(r8)            :: dlats(pcols)
+    integer             :: i
+    integer             :: ncol
+    integer             :: backAlg
+
+    ! First use the lapse rate tropopause.
+    ncol = pstate%ncol
+    call tropopause_find(pstate, tropLev, primary=primary, backup=TROP_ALG_NONE)
+   
+    ! Now check high latitudes (poleward of 50) and set the level to the
+    ! climatology if the level was not found or is at P <= 125 hPa.
+    dlats(:ncol) = pstate%lat(:ncol) * rad2deg ! convert to degrees
+
+    if (present(backup)) then
+      backAlg = backup
+    else
+      backAlg = default_backup
+    end if
+    
+    do i = 1, ncol
+      if (abs(dlats(i)) > 50._r8) then
+        if (tropLev(i) .ne. NOTFOUND) then
+          if (pstate%pmid(i, tropLev(i)) <= 12500._r8) then
+            tropLev(i) = NOTFOUND
+          end if
+        end if
+      end if
+    end do
+        
+    ! Now use the backup algorithm
+    if ((backAlg /= TROP_ALG_NONE) .and. any(tropLev(:) == NOTFOUND)) then
+      call tropopause_findUsing(pstate, backAlg, tropLev)
+    end if
+    
+    return
+  end subroutine tropopause_findChemTrop
+  
   
   ! Call the appropriate tropopause detection routine based upon the algorithm
   ! specifed.
@@ -1056,6 +1244,9 @@ contains
       case(TROP_ALG_WMO)
         call tropopause_wmo(pstate, tropLev, tropP, tropT, tropZ)
 
+      case(TROP_ALG_CPP)
+        call tropopause_cpp(pstate, tropLev, tropP, tropT, tropZ)
+
       case default
         write(iulog, *) 'tropopause: Invalid detection algorithm (',  algorithm, ') specified.'
         call endrun
@@ -1065,6 +1256,50 @@ contains
   end subroutine tropopause_findUsing
 
 
+  ! This routine interpolates the pressures in the physics state to
+  ! find the pressure at the specified tropopause altitude.
+  function tropopause_interpolateP(pstate, icol, tropLev, tropZ)
+ 
+    implicit none
+
+    type(physics_state), intent(in)     :: pstate 
+    integer, intent(in)                 :: icol               ! column being processed
+    integer, intent(in)                 :: tropLev            ! tropopause level index   
+    real(r8), optional, intent(in)      :: tropZ              ! tropopause pressure (m)
+    real(r8)                            :: tropopause_interpolateP
+    
+    ! Local Variables
+    real(r8)   :: tropP              ! tropopause pressure (Pa)
+    real(r8)   :: dlogPdZ            ! dlog(p)/dZ
+    
+    ! Interpolate the temperature linearly against log(P)
+    
+    ! Is the tropopause at the midpoint?
+    if (tropZ == pstate%zm(icol, tropLev)) then
+      tropP = pstate%pmid(icol, tropLev)
+    
+    else if (tropZ > pstate%zm(icol, tropLev)) then
+    
+      ! It is above the midpoint? Make sure we aren't at the top.
+      if (tropLev > 1) then
+        dlogPdZ = (log(pstate%pmid(icol, tropLev)) - log(pstate%pmid(icol, tropLev - 1))) / &
+          (pstate%zm(icol, tropLev) - pstate%zm(icol, tropLev - 1)) 
+        tropP = pstate%pmid(icol, tropLev) + exp((tropZ - pstate%zm(icol, tropLev)) * dlogPdZ)
+      end if
+    else
+      
+      ! It is below the midpoint. Make sure we aren't at the bottom.
+      if (tropLev < pver) then
+        dlogPdZ =  (log(pstate%pmid(icol, tropLev + 1)) - log(pstate%pmid(icol, tropLev))) / &
+          (pstate%zm(icol, tropLev + 1) - pstate%zm(icol, tropLev))
+        tropP = pstate%pmid(icol, tropLev) + exp((tropZ - pstate%zm(icol, tropLev)) * dlogPdZ)
+      end if
+    end if
+    
+    tropopause_interpolateP = tropP
+  end function tropopause_interpolateP
+
+  
   ! This routine interpolates the temperatures in the physics state to
   ! find the temperature at the specified tropopause pressure.
   function tropopause_interpolateT(pstate, icol, tropLev, tropP)
@@ -1081,7 +1316,7 @@ contains
     real(r8)   :: tropT              ! tropopause temperature (K)
     real(r8)   :: dTdlogP            ! dT/dlog(P)
     
-    ! Intrepolate the temperature linearly against log(P)
+    ! Interpolate the temperature linearly against log(P)
     
     ! Is the tropopause at the midpoint?
     if (tropP == pstate%pmid(icol, tropLev)) then
@@ -1112,7 +1347,8 @@ contains
   ! This routine interpolates the geopotential height in the physics state to
   ! find the geopotential height at the specified tropopause pressure.
   function tropopause_interpolateZ(pstate, icol, tropLev, tropP)
- 
+    use physconst, only: rga
+
     implicit none
 
     type(physics_state), intent(in)     :: pstate 
@@ -1125,7 +1361,7 @@ contains
     real(r8)   :: tropZ              ! tropopause geopotential height (m)
     real(r8)   :: dZdlogP            ! dZ/dlog(P)
     
-    ! Intrepolate the geopotential height linearly against log(P)
+    ! Interpolate the geopotential height linearly against log(P)
     
     ! Is the tropoause at the midpoint?
     if (tropP == pstate%pmid(icol, tropLev)) then
@@ -1145,7 +1381,7 @@ contains
       tropZ = pstate%zm(icol, tropLev) + (log(tropP) - log(pstate%pmid(icol, tropLev))) * dZdlogP
     end if
     
-    tropopause_interpolateZ = tropZ
+    tropopause_interpolateZ = tropZ + pstate%phis(icol)*rga
   end function tropopause_interpolateZ
 
   
@@ -1220,6 +1456,29 @@ contains
     call outfld('TROPP_DZ',  tropDZ(:ncol, :), ncol, lchnk)
     call outfld('TROPP_PD',  tropPdf(:ncol, :), ncol, lchnk)
     call outfld('TROPP_FD',  tropFound(:ncol),  ncol, lchnk)
+
+
+    ! Find the tropopause using just the cold point algorithm.
+    call tropopause_find(pstate, tropLev, tropP=tropP, tropT=tropT, tropZ=tropZ, primary=TROP_ALG_CPP, backup=TROP_ALG_NONE)
+
+    tropPdf(:,:) = 0._r8
+    tropFound(:) = 0._r8
+    tropDZ(:,:) = fillvalue 
+    
+    do i = 1, ncol
+      if (tropLev(i) /= NOTFOUND) then
+        tropPdf(i, tropLev(i)) = 1._r8
+        tropFound(i) = 1._r8
+        tropDZ(i,:) = pstate%zm(i,:) - tropZ(i) 
+      end if
+    end do
+
+    call outfld('TROPF_P',   tropP(:ncol),      ncol, lchnk)
+    call outfld('TROPF_T',   tropT(:ncol),      ncol, lchnk)
+    call outfld('TROPF_Z',   tropZ(:ncol),      ncol, lchnk)
+    call outfld('TROPF_DZ',  tropDZ(:ncol, :), ncol, lchnk)
+    call outfld('TROPF_PD',  tropPdf(:ncol, :), ncol, lchnk)
+    call outfld('TROPF_FD',  tropFound(:ncol),  ncol, lchnk)
     
     
     ! If requested, do all of the algorithms.

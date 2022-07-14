@@ -1,15 +1,15 @@
 !#define DEBUG 1
 module physics_buffer
 
-  !----------------------------------------------------------------------- 
-  ! 
-  ! Purpose: 
-  !    Buffer managment for persistant variables 
+  !-----------------------------------------------------------------------
+  !
+  ! Purpose:
+  !    Buffer managment for persistant variables
   !
   ! Author: J. Edwards
   !
-  ! This file is used with genf90.pl to generate buffer.F90  
-  ! 
+  ! This file is used with genf90.pl to generate buffer.F90
+  !
   !-----------------------------------------------------------------------
 
   use shr_kind_mod,   only: r8 => shr_kind_r8, r4=> shr_kind_r4, i4=> shr_kind_i4
@@ -26,7 +26,7 @@ module physics_buffer
 
   ! ngrid_types is a private parameter denoting how many types of a field
   ! (e.g., grid, subcol) a pbuf can hold
-  integer, parameter :: ngrid_types = 2 
+  integer, parameter :: ngrid_types = 2
 
   ! --col_type parameters -- see pbuf_add_field and pbuf_get_field
   ! -- These indices should start at 1 and increment by 1 so that they
@@ -54,9 +54,9 @@ module physics_buffer
   integer, parameter :: persistence_physpkg = 2
   logical            :: global_allocate_all = .true.
 
-  ! 
-  ! physics_buffer_hdr carries the description info for each buffer, only one header 
-  ! is allocated for each field and each chunk of the field points to it. 
+  !
+  ! physics_buffer_hdr carries the description info for each buffer, only one header
+  ! is allocated for each field and each chunk of the field points to it.
   ! It is carried as a linkedlist for initialization only.
   !
 
@@ -73,10 +73,10 @@ module physics_buffer
   end type physics_buffer_hdr
 
   !
-  ! The default type for a buffer field is buffer_field_double (r8) since that is the 
+  ! The default type for a buffer field is buffer_field_double (r8) since that is the
   ! type most often used in the model.   The F90 transfer function is used to move
   ! data of other types into and out of the pbuf2d
-  ! 
+  !
 
   type physics_buffer_desc
      private
@@ -86,58 +86,60 @@ module physics_buffer
   end type physics_buffer_desc
 
   interface pbuf_get_field
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      ! DIMS 1,2,3,4,5
      module procedure get_pbuf1d_field_by_index_{DIMS}d_{TYPE}
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      ! DIMS 1,2,3,4,5
      module procedure get_pbuf2d_field_by_index_{DIMS}d_{TYPE}
   end interface
 
   interface pbuf_get_field_restart
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      module procedure get_pbuf2d_field_restart_{TYPE}
   end interface
 
   interface pbuf_set_field
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      ! DIMS 1,2,3,4,5
      module procedure  set_pbuf2d_field_by_index_{DIMS}d_{TYPE}
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      ! DIMS 1,2,3,4,5
      module procedure  set_pbuf1d_field_by_index_{DIMS}d_{TYPE}
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      module procedure  set_pbuf1d_field_const_by_index_{TYPE}
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      module procedure  set_pbuf2d_field_const_by_index_{TYPE}
   end interface
 
   interface pbuf_add_field
-     ! TYPE int,double,real 
+     ! TYPE int,double,real
      module procedure pbuf_add_field_{TYPE}
   end interface
 
-  public :: pbuf_initialize, &
-            pbuf_defaultopts,   &! set namelist defaults
-            pbuf_setopts,       &! set user specified namelist values
-            pbuf_init_time,     &! Initialize dyn_time_lvls
-            pbuf_old_tim_idx,   &! return the index for the oldest time
-            pbuf_update_tim_idx,&! update the index for the oldest time
-            pbuf_col_type_index, &
-            pbuf_get_field_name, &
-            pbuf_get_field, &
-            pbuf_add_field, &
+  public :: pbuf_initialize,      &
+            pbuf_readnl,          &! read namelist options
+            pbuf_init_time,       &! Initialize dyn_time_lvls
+            pbuf_old_tim_idx,     &! return the index for the oldest time
+            pbuf_update_tim_idx,  &! update the index for the oldest time
+            pbuf_col_type_index,  &
+            pbuf_get_field_name,  &
+            pbuf_get_field,       &
+            pbuf_add_field,       &
             pbuf_register_subcol, &
-            physics_buffer_desc, &
-            pbuf_get_index, &
-            pbuf_get_chunk, &
-            pbuf_allocate, &
-            pbuf_deallocate, &
-            pbuf_set_field, &
-            pbuf_init_restart, &
-            pbuf_write_restart, &
-            pbuf_read_restart, &
+            physics_buffer_desc,  &
+            pbuf_get_index,       &
+            pbuf_get_chunk,       &
+            pbuf_allocate,        &
+            pbuf_deallocate,      &
+            pbuf_set_field,       &
+            pbuf_init_restart,    &
+            pbuf_write_restart,   &
+            pbuf_read_restart,    &
             dtype_r8, dtype_r4, dtype_i4
+
+  ! For help debugging code
+  public :: pbuf_dump_pbuf
 
    integer, public :: dyn_time_lvls  ! number of time levels in physics buffer (dycore dependent)
 
@@ -150,7 +152,7 @@ module physics_buffer
   integer :: currentpbufflds=0
   type(physics_buffer_hdr), pointer :: hdrbuffertop => null()
 
-  ! 
+  !
   ! Insures that we do not attempt to allocate physics_buffer more than once
   !
 
@@ -162,30 +164,57 @@ module physics_buffer
 
   type(var_desc_t) :: timeidx_desc
 
+!===============================================================================
 CONTAINS
+!===============================================================================
 
-  !
-  ! Purpose: Return default runtime options
-  !
+subroutine pbuf_readnl(nlfile)
 
-  subroutine pbuf_defaultopts(pbuf_global_allocate_out)
-     logical, intent(out), optional :: pbuf_global_allocate_out
-     if ( present(pbuf_global_allocate_out) ) then
-        pbuf_global_allocate_out = global_allocate_all
-     endif
-  end subroutine pbuf_defaultopts
+   use namelist_utils,  only: find_group_name
+   use units,           only: getunit, freeunit
+   use spmd_utils,      only: masterproc, mpicom, mstrid=>masterprocid, mpi_logical
 
+   character(len=*), intent(in) :: nlfile  ! filepath for file containing namelist input
 
-  !
-  ! Purpose: Set runtime options
-  !
+   ! Local variables
+   integer :: unitn, ierr
+   character(len=*), parameter :: sub = 'pbuf_readnl'
 
-  subroutine pbuf_setopts(pbuf_global_allocate_in)
-     logical, intent(in), optional :: pbuf_global_allocate_in
-     if ( present(pbuf_global_allocate_in) ) then
-        global_allocate_all = pbuf_global_allocate_in
-     endif
-  end subroutine pbuf_setopts
+   logical :: pbuf_global_allocate
+
+   namelist /pbuf_nl/ pbuf_global_allocate
+   !-----------------------------------------------------------------------------
+
+   pbuf_global_allocate = global_allocate_all
+
+   ! Read namelist
+   if (masterproc) then
+      unitn = getunit()
+      open( unitn, file=trim(nlfile), status='old' )
+      call find_group_name(unitn, 'pbuf_nl', status=ierr)
+      if (ierr == 0) then
+         read(unitn, pbuf_nl, iostat=ierr)
+         if (ierr /= 0) then
+            call endrun(sub//': FATAL: reading namelist')
+         end if
+      end if
+      close(unitn)
+      call freeunit(unitn)
+   end if
+
+   call mpi_bcast(pbuf_global_allocate, 1, mpi_logical, mstrid, mpicom, ierr)
+   if (ierr /= 0) call endrun(sub//": FATAL: mpi_bcast: pbuf_global_allocate")
+
+   global_allocate_all = pbuf_global_allocate
+
+   if (masterproc) then
+      write(iulog,*) 'physics buffer options:'
+      write(iulog,*) '  pbuf_global_allocate =', global_allocate_all
+   end if
+
+end subroutine pbuf_readnl
+
+!===============================================================================
 
   !
   ! Initialize dyn_time_lvls
@@ -215,7 +244,7 @@ CONTAINS
   ! pbuf_col_type_index returns an index for use with pbuf calls
   !
   ! * col_type:         is set to col_type_grid (if use_subcol=.false.) or
-  !                     col_type_subcol (if (use_subcol=.true.). 
+  !                     col_type_subcol (if (use_subcol=.true.).
   !
 
   subroutine pbuf_col_type_index(use_subcol, col_type)
@@ -231,7 +260,7 @@ CONTAINS
 
   end subroutine pbuf_col_type_index
 
-  ! 
+  !
   !  Return a pointer to the current chunks physics_buffer.
   !
 
@@ -261,7 +290,7 @@ CONTAINS
 
   end function pbuf_get_chunk
 
-  ! 
+  !
   !  Return .true. iff pbuf has an allocated grid field
   !
 
@@ -279,7 +308,7 @@ CONTAINS
 
   end function pbuf_field_has_gridcols
 
-  ! 
+  !
   !  Return .true. iff pbuf has an allocated subcolumn field
   !
 
@@ -297,7 +326,7 @@ CONTAINS
 
   end function pbuf_field_has_subcols
 
-  ! 
+  !
   !  Return .true. iff pbuf has an allocated col_type column field
   !
 
@@ -318,12 +347,12 @@ CONTAINS
   end function pbuf_field_has_col_type
 
   !
-  !  Initialize the buffer, should be called after all pbuf_add_field calls 
+  !  Initialize the buffer, should be called after all pbuf_add_field calls
   !  have been completed and should only be called once in a run
   !
   subroutine pbuf_initialize(pbuf2d)
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
-    
+
     integer :: i, c
     type(physics_buffer_hdr), pointer :: hdrbuffer
 
@@ -332,7 +361,7 @@ CONTAINS
     !
     if(buffer_initialized) return
     ! Allocate at least 1 to avoid unallocated error in ideal physics
-    allocate(pbuf2d(max(1,currentpbufflds),begchunk:endchunk)) 
+    allocate(pbuf2d(max(1,currentpbufflds),begchunk:endchunk))
     if(currentpbufflds<1) return
 
     do c = begchunk, endchunk
@@ -346,7 +375,7 @@ CONTAINS
         hdrbuffer => hdrbuffer%nexthdr
       end do
     end do
-    
+
     buffer_initialized=.true.
     call pbuf_allocate(pbuf2d, 'global')
 #ifdef DEBUG
@@ -420,7 +449,7 @@ CONTAINS
     end if
   end subroutine pbuf_allocate
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   subroutine pbuf_allocate_field_{TYPE}(pbuf2d, index, dtype)
     {VTYPE},                            intent(in)    :: dtype
     type(physics_buffer_desc), pointer                :: pbuf2d(:,:)
@@ -447,7 +476,7 @@ CONTAINS
           end do
        end if
     end do
-    
+
   end subroutine pbuf_allocate_field_{TYPE}
 
   pure logical function pbuf_do_deallocate(hdr, persistence, col_type) result(rval)
@@ -551,7 +580,7 @@ CONTAINS
   !
   !  Register a field in the pbuf
   !  This should be called from physics register routines.
-  !  persistence must be 'global' or 'physpkg' 
+  !  persistence must be 'global' or 'physpkg'
   !  dtype can be any of r8, r4, i4 as defined in shr_kinds_mod.F90
   !  col_type is either col_type_grid or col_type_subcol.
   !  If no col_type, then grid field is defined (i.e., dimsizes set)
@@ -655,12 +684,12 @@ CONTAINS
 
   !
   !  Add a field to the pbuf, this should be called from physics register routines
-  !  name is required to be unique, 
-  !  persistence must be 'global' or 'physpkg' 
+  !  name is required to be unique,
+  !  persistence must be 'global' or 'physpkg'
   !  dtype can be any of r8, r4, i4 as defined in shr_kinds_mod.F90
   !  If present, col_type must be either col_type_grid or col_type_subcol
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   subroutine pbuf_add_field_{TYPE}(name, persistence, dtype, dimsizes, index, col_type)
 
     character(len=*), intent(in)  :: name, persistence
@@ -670,7 +699,6 @@ CONTAINS
     integer, intent(out)          :: index
 
     ! Local Variables
-    type(physics_buffer_hdr), pointer :: bufptr
     integer                           :: col_type_use
 
     if(buffer_initialized) then
@@ -732,10 +760,10 @@ CONTAINS
 
   end subroutine pbuf1d_print
   !
-  ! Given a pbuf field name return an integer index to the field.  
+  ! Given a pbuf field name return an integer index to the field.
   ! This index can be used to retrieve the field and is much faster
-  ! than using the name in most cases  
-  ! 
+  ! than using the name in most cases
+  !
 
   function pbuf_get_index(name, errcode) result(index)
     character(len=*), intent(in)     :: name
@@ -756,7 +784,7 @@ CONTAINS
     end do
 
     if (present(errcode)) then
-        errcode = index 
+        errcode = index
     else if(index<0) then
        call endrun('Attempt to find undefined name in pbuf '//trim(name))
     end if
@@ -766,13 +794,13 @@ CONTAINS
 
   !=========================================================================================
 
-  ! 
-  ! Given a pbuf2d chunk and an index return a pointer to a field chunk 
-  ! 
+  !
+  ! Given a pbuf2d chunk and an index return a pointer to a field chunk
+  !
   !
 
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
   subroutine get_pbuf1d_field_by_index_{DIMS}d_{TYPE}(pbuf, index, field, start,kount, col_type, copy_if_needed, errcode)
 
@@ -793,11 +821,13 @@ CONTAINS
     integer                           :: col_type_use
     integer, allocatable              :: kount_grid(:) ! For use in copy_if_needed
     logical                           :: subset
+    character(len=*), parameter       :: subname='GET_PBUF1D_FIELD_BY_INDEX'
+    character(len=128)                :: errmsg
 
     ! Copy the generic type to one compatable with the request
-    if(index<1 .or. index>size(pbuf)) then
-      print *,__FILE__,__LINE__,index
-      call endrun('index out of range')
+    if((index < 1) .or. (index > size(pbuf))) then
+      write(errmsg, '(2a,i0,a)') subname,': index (',index,') out of range'
+      call endrun(errmsg)
     end if
 
     ! Default col_type is grid columns
@@ -854,7 +884,7 @@ CONTAINS
           ! Only do the copy if we did the alloc (i.e., set the is_copy flag)
           ! Only copy the portion we are going to hand back (i.e., start, kount)
           ! Chances are that kount(1) = pcols*psubcols because we are looking
-          ! for a subcolumn field (or we wouldn't be here). Now, 
+          ! for a subcolumn field (or we wouldn't be here). Now,
           ! subcol_field_copy requires kount(1) = pcols for the input and
           ! therefore, kount(1) = pcols*psubcols for the output. Check and
           ! make it work
@@ -926,7 +956,7 @@ CONTAINS
 
   end subroutine get_pbuf1d_field_by_index_{DIMS}d_{TYPE}
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
   subroutine get_pbuf2d_field_by_index_{DIMS}d_{TYPE}(pbuf2d, lchnk, index, field, start, kount, col_type, errcode)
 
@@ -950,9 +980,9 @@ CONTAINS
          start=start, kount=kount, col_type=col_type, errcode=errcode)
   end subroutine get_pbuf2d_field_by_index_{DIMS}d_{TYPE}
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   subroutine get_pbuf2d_field_restart_{TYPE}(pbuf2d, lchnk, index, field, mdimsize, col_type)
-    use subcol_utils,    only: subcol_unpack
+    use subcol_pack_mod, only: subcol_unpack
 
     ! NB: This routine is really only useful for write_restart_field
     ! Get the data based on the col_type which is specified.
@@ -1003,7 +1033,7 @@ CONTAINS
     end if
   end subroutine get_pbuf2d_field_restart_{TYPE}
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
   subroutine set_pbuf2d_field_const_by_index_{TYPE}(pbuf2d,index,const, col_type)
 
@@ -1015,7 +1045,7 @@ CONTAINS
     integer,intent(in)  ,optional      :: col_type
 
     integer :: c
-    
+
     do c=begchunk,endchunk
        if(present(col_type)) then
           call set_pbuf1d_field_const_by_index_{TYPE}(pbuf_get_chunk(pbuf2d,c),index,const, col_type=col_type)
@@ -1026,7 +1056,7 @@ CONTAINS
 
   end subroutine set_pbuf2d_field_const_by_index_{TYPE}
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
   subroutine set_pbuf1d_field_const_by_index_{TYPE}(pbuf,index,const,start,kount, col_type)
 
@@ -1036,7 +1066,7 @@ CONTAINS
     {VTYPE},intent(in) :: const
     integer, intent(in), optional :: start(:),kount(:)
     integer, intent(in), optional :: col_type
-   
+
     integer :: col_type_use
     logical :: subset
 
@@ -1056,16 +1086,16 @@ CONTAINS
          (.not. present(start) .and. present(kount)) ) then
        call endrun('pbuf_set_field: Both start and kount must be present for '//trim(pbuf(index)%hdr%name))
     end if
-    
+
     ! Set the appropriate grid or sub-column field.  Check that the fields have been allocated.
-    if(subset) then 
+    if(subset) then
 
        if (col_type_use == col_type_subcol) then
          ! Set sub-column field
          if (.not. buffer_field_is_alloc(pbuf(index)%bfg(col_type_subcol))) &
               call endrun('pbuf_set_field: sub-column field not allocated for '//trim(pbuf(index)%hdr%name))
          call buffer_set_field(pbuf(index)%bfg(col_type_subcol),const,start,kount)
-       
+
        else if (col_type_use == col_type_grid) then
          ! Set grid field
          if (.not. buffer_field_is_alloc(pbuf(index)%bfg(col_type_grid))) &
@@ -1076,7 +1106,7 @@ CONTAINS
               ' but col_type is neither col_type_grid nor col_type_subcol')
        end if
 
-     else 
+     else
 
        if (col_type_use == col_type_subcol) then
          ! Set sub-column field
@@ -1098,7 +1128,7 @@ CONTAINS
 
    end subroutine set_pbuf1d_field_const_by_index_{TYPE}
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
   subroutine set_pbuf2d_field_by_index_{DIMS}d_{TYPE}(pbuf2d,index,field, start, kount, col_type)
 
@@ -1150,9 +1180,9 @@ CONTAINS
     end do
   end subroutine set_pbuf2d_field_by_index_{DIMS}d_{TYPE}
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
-  function get_field_chunk_{DIMS}d_{TYPE}(field, c) result(fld) 
+  function get_field_chunk_{DIMS}d_{TYPE}(field, c) result(fld)
     ! module private helper function
     {VTYPE}, pointer :: fld{DIMSTR}
     integer, intent(in) :: c
@@ -1172,13 +1202,13 @@ CONTAINS
 #elif ({DIMS}==5)
     {VTYPE},pointer :: field(:,:,:,:,:,:)
     fld => field(:,:,:,:,:,c)
-#endif    
+#endif
 
   end function get_field_chunk_{DIMS}d_{TYPE}
 
 
 
-  ! TYPE int,double,real 
+  ! TYPE int,double,real
   ! DIMS 1,2,3,4,5
   subroutine set_pbuf1d_field_by_index_{DIMS}d_{TYPE}(pbuf,index,field, start, kount, col_type)
 
@@ -1214,7 +1244,7 @@ CONTAINS
        if (col_type_use == col_type_subcol) then
           if (.not. buffer_field_is_alloc(pbuf(index)%bfg(col_type_subcol))) &
               call endrun('pbuf_set_field: sub-column field not allocated for '//trim(pbuf(index)%hdr%name))
-          call buffer_set_field(pbuf(index)%bfg(col_type_subcol),field,start,kount)      
+          call buffer_set_field(pbuf(index)%bfg(col_type_subcol),field,start,kount)
 
        ! Set grid field
        else if (col_type_use == col_type_grid) then
@@ -1225,7 +1255,7 @@ CONTAINS
          call endrun('pbuf_set_field: Trying to set '//trim(pbuf(index)%hdr%name)//&
                     ' but col_type is neigher col_type_grid nor col_type_subcol ')
        end if
-    else 
+    else
 
        ! Set sub-column field
        if (col_type_use == col_type_subcol) then
@@ -1272,12 +1302,14 @@ CONTAINS
 !
 ! Initialize a restart file to write - all additional dims in a field are
 ! bundled into a single dimension for output and a dim pbuf_xxxxx is declared
-! in the file if it does not already exist.   
+! in the file if it does not already exist.
 !
   subroutine pbuf_init_restart(File, pbuf2d)
-    use pio,             only: file_desc_t, pio_seterrorhandling, pio_noerr,  &
-         pio_bcast_error, pio_internal_error, pio_inq_dimid, pio_def_dim,     &
-         pio_def_var, pio_int
+    use pio,              only: file_desc_t, pio_int
+    use cam_pio_utils,    only: cam_pio_def_dim, cam_pio_def_var
+    use phys_grid,        only: phys_decomp
+    use cam_grid_support, only: cam_grid_get_file_dimids, cam_grid_dimensions
+
 
     ! Dummy Variables
     type(file_desc_t),                 intent(inout) :: file
@@ -1285,23 +1317,18 @@ CONTAINS
 
     ! Local Variables
     type(physics_buffer_desc), pointer               :: pbuf
-    integer                                          :: ierr, i, grid_select
-    integer                                          :: adimid(3), hdimcnt, dimcnt
+    integer                                          :: i, grid_select
+    integer                                          :: adimid(3) ! PIO IDs
+    integer                                          :: hdimcnt ! # grid dims
+    integer                                          :: dimcnt  ! # array dims
     integer                                          :: mdimsize, piodtype
 
     character(len=10)                                :: dimname
     character(len=24)                                :: varname
 
-    call pio_seterrorhandling(File, pio_bcast_error)
-    ierr = pio_inq_dimid(File, 'lon', adimid(1))
-    if(ierr==PIO_NOERR) then
-      ierr = pio_inq_dimid(File, 'lat', adimid(2))
-      hdimcnt = 2
-    else
-      ierr = pio_inq_dimid(File, 'ncol', adimid(1))
-      hdimcnt = 1
-    end if
-    call pio_seterrorhandling(File, pio_internal_error)
+    ! Use adimid as a temp to find number of horizontal dims
+    call cam_grid_dimensions(phys_decomp, adimid(1:2), hdimcnt)
+    call cam_grid_get_file_dimids(phys_decomp, File, adimid)
 
     do i = 1, currentpbufflds
       pbuf => pbuf2d(i,begchunk)
@@ -1315,33 +1342,32 @@ CONTAINS
         ! For subcol fields, mdimsize includes psubcols in size
         mdimsize  = product(pbuf%hdr%dimsizes(:,grid_select))/pcols
         if(mdimsize > 1) then
-          call pio_seterrorhandling(File, pio_bcast_error)
           write(dimname,'(a,i5.5)') 'pbuf_',mdimsize
-          ierr = pio_inq_dimid(File,dimname, adimid(hdimcnt+1))
-          call pio_seterrorhandling(File, pio_internal_error)
-          if(ierr /= PIO_NOERR) then
-            ierr = pio_def_dim(File, dimname, mdimsize, adimid(hdimcnt+1))
-          end if
+          call cam_pio_def_dim(File, dimname, mdimsize, adimid(hdimcnt+1),    &
+               existOK=.true.)
           dimcnt = hdimcnt + 1
         else
           dimcnt = hdimcnt
         end if
         if (mdimsize > 0) then
           varname = trim(pbuf%hdr%name)//trim(field_grid_suff(grid_select))
-          ierr = pio_def_var(File, varname, piodtype, adimid(1:dimcnt),       &
-               pbuf%hdr%vardesc(grid_select))
+          call cam_pio_def_var(File, varname, piodtype, adimid(1:dimcnt),     &
+               pbuf%hdr%vardesc(grid_select), existOK=.false.)
         end if
       end do
 
     end do
 
-    ierr = pio_def_var(File, 'pbuf_time_idx', pio_int, timeidx_desc)
+    call cam_pio_def_var(File, 'pbuf_time_idx', pio_int, timeidx_desc,        &
+         existOK=.false.)
 
   end subroutine pbuf_init_restart
 
 
   subroutine pbuf_write_restart(File, pbuf2d)
-    use pio,             only: file_desc_t, pio_put_var
+    use pio,              only: file_desc_t, pio_put_var
+    use cam_grid_support, only: cam_grid_dimensions
+    use phys_grid,        only: phys_decomp
 
     ! Dummy Variables
     type(file_desc_t),                 intent(inout) :: file
@@ -1351,19 +1377,23 @@ CONTAINS
     type(physics_buffer_desc), pointer                :: pbufhdr(:)
 
     integer                                           :: index, dtype, ierr
+    integer                                           :: gdimlens(2)
+    integer                                           :: grank
 
     pbufhdr => pbuf_get_chunk(pbuf2d, begchunk)
+    gdimlens = 1
+    call cam_grid_dimensions(phys_decomp, gdimlens(1:2), grank)
 
     do index = 1, currentpbufflds
       if(pbufhdr(index)%hdr%persistence == persistence_global) then
         dtype = pbufhdr(index)%hdr%dtype
         select case(dtype)
         case (TYPEDOUBLE)
-          call write_restart_field_double(File, pbuf2d, index)
+          call write_restart_field_double(File, pbuf2d, index, gdimlens, grank)
         case (TYPEREAL)
-          call write_restart_field_real(File, pbuf2d, index)
+          call write_restart_field_real(File, pbuf2d, index, gdimlens, grank)
         case (TYPEINT)
-          call write_restart_field_int(File, pbuf2d, index)
+          call write_restart_field_int(File, pbuf2d, index, gdimlens, grank)
         end select
       end if
     end do
@@ -1371,39 +1401,86 @@ CONTAINS
 
   end subroutine pbuf_write_restart
 
+  subroutine pbuf_restart_dimsizes(pbuf, gdimlens, grank, gridnum, adimlens,  &
+       fdimlens, frank)
 
-  ! TYPE int,double,real 
-  subroutine write_restart_field_{TYPE}(File, pbuf2d, index)
-    use pio,             only: file_desc_t, io_desc_t, pio_write_darray
-    use cam_pio_utils,   only: get_phys_decomp
+    ! Dummy arguments
+    type(physics_buffer_desc), pointer    :: pbuf
+    integer,                intent(in)    :: gdimlens(2) ! Grid horiz. dim sizes
+    integer,                intent(in)    :: grank       ! Array rank on file
+    integer,                intent(in)    :: gridnum     ! pbuf grid selector
+    integer,                intent(out)   :: adimlens(3) ! Array dims
+    integer,                intent(out)   :: fdimlens(3) ! Array dims on file
+    integer,                intent(out)   :: frank       ! array rank on file
+
+    ! Local variable
+    integer                             :: mdimsize
+
+    mdimsize = PRODUCT(pbuf%hdr%dimsizes(:,gridnum)) / pcols
+    fdimlens(1:2) = gdimlens
+    if (grank == 1) then
+      ! Unstructured grid
+      fdimlens(2) = mdimsize
+      fdimlens(3) = 1
+      frank       = 2
+    else
+      fdimlens(3) = mdimsize
+      frank       = 3
+    end if
+    ! Restart does not write a dimension if mdimsize == 1
+    if (mdimsize == 1) then
+      frank = frank - 1
+    end if
+
+    adimlens(1) = pcols
+    adimlens(2) = mdimsize
+    adimlens(3) = endchunk - begchunk + 1
+
+  end subroutine pbuf_restart_dimsizes
+
+  ! TYPE int,double,real
+  subroutine write_restart_field_{TYPE}(File, pbuf2d, index, gdimlens, grank)
+    use cam_grid_support, only: cam_grid_write_dist_array
+    use phys_grid,        only: phys_decomp
+    use pio,              only: file_desc_t
 
     ! Dummy Variables
     type(file_desc_t),                 intent(inout) :: File
     type(physics_buffer_desc), pointer               :: pbuf2d(:,:)
     integer,                           intent(in)    :: index
+    integer,                           intent(in)    :: gdimlens(2)
+    integer,                           intent(in)    :: grank
 
     ! Local Variables
     type(physics_buffer_desc), pointer               :: pbuf
-    type(io_desc_t),           pointer               :: iodesc => null()
-    {VTYPE},      allocatable                        :: field(:,:,:)
+    {VTYPE},       allocatable                       :: field(:,:,:)
 
-    integer                            :: grid_select ! 1=grid, 2=subcol
-    integer                            :: piodtype, c, ierr
-    integer                            :: mdimsize
+    integer                                          :: grid_select ! 1=grid, 2=subcol
+    integer                                          :: c           ! Chunk index
+    integer                                          :: fdimlens(3) ! Array dimensions on NetCDF file
+    integer                                          :: adimlens(3) ! Array dimensions
+    integer                                          :: frank
 
     pbuf => pbuf2d(index, begchunk)
-    piodtype = pbuftype2piotype(pbuf%hdr%dtype)
 
     do grid_select = 1, ngrid_types
-      mdimsize = product(pbuf%hdr%dimsizes(:,grid_select))/pcols
-      if ((mdimsize > 0) .and. (.not. pbuf%hdr%is_copy(grid_select))) then
-        allocate(field(pcols, mdimsize, begchunk:endchunk))
+      call pbuf_restart_dimsizes(pbuf, gdimlens, grank, grid_select,          &
+           adimlens, fdimlens, frank)
+      if ((PRODUCT(adimlens) > 0) .and. (.not. pbuf%hdr%is_copy(grid_select))) then
+        allocate(field(adimlens(1), adimlens(2), begchunk:endchunk))
         do c = begchunk, endchunk
           call pbuf_get_field_restart(pbuf2d, c, index, field(:,:,c),         &
-               mdimsize, grid_select)
+               adimlens(2), grid_select)
         end do
-        call get_phys_decomp(iodesc, 1, mdimsize, 1, piodtype)
-        call pio_write_darray(File, pbuf%hdr%vardesc(grid_select), iodesc, field, ierr)
+        if (size(field,2) == 1) then
+          ! Special case for 2-D pbuf fields
+          adimlens(2) = adimlens(3)
+          call cam_grid_write_dist_array(File, phys_decomp, adimlens(1:2),    &
+               fdimlens(1:frank), field(:,1,:), pbuf%hdr%vardesc(grid_select))
+        else
+          call cam_grid_write_dist_array(File, phys_decomp, adimlens,         &
+               fdimlens(1:frank), field, pbuf%hdr%vardesc(grid_select))
+        end if
         deallocate(field)
       end if
     end do
@@ -1412,7 +1489,9 @@ CONTAINS
 
 
   subroutine pbuf_read_restart(File, pbuf2d)
-    use pio,             only: file_desc_t, pio_inq_varid, pio_get_var
+    use cam_grid_support, only: cam_grid_dimensions
+    use phys_grid,        only: phys_decomp
+    use pio,              only: file_desc_t, pio_inq_varid, pio_get_var
 
     ! Dummy Variables
     type(File_desc_t),                 intent(inout) :: File
@@ -1422,11 +1501,15 @@ CONTAINS
     type(physics_buffer_desc), pointer               :: pbufhdr(:)
 
     integer                                          :: index, dtype, ierr
+    integer                                          :: gdimlens(2) ! Horizontal grid dimensions
+    integer                                          :: grank
 
     call pbuf_initialize(pbuf2d)
-    
+
     pbufhdr => pbuf_get_chunk(pbuf2d, begchunk)
 
+    gdimlens = 1
+    call cam_grid_dimensions(phys_decomp, gdimlens(1:2), grank)
     ierr = pio_inq_varid(File, 'pbuf_time_idx', timeidx_desc)
     ierr = pio_get_var(File, timeidx_desc, old_time_idx)
 
@@ -1435,44 +1518,52 @@ CONTAINS
         dtype = pbufhdr(index)%hdr%dtype
         select case(dtype)
         case (TYPEDOUBLE)
-          call read_restart_field_double(File, pbuf2d, index)
+          call read_restart_field_double(File, pbuf2d, index, gdimlens, grank)
         case (TYPEREAL)
-          call read_restart_field_real(File, pbuf2d, index)
+          call read_restart_field_real(File, pbuf2d, index, gdimlens, grank)
         case (TYPEINT)
-          call read_restart_field_int(File, pbuf2d, index)
+          call read_restart_field_int(File, pbuf2d, index, gdimlens, grank)
         end select
       end if
     end do
 
   end subroutine pbuf_read_restart
 
-  ! TYPE int,double,real 
-  subroutine read_restart_field_{TYPE} (File, pbuf2d, index)
-    use pio,             only: file_desc_t, io_desc_t, pio_read_darray
-    use pio,             only: pio_inq_varid
-    use cam_pio_utils,   only: get_phys_decomp
-    use subcol_utils,    only: subcol_pack
+  ! TYPE int,double,real
+  subroutine read_restart_field_{TYPE} (File, pbuf2d, index, gdimlens, grank)
+    use pio,              only: file_desc_t
+    use pio,              only: pio_inq_varid
+    use cam_pio_utils,    only: cam_pio_handle_error
+    use cam_grid_support, only: cam_grid_read_dist_array
+    use subcol_pack_mod,  only: subcol_pack
+    use phys_grid,        only: phys_decomp
 
     ! Dummy Variables
     type(file_desc_t),                 intent(inout) :: File
     type(physics_buffer_desc), pointer               :: pbuf2d(:,:)
     integer,                           intent(in)    :: index
+    integer,                           intent(in)    :: gdimlens(2)
+    integer,                           intent(in)    :: grank
 
     ! Local Variables
-    type(physics_buffer_desc), pointer               :: pbuf
-    type(io_desc_t),           pointer               :: iodesc => null()
-    {VTYPE}, allocatable                             :: fld7(:,:,:,:,:,:,:)
-    {VTYPE}, allocatable                             :: fld5_pack(:,:,:,:,:)
+    type(physics_buffer_desc), pointer :: pbuf
+    {VTYPE},                   pointer :: fld6(:,:,:,:,:,:)
+    {VTYPE},       allocatable         :: fld5_pack(:,:,:,:,:)
+    {VTYPE},       allocatable         :: field(:,:,:)
 
-    integer                                          :: grid_select ! (1=grid, 2=subcol)
-    integer                                          :: piodtype, ierr, c
-    integer                                          :: dimsizes(6)
-    integer                                          :: mdimsize
+    integer                            :: grid_select ! (1=grid, 2=subcol)
+    integer                            :: ierr, c
+    integer                            :: start(6)
+    integer                            :: dimsizes(6)
+    integer                            :: fdimlens(3) ! Array dimensions on NetCDF file
+    integer                            :: frank       ! Array rank on file
+    integer                            :: adimlens(3) ! Array dimensions
 
-    character(len=24)                                :: varname
+    character(len=24)                  :: varname
+    character(len=*), parameter        :: subname = 'read_restart_field_{TYPE}'
 
     pbuf => pbuf2d(index, begchunk)
-    piodtype = pbuftype2piotype(pbuf%hdr%dtype)
+    start = 1
 
     do grid_select = 1, ngrid_types
 
@@ -1482,6 +1573,8 @@ CONTAINS
         cycle
       end if
 
+      call pbuf_restart_dimsizes(pbuf, gdimlens, grank, grid_select,          &
+           adimlens, fdimlens, frank)
       ! Fix up dimensions for subcolumn field
       if (grid_select == col_type_subcol) then
         ! Field stored as  (pcols, psubcols*restDims, chunks)
@@ -1496,25 +1589,33 @@ CONTAINS
 
       varname = trim(pbuf%hdr%name)//trim(field_grid_suff(grid_select))
       ierr = pio_inq_varid(File, varname, pbuf%hdr%vardesc(grid_select))
+      call cam_pio_handle_error(ierr, trim(subname)//': '//trim(varname)//' not found')
 
-      allocate(fld7(dimsizes(1), dimsizes(2), dimsizes(3), dimsizes(4),       &
-           dimsizes(5), dimsizes(6), begchunk:endchunk))
-
-      mdimsize = product(dimsizes(2:))
-      call get_phys_decomp(iodesc, 1, mdimsize, 1, piodtype)
-      call pio_read_darray(File, pbuf%hdr%vardesc(grid_select), iodesc, fld7, ierr)
+      allocate(field(adimlens(1), adimlens(2), begchunk:endchunk))
+      if (size(field,2) == 1) then
+        ! Special case for 2-D pbuf fields
+        adimlens(2) = adimlens(3)
+        call cam_grid_read_dist_array(File, phys_decomp, adimlens(1:2),       &
+             fdimlens(1:frank), field(:,1,:), pbuf%hdr%vardesc(grid_select))
+      else
+        call cam_grid_read_dist_array(File, phys_decomp, adimlens,            &
+             fdimlens(1:frank), field, pbuf%hdr%vardesc(grid_select))
+      end if
 
       do c = begchunk, endchunk
         if (grid_select == col_type_grid) then
-          call buffer_set_field(pbuf2d(index,c)%bfg(grid_select), fld7(:,:,:,:,:,:,c))
+          call buffer_get_field_ptr(pbuf2d(index,c)%bfg(grid_select), fld6,   &
+               start, dimsizes)
+          fld6 = reshape(field(:,:,c), dimsizes)
         else if (grid_select == col_type_subcol) then
-          call subcol_pack(c, fld7(:,:,:,:,:,:,c), fld5_pack)
+          call subcol_pack(c, reshape(field(:,:,c), dimsizes), fld5_pack)
           call buffer_set_field(pbuf2d(index,c)%bfg(grid_select), fld5_pack)
         else
           call endrun('read_restart_field_{TYPE}: invalid grid selector - must be either 1 or 2')
         end if
       end do
-      deallocate(fld7)
+      nullify(fld6)
+      deallocate(field)
       if (allocated(fld5_pack)) then
         deallocate(fld5_pack)
       end if
@@ -1522,9 +1623,92 @@ CONTAINS
 
   end subroutine read_restart_field_{TYPE}
 
+  subroutine pbuf_dump_pbuf(pbuf2d, name, num)
+    use cam_pio_utils,    only: cam_pio_dump_field
+    use spmd_utils,       only: masterproc
+
+    ! Dummy arguments
+    type(physics_buffer_desc), pointer     :: pbuf2d(:,:)
+    character(len=*), optional, intent(in) :: name
+    integer,          optional, intent(in) :: num
+
+    ! Local variables
+    integer, parameter                     :: max_name = 64
+    character(len=max_name)                :: field_name
+    integer                                :: index, grid_select, c
+    integer                                :: namelen
+    integer                                :: dimstart(6), dimend(6)
+    integer                                :: ierr
+    integer                                :: dtype
+    type(physics_buffer_desc), pointer     :: pbufhdr(:)
+    real(r8), allocatable                  :: field(:,:,:,:,:,:)
+    real(r8), pointer                      :: fld5(:,:,:,:,:)
+
+    pbufhdr => pbuf_get_chunk(pbuf2d, begchunk)
+    dimstart = 1
+
+    do index = 1, currentpbufflds
+      dtype = pbufhdr(index)%hdr%dtype
+      do grid_select = 1, ngrid_types
+        namelen = len_trim(pbufhdr(index)%hdr%name)
+        namelen = namelen + len_trim(field_grid_suff(grid_select))
+        if (present(name)) then
+          namelen = namelen + len_trim(name)
+        end if
+        if (present(num)) then
+          namelen = namelen + int(log10(real(num))) + 2
+        end if
+        if (namelen > 64) then
+          call endrun("PBUF_DUMP_PBUF: Name string too long")
+        end if
+        if (present(name)) then
+          if (present(num)) then
+            write(field_name, '(4a,i0)') trim(pbufhdr(index)%hdr%name),       &
+                 trim(field_grid_suff(grid_select)), trim(name), '_', num
+          else
+            write(field_name, '(3a)') trim(pbufhdr(index)%hdr%name),          &
+                 trim(field_grid_suff(grid_select)), trim(name)
+          end if
+        else if (present(num)) then
+          write(field_name, '(3a,i0)') trim(pbufhdr(index)%hdr%name),         &
+               trim(field_grid_suff(grid_select)), '_', num
+        else
+          write(field_name, '(2a)') trim(pbufhdr(index)%hdr%name),            &
+               trim(field_grid_suff(grid_select))
+        end if
+        dimend = pbufhdr(index)%hdr%dimsizes(:, grid_select)
+        if (PRODUCT(dimend) > 0) then
+          if (dimend(6) /= 1) then
+            if (masterproc) then
+              write(iulog, *) 'PBUF_DUMP_PBUF: ', trim(field_name), dimend
+            end if
+            call endrun("PBUF_DUMP_PBUF: No support for 6D pbuf field")
+          end if
+          dimend(6) = endchunk - begchunk + 1
+          select case(dtype)
+          case (TYPEDOUBLE)
+            allocate(field(dimend(1), dimend(2), dimend(3), dimend(4),        &
+                 dimend(5), dimend(6)))
+            do c = begchunk, endchunk
+              call pbuf_get_field(pbuf2d, c, index, fld5,                     &
+                   col_type=grid_select, errcode=ierr)
+              field(:,:,:,:,:,c-begchunk+1) = fld5(:,:,:,:,:)
+            end do
+            call cam_pio_dump_field(field_name, dimstart, dimend,             &
+                 field, compute_maxdim_in=.false.)
+            deallocate(field)
+          case (TYPEREAL)
+            if (masterproc) then
+              write(iulog, *) 'PBUF_DUMP_PBUF: No support for real fields'
+            end if
+          case (TYPEINT)
+            if (masterproc) then
+              write(iulog, *) 'PBUF_DUMP_PBUF: No support for integer fields'
+            end if
+          end select
+        end if
+      end do
+    end do
+  end subroutine pbuf_dump_pbuf
+
 end module physics_buffer
-
-
-
-
-

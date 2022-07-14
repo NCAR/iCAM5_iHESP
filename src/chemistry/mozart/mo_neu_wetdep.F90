@@ -3,6 +3,8 @@
 ! based on the original code from J. Neu developed for UC Irvine
 ! model
 !
+! LKE 2/23/2018 - correct setting flag for mass-limited (HNO3,etc.) vs Henry's Law washout
+!
 module mo_neu_wetdep
 !
   use shr_kind_mod,     only : r8 => shr_kind_r8
@@ -18,7 +20,6 @@ module mo_neu_wetdep
   private
   public :: neu_wetdep_init
   public :: neu_wetdep_tend
-  public :: do_neu_wetdep
 !
   save
 !
@@ -28,6 +29,7 @@ module mo_neu_wetdep
   integer                     :: index_cldice,index_cldliq,nh3_ndx,co2_ndx
   logical                     :: debug   = .false.
   integer                     :: hno3_ndx = 0
+  integer                     :: h2o2_ndx = 0
 !
 ! diagnostics
 !
@@ -49,8 +51,7 @@ contains
 subroutine neu_wetdep_init
 !
   use constituents, only : cnst_get_ind,cnst_mw
-  use cam_history,  only : addfld, add_default, phys_decomp
-  use ppgrid,       only : pver
+  use cam_history,  only : addfld, add_default, horiz_only
   use phys_control, only : phys_getopts
 !
   integer :: m,l
@@ -89,7 +90,7 @@ subroutine neu_wetdep_init
 !
 ! CCMI: added SO2t and NH_50W
 !       
-      case( 'HYAC', 'CH3COOH' , 'HCOOH', 'EOOH' )
+      case( 'HYAC', 'CH3COOH' , 'HCOOH', 'EOOH', 'IEPOX' )
          test_name = 'CH2O'
       case ( 'SOGB','SOGI','SOGM','SOGT','SOGX' )
          test_name = 'H2O2'
@@ -97,11 +98,32 @@ subroutine neu_wetdep_init
          test_name = 'SO2'
       case ( 'CLONO2','BRONO2','HCL','HOCL','HOBR','HBR', 'Pb', 'MACROOH', 'ISOPOOH', 'XOOH', 'H2SO4', 'HF', 'COF2', 'COFCL')
          test_name = 'HNO3'
-      case ( 'NH_50W' ) 
+      case ( 'NH_50W', 'NDEP', 'NHDEP', 'NH4', 'NH4NO3' ) 
          test_name = 'HNO3'
-      case ( 'ALKOOH', 'MEKOOH', 'TOLOOH', 'TERPOOH' )
+      case ( 'ALKOOH', 'MEKOOH', 'TOLOOH' )
          test_name = 'CH3OOH'        
-
+      case( 'PHENOOH', 'BENZOOH', 'C6H5OOH', 'BZOOH', 'XYLOLOOH', 'XYLENOOH', 'HPALD' )
+         test_name = 'CH3OOH'
+      case( 'TERPOOH', 'TERP2OOH', 'MBOOOH' )
+         test_name = 'HNO3'
+      case( 'TERPROD1', 'TERPROD2' )
+         test_name = 'CH2O'
+      case( 'HMPROP' )
+          test_name = 'GLYALD'
+      case( 'NOA', 'ALKNIT', 'ISOPNITA', 'ISOPNITB', 'HONITR', 'ISOPNOOH' )
+         test_name = 'H2O2'
+      case( 'NC4CHO', 'NC4CH2OH', 'TERPNIT', 'NTERPOOH' )
+         test_name = 'H2O2'
+      case(  'SOAGbb0' )  ! Henry's Law coeff. added for VBS SOA's, biomass burning is the same as fossil fuels
+         test_name = 'SOAGff0'  
+      case(  'SOAGbb1' )
+         test_name = 'SOAGff1'  
+      case(  'SOAGbb2' )
+         test_name = 'SOAGff2'  
+      case(  'SOAGbb3' )
+         test_name = 'SOAGff3'  
+      case(  'SOAGbb4' )
+         test_name = 'SOAGff4'  
     end select
 !
     do l = 1,n_species_table
@@ -127,7 +149,7 @@ subroutine neu_wetdep_init
     if ( trim(test_name) == 'CO2' ) then
       co2_ndx = m
     end if
-    if ( trim(test_name) == 'HNO3' ) then
+    if ( trim(gas_wetdep_list(m)) == 'HNO3' ) then
       hno3_ndx = m
     end if
 !
@@ -153,16 +175,17 @@ subroutine neu_wetdep_init
     end if
   end do
 !
-! define specie-dependent arrays
+! define species-dependent arrays
 !
   do m=1,gas_wetdep_cnt
 !
-    mol_weight     (m) = cnst_mw(mapping_to_mmr(m))
+    mol_weight(m) = cnst_mw(mapping_to_mmr(m))
     if ( debug ) print '(i4,a,f8.4)',m,' mol_weight ',mol_weight(m)
     ice_uptake(m) = .false.
     if ( trim(gas_wetdep_list(m)) == 'HNO3' ) then
       ice_uptake(m) = .true.
     end if
+!
 !
   end do
 !
@@ -174,17 +197,20 @@ subroutine neu_wetdep_init
 ! define output
 !
   do m=1,gas_wetdep_cnt
-    call addfld     ('DTWR_'//trim(gas_wetdep_list(m)),'mol/mol/s',pver, 'A','wet removal Neu scheme tendency',phys_decomp)
+    call addfld     ('DTWR_'//trim(gas_wetdep_list(m)),(/ 'lev' /), 'A','kg/kg/s','wet removal Neu scheme tendency')
+    call addfld     ('WD_'//trim(gas_wetdep_list(m)),horiz_only, 'A','kg/m2/s','vertical integrated wet deposition flux')
+    call addfld     ('HEFF_'//trim(gas_wetdep_list(m)),(/ 'lev' /), 'A','M/atm','Effective Henrys Law coeff.')
     if (history_chemistry) then
        call add_default('DTWR_'//trim(gas_wetdep_list(m)), 1, ' ')
+       call add_default('WD_'//trim(gas_wetdep_list(m)), 1, ' ')
     end if
   end do
 !
   if ( do_diag ) then
-    call addfld     ('QT_RAIN_HNO3','mol/mol/s',pver, 'A','wet removal Neu scheme rain tendency',phys_decomp)
-    call addfld     ('QT_RIME_HNO3','mol/mol/s',pver, 'A','wet removal Neu scheme rain tendency',phys_decomp)
-    call addfld     ('QT_WASH_HNO3','mol/mol/s',pver, 'A','wet removal Neu scheme rain tendency',phys_decomp)
-    call addfld     ('QT_EVAP_HNO3','mol/mol/s',pver, 'A','wet removal Neu scheme rain tendency',phys_decomp)
+    call addfld     ('QT_RAIN_HNO3',(/ 'lev' /), 'A','mol/mol/s','wet removal Neu scheme rain tendency')
+    call addfld     ('QT_RIME_HNO3',(/ 'lev' /), 'A','mol/mol/s','wet removal Neu scheme rain tendency')
+    call addfld     ('QT_WASH_HNO3',(/ 'lev' /), 'A','mol/mol/s','wet removal Neu scheme rain tendency')
+    call addfld     ('QT_EVAP_HNO3',(/ 'lev' /), 'A','mol/mol/s','wet removal Neu scheme rain tendency')
     if (history_chemistry) then
        call add_default('QT_RAIN_HNO3',1,' ')
        call add_default('QT_RIME_HNO3',1,' ')
@@ -198,7 +224,7 @@ subroutine neu_wetdep_init
 end subroutine neu_wetdep_init
 !
 subroutine neu_wetdep_tend(lchnk,ncol,mmr,pmid,pdel,zint,tfld,delt, &
-     prain, nevapr, cld, cmfdqr, wd_tend)
+     prain, nevapr, cld, cmfdqr, wd_tend, wd_tend_int)
 !
   use ppgrid,           only : pcols, pver
 !!DEK  
@@ -215,24 +241,20 @@ subroutine neu_wetdep_tend(lchnk,ncol,mmr,pmid,pdel,zint,tfld,delt, &
   real(r8),       intent(in)    :: zint(pcols,pver+1)       ! interface geopotential height above the surface (m)
   real(r8),       intent(in)    :: tfld(pcols,pver)         ! midpoint temperature (K)
   real(r8),       intent(in)    :: delt                     ! timestep (s)
-!  
-
+!
   real(r8),       intent(in)    :: prain(ncol, pver)
   real(r8),       intent(in)    :: nevapr(ncol, pver)
   real(r8),       intent(in)    :: cld(ncol, pver)
   real(r8),       intent(in)    :: cmfdqr(ncol, pver)
-
   real(r8),       intent(inout) :: wd_tend(pcols,pver,pcnst)
-
-
-
+  real(r8),       intent(inout) :: wd_tend_int(pcols,pcnst)
 !
 ! local arrays and variables
 !
   integer :: i,k,l,kk,m,id
   real(r8), parameter                       :: rearth = SHR_CONST_REARTH    ! radius earth (m)
   real(r8), parameter                       :: gravit = SHR_CONST_G         ! m/s^2
-  real(r8), dimension(ncol)                 :: area
+  real(r8), dimension(ncol)                 :: area, wk_out
   real(r8), dimension(ncol,pver)            :: cldice,cldliq,cldfrc,totprec,totevap,delz,delp,p
   real(r8), dimension(ncol,pver)            :: rls,evaprate,mass_in_layer,temp
   real(r8), dimension(ncol,pver,gas_wetdep_cnt) :: trc_mass,heff,dtwr
@@ -268,7 +290,7 @@ subroutine neu_wetdep_tend(lchnk,ncol,mmr,pmid,pdel,zint,tfld,delt, &
 !
 ! reset output variables
 !
-!  wd_tend = 0._r8
+   wd_tend_int = 0._r8
 !
 ! get area (in radians square)
 !
@@ -296,7 +318,7 @@ subroutine neu_wetdep_tend(lchnk,ncol,mmr,pmid,pdel,zint,tfld,delt, &
 !
       temp(i,k) = tfld(i,kk)
 !
-! convert tracer mass to kg
+! convert tracer mass to kg to kg/kg
 !
       trc_mass(i,k,:) = mmr(i,kk,mapping_to_mmr(:)) * mass_in_layer(i,k)
 !
@@ -375,16 +397,6 @@ subroutine neu_wetdep_tend(lchnk,ncol,mmr,pmid,pdel,zint,tfld,delt, &
     end do
   end do
 !
-! define flag for high effective Henry's law
-!
-  do m=1,gas_wetdep_cnt
-    if ( maxval(heff(:,:,m)) > 1.e4_r8 ) then
-      tckaqb(m) = .true.
-    else
-      tckaqb(m) = .false.
-    end if
-  end do
-!
   if ( debug ) then
     print '(a,50f8.2)','tckaqb     ',tckaqb
     print '(a,50e12.4)','heff      ',heff(1,1,:)
@@ -441,6 +453,23 @@ subroutine neu_wetdep_tend(lchnk,ncol,mmr,pmid,pdel,zint,tfld,delt, &
   do m=1,gas_wetdep_cnt
     wd_tend(1:ncol,:,mapping_to_mmr(m)) = wd_tend(1:ncol,:,mapping_to_mmr(m)) + dtwr(1:ncol,:,m)
     call outfld( 'DTWR_'//trim(gas_wetdep_list(m)),dtwr(:,:,m),ncol,lchnk )
+    
+    call outfld( 'HEFF_'//trim(gas_wetdep_list(m)),heff(:,pver:1:-1,m),ncol,lchnk )
+!
+! vertical integrated wet deposition rate [kg/m2/s]
+!
+    wk_out = 0._r8
+    do k=1,pver
+      kk = pver - k + 1
+      wk_out(1:ncol) = wk_out(1:ncol) + (dtwr(1:ncol,k,m) * mass_in_layer(1:ncol,kk)/area(1:ncol))
+    end do
+    call outfld( 'WD_'//trim(gas_wetdep_list(m)),wk_out,ncol,lchnk )
+!
+! to be used in mo_chm_diags to compute wet_deposition_NOy_as_N and wet_deposition_NHx_as_N (units: kg/m2/s)
+!
+    if ( debug) print *,'mo_neu ',mapping_to_mmr(m),(wk_out(1:ncol))
+    wd_tend_int(1:ncol,mapping_to_mmr(m)) = wk_out(1:ncol)
+!
   end do
 !
   if ( do_diag ) then
@@ -600,15 +629,7 @@ species_loop : &
          rax_wrk(:lpar,:) = zero
          fax_wrk(:lpar,:) = zero
        endif
-!-----------------------------------------------------------------------
-!  calculate scavenging by large-scale stratiform precipitation
-!  check whether mass-limited or henry's law
-!-----------------------------------------------------------------------
-       if( TCKAQB(N) ) then
-         LWASHTYP = 1
-       else
-         LWASHTYP = 2
-       end if
+
 !-----------------------------------------------------------------------
 !  check whether soluble in ice
 !-----------------------------------------------------------------------
@@ -1078,14 +1099,14 @@ is_freezing : &
 !-----------------------------------------------------------------------
                if( RCA > zero ) then
                  QTPRECIP = FCXA*QTT(L) - QTDISRIME
-                 if( LWASHTYP == 1 ) then
+                 if( HSTAR(L,N) > 1.e4_r8 ) then
                    if( QTPRECIP > zero ) then
                      QTWASHCXA = QTPRECIP*(one - exp( -0.24_r8*COLEFFAER*((RCA)**0.75_r8)*DTSCAV ))   !local
                    else
                      QTWASHCXA = zero
                    endif
                    QTEVAPCXA = zero
-                 elseif( LWASHTYP == 2 ) then
+                 else
                    RWASH = RCA*GAREA                                !kg/s local
                    if( QTPRECIP > zero ) then
                      call WASHGAS( RWASH, FCA, DTSCAV, QTTOPCA+QTRIMECXA, &
@@ -1214,7 +1235,7 @@ is_freezing_a : &
                  QTEVAPCXAP = (RCA - RCXA)/RCA*QTTOPCA
                  DCXA = FOUR
                  QTCXA = FCXA*QTT(L)
-                 if( LWASHTYP == 1 ) then
+                 if( HSTAR(L,N) > 1.e4_r8 ) then
                    if( QTT(L) > zero ) then
                      call DISGAS( CLWX*(FCXA/CFXX(L)), FCXA, TCMASS(N),   &
                                   HSTAR(L,N), TEM(L), POFL(L),            &
@@ -1229,7 +1250,7 @@ is_freezing_a : &
                      QTWASHCXA  = zero
                      QTEVAPCXAW = zero
                    endif
-                 elseif (LWASHTYP == 2 ) then
+                 else
                    RWASH = RCXA*GAREA                         !kg/s local
                    call WASHGAS( RWASH, FCXA, DTSCAV, QTTOPCA, HSTAR(L,N), &
                                  TEM(L), POFL(L), QM(L),                   &
@@ -1248,12 +1269,12 @@ is_freezing_a : &
            if( RAX > zero ) then
              if( .not. freezing(l) ) then
                QTAX = FAX*QTT(L)
-               if( LWASHTYP == 1 ) then
+               if( HSTAR(L,N) > 1.e4_r8 ) then
                  QTWASHAX = QTAX*                        &
                     (one - exp(-0.24_r8*COLEFFAER*       &
                    ((RAX)**0.75_r8)*DTSCAV))  !local
                  QTEVAPAXW = zero
-               elseif( LWASHTYP == 2 ) then
+               else
                  RWASH = RAX*GAREA   !kg/s local
                  call WASHGAS( RWASH, FAX, DTSCAV, QTTOPAA, HSTAR(L,N), &
                                TEM(L), POFL(L), QM(L), QTAX,            &

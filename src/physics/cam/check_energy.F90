@@ -4,7 +4,7 @@ module check_energy
 !---------------------------------------------------------------------------------
 ! Purpose:
 !
-! Module to check 
+! Module to check
 !   1. vertically integrated total energy and water conservation for each
 !      column within the physical parameterizations
 !
@@ -14,18 +14,18 @@ module check_energy
 !   3. add a globally uniform heating term to account for any change of total energy in 2.
 !
 ! Author: Byron Boville  Oct 31, 2002
-!         
+!
 ! Modifications:
-!   03.03.29  Boville  Add global energy check and fixer.        
+!   03.03.29  Boville  Add global energy check and fixer.
 !
 !---------------------------------------------------------------------------------
 
   use shr_kind_mod,    only: r8 => shr_kind_r8
   use ppgrid,          only: pcols, pver, begchunk, endchunk
   use spmd_utils,      only: masterproc
-  
-  use phys_gmean,      only: gmean
-  use physconst,       only: gravit, latvap, latice
+
+  use gmean_mod,       only: gmean
+  use physconst,       only: gravit, latvap, latice, cpair, cpairv
   use physics_types,   only: physics_state, physics_tend, physics_ptend, physics_ptend_init
   use constituents,    only: cnst_get_ind, pcnst, cnst_name, cnst_get_type_byind
   use time_manager,    only: is_first_step
@@ -38,8 +38,7 @@ module check_energy
   public check_tracers_data
 
 ! Public methods
-  public :: check_energy_defaultopts ! set default namelist values
-  public :: check_energy_setopts   ! set namelist values
+  public :: check_energy_readnl    ! read namelist values
   public :: check_energy_register  ! register fields in physics buffer
   public :: check_energy_get_integrals ! get energy integrals computed in check_energy_gmean
   public :: check_energy_init      ! initialization of module
@@ -50,6 +49,7 @@ module check_energy
   public :: check_tracers_init      ! initialize tracer integrals and cumulative boundary fluxes
   public :: check_tracers_chng      ! check changes in integrals against cumulative boundary fluxes
 
+  public :: calc_te_and_aam_budgets ! calculate and output total energy and axial angular momentum diagnostics
 
 ! Private module data
 
@@ -63,9 +63,9 @@ module check_energy
   real(r8) :: heat_glob            ! global mean heating rate
 
 ! Physics buffer indices
-  
-  integer  :: teout_idx  = 0       ! teout index in physics buffer 
-  integer  :: dtcore_idx = 0       ! dtcore index in physics buffer 
+
+  integer  :: teout_idx  = 0       ! teout index in physics buffer
+  integer  :: dtcore_idx = 0       ! dtcore index in physics buffer
 
   type check_tracers_data
      real(r8) :: tracer(pcols,pcnst)       ! initial vertically integrated total (kinetic + static) energy
@@ -78,46 +78,55 @@ module check_energy
 contains
 !===============================================================================
 
-subroutine check_energy_defaultopts( &
-   print_energy_errors_out)
-!----------------------------------------------------------------------- 
-! Purpose: Return default runtime options
-!-----------------------------------------------------------------------
+subroutine check_energy_readnl(nlfile)
 
-   logical,          intent(out), optional :: print_energy_errors_out
-!-----------------------------------------------------------------------
+   use namelist_utils,  only: find_group_name
+   use units,           only: getunit, freeunit
+   use spmd_utils,      only: mpicom, mstrid=>masterprocid, mpi_logical
+   use cam_abortutils,  only: endrun
 
-   if ( present(print_energy_errors_out) ) then
-      print_energy_errors_out = print_energy_errors
-   endif
+   character(len=*), intent(in) :: nlfile  ! filepath for file containing namelist input
 
-end subroutine check_energy_defaultopts
+   ! Local variables
+   integer :: unitn, ierr
+   character(len=*), parameter :: sub = 'check_energy_readnl'
 
-!================================================================================================
+   namelist /check_energy_nl/ print_energy_errors
+   !-----------------------------------------------------------------------------
 
-subroutine check_energy_setopts( &
-   print_energy_errors_in)
-!----------------------------------------------------------------------- 
-! Purpose: Return default runtime options
-!-----------------------------------------------------------------------
+   ! Read namelist
+   if (masterproc) then
+      unitn = getunit()
+      open( unitn, file=trim(nlfile), status='old' )
+      call find_group_name(unitn, 'check_energy_nl', status=ierr)
+      if (ierr == 0) then
+         read(unitn, check_energy_nl, iostat=ierr)
+         if (ierr /= 0) then
+            call endrun(sub//': FATAL: reading namelist')
+         end if
+      end if
+      close(unitn)
+      call freeunit(unitn)
+   end if
 
-   logical,          intent(in), optional :: print_energy_errors_in
-!-----------------------------------------------------------------------
+   call mpi_bcast(print_energy_errors, 1, mpi_logical, mstrid, mpicom, ierr)
+   if (ierr /= 0) call endrun(sub//": FATAL: mpi_bcast: print_energy_errors")
 
-   if ( present(print_energy_errors_in) ) then
-      print_energy_errors = print_energy_errors_in
-   endif
+   if (masterproc) then
+      write(iulog,*) 'check_energy options:'
+      write(iulog,*) '  print_energy_errors =', print_energy_errors
+   end if
 
-end subroutine check_energy_setopts
+end subroutine check_energy_readnl
 
-!================================================================================================
+!===============================================================================
 
   subroutine check_energy_register()
 !
 ! Register fields in the physics buffer.
-! 
+!
 !-----------------------------------------------------------------------
-    
+
     use physics_buffer, only : pbuf_add_field, dtype_r8, dyn_time_lvls
     use physics_buffer, only : pbuf_register_subcol
     use subcol_utils,   only : is_subcol_on
@@ -139,7 +148,7 @@ end subroutine check_energy_setopts
 
 subroutine check_energy_get_integrals( tedif_glob_out, heat_glob_out )
 
-!----------------------------------------------------------------------- 
+!-----------------------------------------------------------------------
 ! Purpose: Return energy integrals
 !-----------------------------------------------------------------------
 
@@ -162,33 +171,34 @@ end subroutine check_energy_get_integrals
   subroutine check_energy_init()
 !
 ! Initialize the energy conservation module
-! 
+!
 !-----------------------------------------------------------------------
-    use cam_history,       only: addfld, add_default, phys_decomp
+    use cam_history,       only: addfld, add_default, horiz_only
     use phys_control,      only: phys_getopts
 
     implicit none
 
-    logical          :: history_budget
+    logical          :: history_budget, history_waccm
     integer          :: history_budget_histfile_num ! output history file number for budget fields
 
 !-----------------------------------------------------------------------
 
     call phys_getopts( history_budget_out = history_budget, &
-                       history_budget_histfile_num_out = history_budget_histfile_num)
+                       history_budget_histfile_num_out = history_budget_histfile_num, &
+                       history_waccm_out = history_waccm )
 
 ! register history variables
-    call addfld('TEINP   ', 'W/m2', 1,    'A', 'Total energy of physics input',    phys_decomp)
-    call addfld('TEOUT   ', 'W/m2', 1,    'A', 'Total energy of physics output',   phys_decomp)
-    call addfld('TEFIX   ', 'W/m2', 1,    'A', 'Total energy after fixer',         phys_decomp)
-    call addfld('DTCORE'  , 'K/s' , pver, 'A', 'T tendency due to dynamical core', phys_decomp)
-
-    if (masterproc) then
-       write (iulog,*) ' print_energy_errors is set', print_energy_errors
-    endif
+    call addfld('TEINP',  horiz_only,  'A', 'J/m2', 'Total energy of physics input')
+    call addfld('TEOUT',  horiz_only,  'A', 'J/m2', 'Total energy of physics output')
+    call addfld('TEFIX',  horiz_only,  'A', 'J/m2', 'Total energy after fixer')
+    call addfld('EFIX',   horiz_only,  'A', 'W/m2', 'Effective sensible heat flux due to energy fixer')
+    call addfld('DTCORE', (/ 'lev' /), 'A', 'K/s' , 'T tendency due to dynamical core')
 
     if ( history_budget ) then
-       call add_default ('DTCORE   '  , history_budget_histfile_num, ' ')
+       call add_default ('DTCORE', history_budget_histfile_num, ' ')
+    end if
+    if ( history_waccm ) then
+       call add_default ('DTCORE', 1, ' ')
     end if
 
   end subroutine check_energy_init
@@ -197,8 +207,9 @@ end subroutine check_energy_get_integrals
 
   subroutine check_energy_timestep_init(state, tend, pbuf, col_type)
     use physics_buffer, only : physics_buffer_desc, pbuf_set_field
+    use cam_abortutils, only: endrun
 !-----------------------------------------------------------------------
-! Compute initial values of energy and water integrals, 
+! Compute initial values of energy and water integrals,
 ! zero cumulative tendencies
 !-----------------------------------------------------------------------
 !------------------------------Arguments--------------------------------
@@ -215,19 +226,37 @@ end subroutine check_energy_get_integrals
     real(r8) :: wl(state%ncol)                     ! vertical integral of water (liquid)
     real(r8) :: wi(state%ncol)                     ! vertical integral of water (ice)
 
+    real(r8),allocatable :: cpairv_loc(:,:,:)
+
+    integer lchnk                                  ! chunk identifier
     integer ncol                                   ! number of atmospheric columns
     integer  i,k                                   ! column, level indices
     integer :: ixcldice, ixcldliq                  ! CLDICE and CLDLIQ indices
     integer :: ixrain, ixsnow                      ! RAINQM and SNOWQM indices
 !-----------------------------------------------------------------------
 
+    lchnk = state%lchnk
     ncol  = state%ncol
     call cnst_get_ind('CLDICE', ixcldice, abort=.false.)
     call cnst_get_ind('CLDLIQ', ixcldliq, abort=.false.)
     call cnst_get_ind('RAINQM', ixrain,   abort=.false.)
     call cnst_get_ind('SNOWQM', ixsnow,   abort=.false.)
 
-! Compute vertical integrals of dry static energy and water (vapor, liquid, ice)
+    ! cpairv_loc needs to be allocated to a size which matches state and ptend
+    ! If psetcols == pcols, cpairv is the correct size and just copy into cpairv_loc
+    ! If psetcols > pcols and all cpairv match cpair, then assign the constant cpair
+
+    if (state%psetcols == pcols) then
+       allocate (cpairv_loc(state%psetcols,pver,begchunk:endchunk))
+       cpairv_loc(:,:,:) = cpairv(:,:,:)
+    else if (state%psetcols > pcols .and. all(cpairv(:,:,:) == cpair)) then
+       allocate(cpairv_loc(state%psetcols,pver,begchunk:endchunk))
+       cpairv_loc(:,:,:) = cpair
+    else
+       call endrun('check_energy_timestep_init: cpairv is not allowed to vary when subcolumns are turned on')
+    end if
+
+    ! Compute vertical integrals of dry static energy (modified), kinetic energy and water (vapor, liquid, ice)
     ke = 0._r8
     se = 0._r8
     wv = 0._r8
@@ -236,9 +265,12 @@ end subroutine check_energy_get_integrals
     do k = 1, pver
        do i = 1, ncol
           ke(i) = ke(i) + 0.5_r8*(state%u(i,k)**2 + state%v(i,k)**2)*state%pdel(i,k)/gravit
-          se(i) = se(i) + state%s(i,k         )*state%pdel(i,k)/gravit
-          wv(i) = wv(i) + state%q(i,k,1       )*state%pdel(i,k)/gravit
+          se(i) = se(i) +         state%t(i,k)*cpairv_loc(i,k,lchnk)*state%pdel(i,k)/gravit
+          wv(i) = wv(i) +         state%q(i,k,1)                    *state%pdel(i,k)/gravit
        end do
+    end do
+    do i = 1, ncol
+       se(i) = se(i) + state%phis(i)*state%ps(i)/gravit
     end do
 
     ! Don't require cloud liq/ice to be present.  Allows for adiabatic/ideal phys.
@@ -270,7 +302,7 @@ end subroutine check_energy_get_integrals
        state%tw_cur(i) = state%tw_ini(i)
     end do
 
-! zero cummulative boundary fluxes 
+! zero cummulative boundary fluxes
     tend%te_tnd(:ncol) = 0._r8
     tend%tw_tnd(:ncol) = 0._r8
 
@@ -281,12 +313,15 @@ end subroutine check_energy_get_integrals
        call pbuf_set_field(pbuf, teout_idx, state%te_ini, col_type=col_type)
     end if
 
+    deallocate(cpairv_loc)
+
   end subroutine check_energy_timestep_init
 
 !===============================================================================
 
   subroutine check_energy_chng(state, tend, name, nstep, ztodt,        &
        flx_vap, flx_cnd, flx_ice, flx_sen)
+    use cam_abortutils, only: endrun
 
 !-----------------------------------------------------------------------
 ! Check that the energy and water change matches the boundary fluxes
@@ -330,6 +365,8 @@ end subroutine check_energy_get_integrals
     real(r8) :: te(state%ncol)                     ! vertical integral of total energy
     real(r8) :: tw(state%ncol)                     ! vertical integral of total water
 
+    real(r8),allocatable :: cpairv_loc(:,:,:)
+
     integer lchnk                                  ! chunk identifier
     integer ncol                                   ! number of atmospheric columns
     integer  i,k                                   ! column, level indices
@@ -344,7 +381,21 @@ end subroutine check_energy_get_integrals
     call cnst_get_ind('RAINQM', ixrain,   abort=.false.)
     call cnst_get_ind('SNOWQM', ixsnow,   abort=.false.)
 
-    ! Compute vertical integrals of dry static energy and water (vapor, liquid, ice)
+    ! cpairv_loc needs to be allocated to a size which matches state and ptend
+    ! If psetcols == pcols, cpairv is the correct size and just copy into cpairv_loc
+    ! If psetcols > pcols and all cpairv match cpair, then assign the constant cpair
+
+    if (state%psetcols == pcols) then
+       allocate (cpairv_loc(state%psetcols,pver,begchunk:endchunk))
+       cpairv_loc(:,:,:) = cpairv(:,:,:)
+    else if (state%psetcols > pcols .and. all(cpairv(:,:,:) == cpair)) then
+       allocate(cpairv_loc(state%psetcols,pver,begchunk:endchunk))
+       cpairv_loc(:,:,:) = cpair
+    else
+       call endrun('check_energy_chng: cpairv is not allowed to vary when subcolumns are turned on')
+    end if
+
+    ! Compute vertical integrals of dry static energy (modified), kinetic energy and water (vapor, liquid, ice)
     ke = 0._r8
     se = 0._r8
     wv = 0._r8
@@ -353,9 +404,12 @@ end subroutine check_energy_get_integrals
     do k = 1, pver
        do i = 1, ncol
           ke(i) = ke(i) + 0.5_r8*(state%u(i,k)**2 + state%v(i,k)**2)*state%pdel(i,k)/gravit
-          se(i) = se(i) + state%s(i,k         )*state%pdel(i,k)/gravit
-          wv(i) = wv(i) + state%q(i,k,1       )*state%pdel(i,k)/gravit
+          se(i) = se(i) +         state%t(i,k)*cpairv_loc(i,k,lchnk)*state%pdel(i,k)/gravit
+          wv(i) = wv(i) +         state%q(i,k,1)                    *state%pdel(i,k)/gravit
        end do
+    end do
+    do i = 1, ncol
+       se(i) = se(i) + state%phis(i)*state%ps(i)/gravit
     end do
 
     ! Don't require cloud liq/ice to be present.  Allows for adiabatic/ideal phys.
@@ -402,13 +456,13 @@ end subroutine check_energy_get_integrals
        te_xpd(i) = state%te_cur(i) + te_tnd(i)*ztodt
        tw_xpd(i) = state%tw_cur(i) + tw_tnd(i)*ztodt
 
-       ! relative error, expected value - input state / previous state 
+       ! relative error, expected value - input state / previous state
        te_rer(i) = (te_xpd(i) - te(i)) / state%te_cur(i)
     end do
 
     ! relative error for total water (allow for dry atmosphere)
     tw_rer = 0._r8
-    where (state%tw_cur(:ncol) > 0._r8) 
+    where (state%tw_cur(:ncol) > 0._r8)
        tw_rer(:ncol) = (tw_xpd(:ncol) - tw(:ncol)) / state%tw_cur(:ncol)
     end where
 
@@ -418,8 +472,8 @@ end subroutine check_energy_get_integrals
           do i = 1, ncol
              ! the relative error threshold for the water budget has been reduced to 1.e-10
              ! to avoid messages generated by QNEG3 calls
-             ! PJR- change to identify if error in energy or water 
-             if (abs(te_rer(i)) > 1.E-14_r8 ) then 
+             ! PJR- change to identify if error in energy or water
+             if (abs(te_rer(i)) > 1.E-14_r8 ) then
                 state%count = state%count + 1
                 write(iulog,*) "significant energy conservation error after ", name,        &
                       " count", state%count, " nstep", nstep, "chunk", lchnk, "col", i
@@ -443,6 +497,8 @@ end subroutine check_energy_get_integrals
        state%tw_cur(i) = tw(i)
     end do
 
+    deallocate(cpairv_loc)
+
   end subroutine check_energy_chng
 
 
@@ -450,7 +506,7 @@ end subroutine check_energy_get_integrals
   subroutine check_energy_gmean(state, pbuf2d, dtime, nstep)
 
     use physics_buffer, only : physics_buffer_desc, pbuf_get_field, pbuf_get_chunk
-    
+
 !-----------------------------------------------------------------------
 ! Compute global mean total energy of physics input and output states
 !-----------------------------------------------------------------------
@@ -466,14 +522,13 @@ end subroutine check_energy_get_integrals
     integer :: ncol                      ! number of active columns
     integer :: lchnk                     ! chunk index
 
-    real(r8) :: te(pcols,begchunk:endchunk,3)   
+    real(r8) :: te(pcols,begchunk:endchunk,3)
                                          ! total energy of input/output states (copy)
     real(r8) :: te_glob(3)               ! global means of total energy
     real(r8), pointer :: teout(:)
 !-----------------------------------------------------------------------
 
     ! Copy total energy out of input and output states
-!DIR$ CONCURRENT
     do lchnk = begchunk, endchunk
        ncol = state(lchnk)%ncol
        ! input energy
@@ -506,7 +561,7 @@ end subroutine check_energy_get_integrals
     else
        heat_glob = 0._r8
     end if  !  (begchunk .le. endchunk)
-    
+
   end subroutine check_energy_gmean
 
 !===============================================================================
@@ -553,7 +608,7 @@ end subroutine check_energy_get_integrals
   subroutine check_tracers_init(state, tracerint)
 
 !-----------------------------------------------------------------------
-! Compute initial values of tracers integrals, 
+! Compute initial values of tracers integrals,
 ! zero cumulative tendencies
 !-----------------------------------------------------------------------
 
@@ -604,7 +659,7 @@ end subroutine check_energy_get_integrals
           tracerint%tracer(i,m) = tr(i)
        end do
 
-       ! zero cummulative boundary fluxes 
+       ! zero cummulative boundary fluxes
        tracerint%tracer_tnd(:ncol,m) = 0._r8
 
        tracerint%count(m) = 0
@@ -619,12 +674,12 @@ end subroutine check_energy_get_integrals
 
 !-----------------------------------------------------------------------
 ! Check that the tracers and water change matches the boundary fluxes
-! these checks are not save when there are tracers transformations, as 
+! these checks are not save when there are tracers transformations, as
 ! they only check to see whether a mass change in the column is
 ! associated with a flux
 !-----------------------------------------------------------------------
 
-    use cam_abortutils, only: endrun 
+    use cam_abortutils, only: endrun
 
 
     implicit none
@@ -694,7 +749,7 @@ end subroutine check_energy_get_integrals
 
        ! compute expected values and tendencies
        do i = 1, ncol
-          ! change in tracers 
+          ! change in tracers
           tracer_dif(i,m) = tracer_inp(i,m) - tracerint%tracer(i,m)
 
           ! expected tendencies from boundary fluxes for last process
@@ -706,7 +761,7 @@ end subroutine check_energy_get_integrals
           ! expected new values from original values plus boundary fluxes
           tracer_xpd(i,m) = tracerint%tracer(i,m) + tracerint%tracer_tnd(i,m)*ztodt
 
-          ! relative error, expected value - input value / original 
+          ! relative error, expected value - input value / original
           tracer_rer(i,m) = (tracer_xpd(i,m) - tracer_inp(i,m)) / tracerint%tracer(i,m)
        end do
 
@@ -752,6 +807,166 @@ end subroutine check_energy_get_integrals
 
     return
   end subroutine check_tracers_chng
+
+!#######################################################################
+
+  subroutine calc_te_and_aam_budgets(state, outfld_name_suffix)
+    use physconst,   only: gravit,cpair,pi,rearth,omega
+    use cam_history, only: hist_fld_active, outfld
+
+!------------------------------Arguments--------------------------------
+
+    type(physics_state), intent(inout) :: state
+    character*(*),intent(in) :: outfld_name_suffix ! suffix for "outfld" names
+
+!---------------------------Local storage-------------------------------
+
+    real(r8) :: se(pcols)                          ! Dry Static energy (J/m2)
+    real(r8) :: ke(pcols)                          ! kinetic energy    (J/m2)
+    real(r8) :: wv(pcols)                          ! column integrated vapor       (kg/m2)
+    real(r8) :: wl(pcols)                          ! column integrated liquid      (kg/m2)
+    real(r8) :: wi(pcols)                          ! column integrated ice         (kg/m2)
+    real(r8) :: tt(pcols)                          ! column integrated test tracer (kg/m2)
+    real(r8) :: mr(pcols)                          ! column integrated wind axial angular momentum (kg*m2/s)
+    real(r8) :: mo(pcols)                          ! column integrated mass axial angular momentum (kg*m2/s)
+    real(r8) :: se_tmp,ke_tmp,wv_tmp,wl_tmp,wi_tmp,tt_tmp,mr_tmp,mo_tmp,cos_lat
+    real(r8) :: mr_cnst, mo_cnst
+
+    integer lchnk                                  ! chunk identifier
+    integer ncol                                   ! number of atmospheric columns
+    integer  i,k                                   ! column, level indices
+    integer :: ixcldice, ixcldliq,ixtt             ! CLDICE and CLDLIQ indices
+    character(len=16) :: name_out1,name_out2,name_out3,name_out4,name_out5,name_out6
+!-----------------------------------------------------------------------
+
+    name_out1 = 'SE_'   //trim(outfld_name_suffix)
+    name_out2 = 'KE_'   //trim(outfld_name_suffix)
+    name_out3 = 'WV_'   //trim(outfld_name_suffix)
+    name_out4 = 'WL_'   //trim(outfld_name_suffix)
+    name_out5 = 'WI_'   //trim(outfld_name_suffix)
+    name_out6 = 'TT_'   //trim(outfld_name_suffix)
+
+    if ( hist_fld_active(name_out1).or.hist_fld_active(name_out2).or.hist_fld_active(name_out3).or.&
+         hist_fld_active(name_out4).or.hist_fld_active(name_out5).or.hist_fld_active(name_out6)) then
+
+      lchnk = state%lchnk
+      ncol  = state%ncol
+      call cnst_get_ind('CLDICE', ixcldice, abort=.false.)
+      call cnst_get_ind('CLDLIQ', ixcldliq, abort=.false.)
+      call cnst_get_ind('TT_LW' , ixtt    , abort=.false.)
+
+      ! Compute frozen static energy in 3 parts:  KE, SE, and energy associated with vapor and liquid
+
+      se    = 0._r8
+      ke    = 0._r8
+      wv    = 0._r8
+      wl    = 0._r8
+      wi    = 0._r8
+      tt    = 0._r8
+
+      do k = 1, pver
+        do i = 1, ncol
+          ke_tmp   = 0.5_r8*(state%u(i,k)**2 + state%v(i,k)**2)*state%pdel(i,k)/gravit
+          se_tmp   =   cpair*state%t(i,k)                      *state%pdel(i,k)/gravit
+          wv_tmp   = state%q(i,k,1       )                     *state%pdel(i,k)/gravit
+
+          se   (i) = se   (i) + se_tmp
+          ke   (i) = ke   (i) + ke_tmp
+          wv   (i) = wv   (i) + wv_tmp
+        end do
+      end do
+      do i = 1, ncol
+        se(i) = se(i) + state%phis(i)*state%ps(i)/gravit
+      end do
+
+      ! Don't require cloud liq/ice to be present.  Allows for adiabatic/ideal phys.
+
+      if (ixcldliq > 1) then
+        do k = 1, pver
+          do i = 1, ncol
+            wl_tmp   = state%q(i,k,ixcldliq)*state%pdel(i,k)/gravit
+            wl   (i) = wl(i)    + wl_tmp
+          end do
+        end do
+      end if
+
+      if (ixcldice > 1) then
+        do k = 1, pver
+          do i = 1, ncol
+            wi_tmp   = state%q(i,k,ixcldice)*state%pdel(i,k)/gravit
+            wi(i)    = wi(i)    + wi_tmp
+          end do
+        end do
+      end if
+
+      if (ixtt > 1) then
+        if (name_out6 == 'TT_pAM') then
+          !
+          ! after dme_adjust mixing ratios are all wet
+          !
+          do k = 1, pver
+            do i = 1, ncol
+              tt_tmp   = state%q(i,k,ixtt)*state%pdel(i,k)/gravit
+              tt   (i) = tt(i)    + tt_tmp
+            end do
+          end do
+        else
+          do k = 1, pver
+            do i = 1, ncol
+              tt_tmp   = state%q(i,k,ixtt)*state%pdeldry(i,k)/gravit
+              tt   (i) = tt(i)    + tt_tmp
+            end do
+          end do
+        end if
+      end if
+
+      ! Output energy diagnostics
+
+      call outfld(name_out1  ,se      , pcols   ,lchnk   )
+      call outfld(name_out2  ,ke      , pcols   ,lchnk   )
+      call outfld(name_out3  ,wv      , pcols   ,lchnk   )
+      call outfld(name_out4  ,wl      , pcols   ,lchnk   )
+      call outfld(name_out5  ,wi      , pcols   ,lchnk   )
+      call outfld(name_out6  ,tt      , pcols   ,lchnk   )
+    end if
+
+
+    !
+    ! Axial angular momentum diagnostics
+    !
+    ! Code follows
+    !
+    ! Lauritzen et al., (2014): Held-Suarez simulations with the Community Atmosphere Model
+    ! Spectral Element (CAM-SE) dynamical core: A global axial angularmomentum analysis using Eulerian
+    ! and floating Lagrangian vertical coordinates. J. Adv. Model. Earth Syst. 6,129-140,
+    ! doi:10.1002/2013MS000268
+    !
+    ! MR is equation (6) without \Delta A and sum over areas (areas are in units of radians**2)
+    ! MO is equation (7) without \Delta A and sum over areas (areas are in units of radians**2)
+    !
+    name_out1 = 'MR_'   //trim(outfld_name_suffix)
+    name_out2 = 'MO_'   //trim(outfld_name_suffix)
+
+    if ( hist_fld_active(name_out1).or.hist_fld_active(name_out2)) then
+      lchnk = state%lchnk
+      ncol  = state%ncol
+
+      mr_cnst = rearth**3/gravit
+      mo_cnst = omega*rearth**4/gravit
+      do k = 1, pver
+        do i = 1, ncol
+          cos_lat = cos(state%lat(i))
+          mr_tmp = mr_cnst*state%u(i,k)*state%pdel(i,k)*cos_lat
+          mo_tmp = mo_cnst*state%pdel(i,k)*cos_lat**2
+
+          mr(i) = mr(i) + mr_tmp
+          mo(i) = mo(i) + mo_tmp
+        end do
+      end do
+      call outfld(name_out1  ,mr, pcols,lchnk   )
+      call outfld(name_out1  ,mo, pcols,lchnk   )
+    end if
+  end subroutine calc_te_and_aam_budgets
 
 
 end module check_energy

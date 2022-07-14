@@ -51,9 +51,9 @@ contains
 
     use constituents, only : cnst_get_ind
     
-    use physics_buffer, only : pbuf_get_index, pbuf_set_field, physics_buffer_desc
+    use physics_buffer, only : pbuf_get_index
     use ppgrid,       only : pver
-    use cam_history,  only : addfld, phys_decomp
+    use cam_history,  only : addfld
 
     implicit none
 
@@ -78,8 +78,8 @@ contains
     endif
 
     if ( has_sslt ) then
-       call addfld('SSLTA','kg/kg', pver, 'A', 'sea salt', phys_decomp )
-       call addfld('SSLTC','kg/kg', pver, 'A', 'sea salt', phys_decomp )
+       call addfld('SSLTA', (/ 'lev' /), 'A','kg/kg', 'sea salt' )
+       call addfld('SSLTC', (/ 'lev' /), 'A','kg/kg', 'sea salt' )
     endif
 
   end subroutine sslt_rebin_init

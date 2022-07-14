@@ -15,7 +15,6 @@ module lin_strat_chem
   use physics_types,    only : physics_state
   use cam_logfile,      only : iulog
   use cam_abortutils,   only : endrun
-  use spmd_utils,       only : masterproc
   !
   implicit none
   !
@@ -45,7 +44,7 @@ contains
     use linoz_data,   only : linoz_data_init, has_linoz_data
     use ppgrid,       only : pver
     use mo_chem_utls, only : get_spc_ndx
-    use cam_history,  only : addfld, phys_decomp, add_default
+    use cam_history,  only : addfld, horiz_only, add_default
     use physics_buffer, only : physics_buffer_desc
     use phys_control, only : phys_getopts
 
@@ -83,12 +82,12 @@ contains
 
     ! define additional output
 
-    call addfld( 'LINOZ_DO3'    , '/s'     , pver, 'A', 'ozone vmr tendency by linearized ozone chemistry'  , phys_decomp )
-    call addfld( 'LINOZ_DO3_PSC', '/s'     , pver, 'A', 'ozone vmr loss by PSCs using Carille et al. (1990)', phys_decomp )
-    call addfld( 'LINOZ_SSO3'   , 'kg'     , pver, 'A', 'steady state ozone in LINOZ'                       , phys_decomp )
-    call addfld( 'LINOZ_O3COL'  , 'DU'     , pver, 'A', 'ozone column above'                                , phys_decomp )
-    call addfld( 'LINOZ_O3CLIM' , 'mol/mol', pver, 'A', 'climatology of ozone in LINOZ'                     , phys_decomp )
-    call addfld( 'LINOZ_SZA'    , 'degrees',    1, 'A', 'solar zenith angle in LINOZ'                       , phys_decomp )
+    call addfld( 'LINOZ_DO3'    , (/ 'lev' /), 'A', '/s'     , 'ozone vmr tendency by linearized ozone chemistry'   )
+    call addfld( 'LINOZ_DO3_PSC', (/ 'lev' /), 'A', '/s'     , 'ozone vmr loss by PSCs using Carille et al. (1990)' )
+    call addfld( 'LINOZ_SSO3'   , (/ 'lev' /), 'A', 'kg'     , 'steady state ozone in LINOZ'                        )
+    call addfld( 'LINOZ_O3COL'  , (/ 'lev' /), 'A', 'DU'     , 'ozone column above'                                 )
+    call addfld( 'LINOZ_O3CLIM' , (/ 'lev' /), 'A', 'mol/mol', 'climatology of ozone in LINOZ'                      )
+    call addfld( 'LINOZ_SZA'    , horiz_only,  'A', 'degrees', 'solar zenith angle in LINOZ'                        )
 
     if (history_chemistry) then
        call add_default( 'LINOZ_DO3'    , 1, ' ' )
@@ -115,9 +114,7 @@ contains
     !
 
     use ppgrid,        only : pcols, pver
-    use physconst,     only : pi, &
-                              grav => gravit, &
-                              mw_air => mwdry
+    use physconst,     only : pi
     use cam_history,   only : outfld
     use linoz_data,    only : fields, o3_clim_ndx,t_clim_ndx,o3col_clim_ndx,PmL_clim_ndx,dPmL_dO3_ndx,&
                                       dPmL_dT_ndx,dPmL_dO3col_ndx,cariolle_pscs_ndx

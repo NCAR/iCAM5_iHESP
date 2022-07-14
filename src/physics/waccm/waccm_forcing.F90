@@ -10,7 +10,6 @@ module waccm_forcing
 
   use shr_kind_mod,       only: r8 => shr_kind_r8
   use cam_abortutils,     only: endrun
-  use cam_logfile,        only: iulog
 
   use tracer_data,  only : trfld, trfile
   use ppgrid,       only : pcols, pver
@@ -35,8 +34,6 @@ module waccm_forcing
 
   integer, parameter :: N_FLDS = 7
   integer, parameter :: N_MMRS = 6
-
-  integer :: number_flds
 
   character(len=256) :: filename = ''
   character(len=256) :: filelist = ''
@@ -149,8 +146,7 @@ contains
   subroutine waccm_forcing_init()
 
     use tracer_data, only : trcdata_init
-    use cam_history, only : addfld, phys_decomp
-    use physics_buffer, only : physics_buffer_desc
+    use cam_history, only : addfld
 
     implicit none
 
@@ -163,7 +159,7 @@ contains
                        rmv_file, cycle_yr, fixed_ymd, fixed_tod, datatype)
 
     do i = 1,N_FLDS
-       call addfld( 'WFRC_'//trim(fields(i)%fldnam), fields(i)%units, pver, 'I', 'for waccm forcing', phys_decomp )
+       call addfld( 'WFRC_'//trim(fields(i)%fldnam), (/ 'lev' /), 'I', fields(i)%units, 'for waccm forcing' )
     enddo
 
     return
@@ -230,13 +226,12 @@ contains
 
 !================================================================================================
 
-  subroutine get_cnst (ncol, lchnk, co2, o1, o2, no, h, o3)
+  subroutine get_cnst (lchnk, co2, o1, o2, no, h, o3)
 !
 ! Get mass mixing ratios specified from input dataset for used in Fomichev routines
 !-------------------------------------------------------------------------
 
 ! Arguments
-    integer,  intent(in)  :: ncol                   ! no. of columns in chunk
     integer,  intent(in)  :: lchnk                  ! chunk identifier
 
     real(r8), optional, pointer, dimension(:,:) :: co2
@@ -261,7 +256,7 @@ contains
        no  => fields(no_ndx )%data(:,:,lchnk)
     endif
     if (present(h)) then
-       h  => fields(no_ndx )%data(:,:,lchnk)
+       h  => fields(h_ndx )%data(:,:,lchnk)
     endif
     if (present(o3)) then
        o3 => fields(o3_ndx)%data(:,:,lchnk)

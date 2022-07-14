@@ -6,10 +6,11 @@
 <aerodep_flx_type>'SERIAL'</aerodep_flx_type>
 
 <!-- Solar data from Lean (via Caspar Ammann) -->
-<solar_data_file>atm/cam/solar/spectral_irradiance_Lean_1950-2140_daily_c100804.nc</solar_data_file>
+<solar_irrad_data_file>atm/cam/solar/spectral_irradiance_Lean_1950-2140_daily_c100804.nc</solar_irrad_data_file>
 
 <!-- Solar Proton Events -->
-<spe_data_file>atm/waccm/solar/spe_data_1963-2140_c100823.nc</spe_data_file>
+<epp_spe_filepath>atm/waccm/solar/spe_data_1963-2140_c100823.nc</epp_spe_filepath>
+<epp_spe_varname>'Prod'</epp_spe_varname>
 
 <!-- Prescribed BAM data is from Jean-Francois Lamarque -->
 <prescribed_aero_datapath>atm/cam/chem/trop_mozart_aero/aero</prescribed_aero_datapath>
@@ -51,7 +52,7 @@
 <qbo_use_forcing>.true.</qbo_use_forcing>
 
 <!-- volcanic aerosol heating -->
-<strat_aero_feedback>.true.</strat_aero_feedback> 
+<prescribed_strataero_feedback>.true.</prescribed_strataero_feedback> 
 
 <!-- emis files -->
 
@@ -66,14 +67,8 @@
 <nox_emis_file>atm/cam/chem/2000-2100_RCP45/IPCC_emissions_houw_NOx_2000-2100_1.9x2.5.nc</nox_emis_file>
 <srf_emis_type>'SERIAL'</srf_emis_type>
 
-<!-- Photolysis Inputs DEFAULTS okay for: rsf_file,xs_long_file,xs_short_file -->
-
-<!-- Extraterestrial Flux and MLT inputs DEFAULTS okay for:  -->
-<!-- efield_hflux_file, efield_lflux_file, efield_wei96_file -->
-<!-- electron_file,euvac_file,euvacdat_file,photon_file,neckel_file,woods_etf_file,xs_coef_file -->
-
 <!-- Kp Ap indices -->
-<solar_parms_file>atm/waccm/solar/wasolar_1948-2140_daily_c120306.nc</solar_parms_file>
+<solar_parms_data_file>atm/waccm/solar/wasolar_1948-2140_daily_c120306.nc</solar_parms_data_file>
 
 <!-- History Files -->
 
@@ -96,8 +91,8 @@
   'HNO3_GAS', 'NO_Aircraft', 'NO_Lightning', 'QNO', 'QRS_AUR', 'QRS_CO2NIR', 'QRS_EUV', 
   'SAD_ICE', 'SAD_LNAT', 'SAD_SULFC', 'T', 'TREFHT', 
   'TTGW', 'U', 'UTGWORO', 'UTGWSPEC', 'V', 'VERT', 'VTGWORO', 'VTGWSPEC', 'Z3', 'O2_1S', 
-  'O2_1D', 'NOX', 'NOY', 'CLOX', 'CLOY', 'BROX', 'BROY', 'TCLY', 'TOTH', 'QJOULE', 'UE', 
-  'VE', 'UIONTEND', 'VIONTEND', 'DTCORE', 'T_24_COS',  'T_24_SIN', 'T_12_COS', 'T_12_SIN',
+  'O2_1D', 'NOX', 'NOY', 'CLOX', 'CLOY', 'BROX', 'BROY', 'TCLY', 'TOTH', 'QJOULE', 'UI', 
+  'VI', 'UIONTEND', 'VIONTEND', 'DTCORE', 'T_24_COS',  'T_24_SIN', 'T_12_COS', 'T_12_SIN',
   'OMEGA_24_COS', 'OMEGA_24_SIN', 'OMEGA_12_COS', 'OMEGA_12_SIN',
   'U_24_COS', 'U_24_SIN', 'U_12_COS', 'U_12_SIN', 'V_24_COS', 'V_24_SIN', 'V_12_COS', 
   'V_12_SIN', 'PS_24_COS', 'PS_24_SIN', 'PS_12_COS', 'PS_12_SIN', 'CLDLIQ','CLDICE','CONCLD',
@@ -121,7 +116,7 @@
   'jo2_a', 'jo2_b', 'jo3_a',  'jo3_b', 'jhocl', 'jno3_b', 'jcl2o2',
   'SAD_SULFC', 'SAD_LNAT', 'SAD_ICE','AOA1','AOA2',
   'O2', 'CLDLIQ', 'CLDICE', 'ASDIR',
-  'VTH2d', 'WTH2d', 'UV2d', 'UW2d', 'TH', 'MSKtem'
+  'VTHzm', 'WTHzm', 'UVzm', 'UWzm', 'TH', 'MSKtem'
 </fincl2>
 
 <!-- Instantaneous every 10 days --> 
@@ -138,7 +133,7 @@
 </fincl4>
 <!-- Daily Average --> 
 <fincl5>
-  'MSKtem', 'PS', 'PSL', 'VTH2d', 'UV2d', 'UW2d', 'U2d', 'V2d', 'TH2d','W2d', 'PHIS'
+  'MSKtem', 'PS', 'PSL', 'VTHzm', 'UVzm', 'UWzm', 'Uzm', 'Vzm', 'THzm','Wzm', 'PHIS'
 </fincl5>
 
 <!-- sim_year used for CLM datasets and SSTs forcings -->

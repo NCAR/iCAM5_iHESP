@@ -30,7 +30,7 @@ module prescribed_ghg
   integer, parameter, public :: N_GHG = 5
   integer :: number_flds
 
-  character(len=256) :: filename = ''
+  character(len=256) :: filename = 'NONE'
   character(len=256) :: filelist = ''
   character(len=256) :: datapath = ''
   character(len=32)  :: datatype = 'SERIAL'
@@ -135,7 +135,7 @@ subroutine prescribed_ghg_readnl(nlfile)
    fixed_tod  = prescribed_ghg_fixed_tod
 
    ! Turn on prescribed volcanics if user has specified an input dataset.
-   if (len_trim(filename) > 0 ) has_prescribed_ghg = .true.
+   if (len_trim(filename) > 0 .and. filename.ne.'NONE') has_prescribed_ghg = .true.
 
 end subroutine prescribed_ghg_readnl
 
@@ -159,11 +159,7 @@ end subroutine prescribed_ghg_readnl
   subroutine prescribed_ghg_init()
 
     use tracer_data, only : trcdata_init
-    use cam_history, only : addfld, phys_decomp
-    use ppgrid,      only : pver
-    use error_messages, only: handle_err
-    use ppgrid,         only: pcols, pver, begchunk, endchunk
-    use physics_buffer, only : physics_buffer_desc
+    use cam_history, only : addfld
 
     implicit none
 
@@ -200,7 +196,7 @@ end subroutine prescribed_ghg_readnl
        if (ndx < 1) then
           call endrun('prescribed_ghg_init: '//trim(fields(i)%fldnam)//' is not one of the named ghg fields in pbuf2d')
        endif
-       call addfld( fields(i)%fldnam,'kg/kg', pver, 'I', 'prescribed ghg', phys_decomp )
+       call addfld( fields(i)%fldnam, (/ 'lev' /), 'I','kg/kg', 'prescribed ghg' )
     enddo
 
   end subroutine prescribed_ghg_init

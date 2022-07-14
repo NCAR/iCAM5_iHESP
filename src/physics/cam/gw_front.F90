@@ -180,7 +180,7 @@ subroutine gw_cm_src(ncol, band, desc, u, v, frontgf, &
   ! Compute the interface wind projection by averaging the midpoint winds.
   ! Use the top level wind at the top interface.
   ubi(:,1) = ubm(:,1)
-
+  
   ubi(:,2:desc%ksrc) = midpoint_interp(ubm(:,1:desc%ksrc))
 
   !-----------------------------------------------------------------------

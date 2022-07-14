@@ -29,6 +29,9 @@ module modal_aero_newnuc
 ! min h2so4 vapor for nuc calcs = 4.0e-16 mol/mol-air ~= 1.0e4 molecules/cm3, 
   real(r8), parameter :: qh2so4_cutoff = 4.0e-16_r8
 
+  real(r8) :: dens_so4a_host
+  real(r8) :: mw_nh4a_host, mw_so4a_host
+
 ! !DESCRIPTION: This module implements ...
 !
 ! !REVISION HISTORY:
@@ -138,13 +141,13 @@ module modal_aero_newnuc
 	real(r8) :: dens_nh4so4a
 	real(r8) :: dmdt_ait, dmdt_aitsv1, dmdt_aitsv2, dmdt_aitsv3
 	real(r8) :: dndt_ait, dndt_aitsv1, dndt_aitsv2, dndt_aitsv3
+        real(r8) :: dndt(pcols,pver) ! nucleation rate (#/m3/s)
 	real(r8) :: dnh4dt_ait, dso4dt_ait
 	real(r8) :: dpnuc
 	real(r8) :: dplom_mode(1), dphim_mode(1)
 	real(r8) :: ev_sat(pcols,pver)
 	real(r8) :: mass1p
 	real(r8) :: mass1p_aithi, mass1p_aitlo 
-	real(r8) :: mw_so4a_host
 	real(r8) :: pdel_fac
 	real(r8) :: qh2so4_cur, qh2so4_avg, qh2so4_del
 	real(r8) :: qnh3_cur, qnh3_del, qnh4a_del
@@ -201,6 +204,7 @@ module modal_aero_newnuc
 	dotend(:) = .false.
 	dqdt(1:ncol,:,:) = 0.0_r8
 	qsrflx(1:ncol,:,:) = 0.0_r8
+        dndt(1:ncol,:) = 0.0_r8
 
 !   set dotend
 	mait = modeptr_aitken
@@ -228,18 +232,13 @@ module modal_aero_newnuc
 !                (assuming same dry density for so4 & nh4)
 !	mass1p_aitlo - dp = dplom_mode(1)
 !	mass1p_aithi - dp = dphim_mode(1)
-	tmpa = specdens_so4_amode*pi/6.0_r8
+	tmpa = dens_so4a_host*pi/6.0_r8
 	mass1p_aitlo = tmpa*(dplom_mode(1)**3)
 	mass1p_aithi = tmpa*(dphim_mode(1)**3)
 
 !   compute qv_sat = saturation specific humidity
 	call qsat(t(1:ncol, 1:pver), pmid(1:ncol, 1:pver), &
             ev_sat(1:ncol, 1:pver), qv_sat(1:ncol, 1:pver))
-
-!   mw_so4a_host is molec-wght of sulfate aerosol in host code
-!      96 when nh3/nh4 are simulated
-!      something else when nh3/nh4 are not simulated
-	mw_so4a_host = specmw_so4_amode
 
 
 !
@@ -388,8 +387,8 @@ main_i:	do i = 1, ncol
 !   number nuc rate (#/kmol-air/s) from number nuc amt
         dndt_ait = qnuma_del/deltat
 !   fraction of mass nuc going to so4
-        tmpa = qso4a_del*specmw_so4_amode
-        tmpb = tmpa + qnh4a_del*specmw_nh4_amode
+        tmpa = qso4a_del*mw_so4a_host
+        tmpb = tmpa + qnh4a_del*mw_nh4a_host
         tmp_frso4 = max( tmpa, 1.0e-35_r8 )/max( tmpb, 1.0e-35_r8 )
 !   mass nuc rate (kg/kmol-air/s or g/mol...) hhfrom mass nuc amts
         dmdt_ait = max( 0.0_r8, (tmpb/deltat) ) 
@@ -442,8 +441,8 @@ main_i:	do i = 1, ncol
 	pdel_fac = pdel(i,k)/gravit
 
 !   dso4dt_ait, dnh4dt_ait are (kmol/kmol-air/s)
-        dso4dt_ait = dmdt_ait*tmp_frso4/specmw_so4_amode
-        dnh4dt_ait = dmdt_ait*(1.0_r8 - tmp_frso4)/specmw_nh4_amode
+        dso4dt_ait = dmdt_ait*tmp_frso4/mw_so4a_host
+        dnh4dt_ait = dmdt_ait*(1.0_r8 - tmp_frso4)/mw_nh4a_host
 
 	dqdt(i,k,l_h2so4) = -dso4dt_ait*(1.0_r8-cldx)
 	qsrflx(i,l_h2so4,1) = qsrflx(i,l_h2so4,1) + dqdt(i,k,l_h2so4)*pdel_fac
@@ -454,6 +453,8 @@ main_i:	do i = 1, ncol
 	q(i,k,lso4ait) = q(i,k,lso4ait) + dqdt(i,k,lso4ait)*deltat
 	if (lnumait > 0) then
 	    dqdt(i,k,lnumait) = dndt_ait*(1.0_r8-cldx)
+!   dndt is (#/m3/s), dqdt(:,:,lnumait) is (#/kmol-air/s), aircon is (mol-air/m3)
+            dndt(i,k) = dqdt(i,k,lnumait)*aircon*1.0e-3_r8
 	    qsrflx(i,lnumait,1) = qsrflx(i,lnumait,1)   &
 	                        + dqdt(i,k,lnumait)*pdel_fac
 	    q(i,k,lnumait) = q(i,k,lnumait) + dqdt(i,k,lnumait)*deltat
@@ -517,7 +518,7 @@ main_i:	do i = 1, ncol
 !!$ 
 !!$ 	dpnuc = 0.0_r8
 !!$ 	if (dndt_aitsv1 > 1.0e-5_r8) dpnuc = (6.0_r8*dmdt_aitsv1/   &
-!!$ 			(pi*specdens_so4_amode*dndt_aitsv1))**0.3333333_r8
+!!$ 			(pi*dens_so4a_host*dndt_aitsv1))**0.3333333_r8
 !!$        if (dpnuc > 0.0_r8) then
 !!$        write(lun,97020) 'dpnuc,      dp_aitlo, _aithi ',   &
 !!$ 			 dpnuc, dplom_mode(1), dphim_mode(1)
@@ -1429,7 +1430,7 @@ use modal_aero_data
 use modal_aero_rename
 
 use cam_abortutils,   only:  endrun
-use cam_history,      only:  addfld, add_default, fieldname_len, phys_decomp
+use cam_history,      only:  addfld, add_default, fieldname_len, horiz_only
 use constituents,     only:  pcnst, cnst_get_ind, cnst_name
 use spmd_utils,       only:  masterproc
 use phys_control,     only: phys_getopts
@@ -1444,7 +1445,7 @@ implicit none
 ! local
    integer  :: l_h2so4, l_nh3
    integer  :: lnumait, lnh4ait, lso4ait
-   integer  :: l
+   integer  :: l, l1, l2
    integer  :: m, mait
 
    character(len=fieldname_len)   :: tmpname
@@ -1502,6 +1503,34 @@ implicit none
 	lnh4ait_sv = lnh4ait
 	lso4ait_sv = lso4ait
 
+!   set these constants
+!      mw_so4a_host is molec-wght of sulfate aerosol in host code
+!         96 when nh3/nh4 are simulated
+!         something else when nh3/nh4 are not simulated
+	l = lptr_so4_a_amode(mait) ; l2 = -1
+        if (l <= 0) call endrun( 'modal_aero_newnuch_init error a001 finding aitken so4' )
+        do l1 = 1, nspec_amode(mait) 
+           if (lmassptr_amode(l1,mait) == l) then
+              l2 = l1
+              mw_so4a_host = specmw_amode(l1,mait)
+              dens_so4a_host = specdens_amode(l1,mait)
+           end if
+        end do
+        if (l2 <= 0) call endrun( 'modal_aero_newnuch_init error a002 finding aitken so4' )
+
+        l = lptr_nh4_a_amode(mait) ; l2 = -1
+        if (l > 0) then
+           do l1 = 1, nspec_amode(mait) 
+              if (lmassptr_amode(l1,mait) == l) then
+                 l2 = l1
+                 mw_nh4a_host = specmw_amode(l1,mait)
+              end if
+           end do
+           if (l2 <= 0) call endrun( 'modal_aero_newnuch_init error a002 finding aitken nh4' )
+        else
+           mw_nh4a_host = mw_so4a_host
+        end if
+
 !
 !   create history file column-tendency fields
 !
@@ -1524,7 +1553,7 @@ implicit none
 	    end do
 	    fieldname = trim(tmpname) // '_sfnnuc1'
 	    long_name = trim(tmpname) // ' modal_aero new particle nucleation column tendency'
-	    call addfld( fieldname, unit, 1, 'A', long_name, phys_decomp )
+	    call addfld( fieldname, horiz_only, 'A', unit, long_name )
             if ( history_aerosol ) then 
                call add_default( fieldname, 1, ' ' )
             endif

@@ -1,41 +1,36 @@
-
 module units
 
-   use cam_abortutils, only: endrun
-   use shr_file_mod,   only: shr_file_getUnit, shr_file_freeUnit
+use shr_file_mod,   only: shr_file_getUnit, shr_file_freeUnit
 
 implicit none
+private
 
-PRIVATE
+public :: getunit, freeunit
 
-   public :: getunit, freeunit
+!-------------------------------------------------------------------------------
+contains
+!-------------------------------------------------------------------------------
 
-CONTAINS
+integer function getunit(iu)
 
-   integer function getunit (iu)
-!
-! Arguments
-!
+   ! return an available unit number for i/o
+
    integer, intent(in), optional :: iu   ! desired unit number
-!
-! Local workspace
-!
 
-     getunit = shr_file_getUnit( iu )
+   getunit = shr_file_getUnit(iu)
 
-   end function getunit
+end function getunit
 
-!#######################################################################
+!-------------------------------------------------------------------------------
 
-   subroutine freeunit (iu)
-!
-! Arguments
-!
+subroutine freeunit(iu)
+
+   ! release the unit
+
    integer, intent(in) :: iu       ! unit number to be freed
 
-   call shr_file_freeUnit( iu )
+   call shr_file_freeUnit(iu)
 
-   return
-   end subroutine freeunit
+end subroutine freeunit
 
 end module units

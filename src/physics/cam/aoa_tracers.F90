@@ -44,26 +44,26 @@ module aoa_tracers
   ! Data from namelist variables
   logical :: aoa_tracers_flag  = .false.    ! true => turn on test tracer code, namelist variable
   logical :: aoa_read_from_ic_file = .true. ! true => tracers initialized from IC file
-  
+
   real(r8),  parameter ::  treldays = 15._r8
   real(r8),  parameter ::  vert_offset = 10._r8
 
-  ! 15-days used for diagnostic of transport circulation and K-tensors  
-  ! relaxation (in the original papers PM-1987 and YSGD-2000) => Zonal Mean 
+  ! 15-days used for diagnostic of transport circulation and K-tensors
+  ! relaxation (in the original papers PM-1987 and YSGD-2000) => Zonal Mean
   ! to evaluate eddy-fluxes for 2D-diagnostics, here relaxation to the GLOBAL MEAN  IC
   ! it may help to keep gradients but will rule-out 2D-transport diagnostics
   ! in km  to avoid negative values of  vertical tracers
   ! VERT(k) = -7._r8*alog(hyam(k)+hybm(k)) + vert_offset
-  
+
   ! PM-1987:
   ! Plumb, R. A., and J. D. Mahlman (1987), The zonally averaged transport
   ! characteristics of the GFDL general circulation/transport model,
-  ! J. Atmos.Sci.,44, 298–327
+  ! J. Atmos.Sci.,44, 298-327
 
   ! YSGD-2000:
-  ! Yudin, Valery A., Sergey P. Smyshlyaev, Marvin A. Geller, Victor L. Dvortsov, 2000: 
-  ! Transport Diagnostics of GCMs and Implications for 2D Chemistry-Transport Model of 
-  ! Troposphere and Stratosphere. J. Atmos. Sci., 57, 673–699.
+  ! Yudin, Valery A., Sergey P. Smyshlyaev, Marvin A. Geller, Victor L. Dvortsov, 2000:
+  ! Transport Diagnostics of GCMs and Implications for 2D Chemistry-Transport Model of
+  ! Troposphere and Stratosphere. J. Atmos. Sci., 57, 673-699.
   ! doi: http://dx.doi.org/10.1175/1520-0469(2000)057<0673:TDOGAI>2.0.CO;2
 
   real(r8) :: qrel_vert(pver)  ! = -7._r8*log(pref_mid_norm(k)) + vert_offset
@@ -117,10 +117,10 @@ contains
 !================================================================================
 
   subroutine aoa_tracers_register
-    !----------------------------------------------------------------------- 
-    ! 
+    !-----------------------------------------------------------------------
+    !
     ! Purpose: register advected constituents
-    ! 
+    !
     !-----------------------------------------------------------------------
     use physconst,  only: cpair, mwdry
     !-----------------------------------------------------------------------
@@ -142,10 +142,10 @@ contains
 !===============================================================================
 
   function aoa_tracers_implements_cnst(name)
-    !----------------------------------------------------------------------- 
-    ! 
+    !-----------------------------------------------------------------------
+    !
     ! Purpose: return true if specified constituent is implemented by this package
-    ! 
+    !
     !-----------------------------------------------------------------------
 
     character(len=*), intent(in) :: name   ! constituent name
@@ -170,18 +170,20 @@ contains
 
 !===============================================================================
 
-  subroutine aoa_tracers_init_cnst(name, q, gcid)
+  subroutine aoa_tracers_init_cnst(name, latvals, lonvals, mask, q)
 
-    !----------------------------------------------------------------------- 
+    !-----------------------------------------------------------------------
     !
-    ! Purpose: initialize test tracers mixing ratio fields 
+    ! Purpose: initialize test tracers mixing ratio fields
     !  This subroutine is called at the beginning of an initial run ONLY
     !
     !-----------------------------------------------------------------------
 
     character(len=*), intent(in)  :: name
+    real(r8),         intent(in)  :: latvals(:) ! lat in degrees (ncol)
+    real(r8),         intent(in)  :: lonvals(:) ! lon in degrees (ncol)
+    logical,          intent(in)  :: mask(:)    ! Only initialize where .true.
     real(r8),         intent(out) :: q(:,:)   ! kg tracer/kg dry air (gcol, plev)
-    integer,          intent(in)  :: gcid(:)  ! global column id
 
     integer :: m
     !-----------------------------------------------------------------------
@@ -191,7 +193,7 @@ contains
     do m = 1, ncnst
        if (name ==  c_names(m))  then
           ! pass global constituent index
-          call init_cnst_3d(ifirst+m-1, q, gcid)
+          call init_cnst_3d(ifirst+m-1, latvals, lonvals, mask, q)
        endif
     end do
 
@@ -201,13 +203,13 @@ contains
 
   subroutine aoa_tracers_init
 
-    !----------------------------------------------------------------------- 
-    ! 
+    !-----------------------------------------------------------------------
+    !
     ! Purpose: initialize age of air constituents
     !          (declare history variables)
     !-----------------------------------------------------------------------
 
-    use cam_history,    only: addfld, add_default, phys_decomp
+    use cam_history,    only: addfld, add_default
 
     integer :: m, mm, k
     !-----------------------------------------------------------------------
@@ -218,8 +220,8 @@ contains
 
     do m = 1, ncnst
        mm = ifirst+m-1
-       call addfld (cnst_name(mm), 'kg/kg   ', pver, 'A', cnst_longname(mm), phys_decomp)
-       call addfld (src_names(m),  'kg/kg/s ', pver, 'A', trim(cnst_name(mm))//' source/sink', phys_decomp)
+       call addfld(cnst_name(mm), (/ 'lev' /), 'A', 'kg/kg', cnst_longname(mm))
+       call addfld(src_names(m),  (/ 'lev' /), 'A', 'kg/kg/s', trim(cnst_name(mm))//' source/sink')
 
        call add_default (cnst_name(mm), 1, ' ')
        call add_default (src_names(m),  1, ' ')
@@ -242,7 +244,7 @@ contains
     use ppgrid,         only: begchunk, endchunk
     use physics_types,  only: physics_state
 
-    type(physics_state), intent(inout), dimension(begchunk:endchunk), optional :: phys_state    
+    type(physics_state), intent(inout), dimension(begchunk:endchunk), optional :: phys_state
 
 
     integer c, i, k, ncol
@@ -277,7 +279,6 @@ contains
   subroutine aoa_tracers_timestep_tend(state, ptend, cflx, landfrac, dt)
 
     use physics_types, only: physics_state, physics_ptend, physics_ptend_init
-    use phys_grid,     only: get_rlat_all_p , get_lat_all_p
     use cam_history,   only: outfld
     use time_manager,  only: get_nstep
 
@@ -300,7 +301,7 @@ contains
     logical  :: lq(pcnst)
     real(r8) :: teul                          ! relaxation in  1/sec*dt/2 = k*dt/2
     real(r8) :: wimp                          !     1./(1.+ k*dt/2)
-    real(r8) :: wsrc                          !  teul*wimp    
+    real(r8) :: wsrc                          !  teul*wimp
     !------------------------------------------------------------------
 
     teul = .5_r8*dt/(86400._r8 * treldays)   ! 1/2 for the semi-implicit scheme if dt=time step
@@ -376,21 +377,20 @@ contains
 
 !===========================================================================
 
-  subroutine init_cnst_3d(m, q, gcid)
+  subroutine init_cnst_3d(m, latvals, lonvals, mask, q)
 
-    use dyn_grid, only : get_horiz_grid_d, get_horiz_grid_dim_d
-    use dycore,   only : dycore_is
+    integer,  intent(in)  :: m          ! global constituent index
+    real(r8), intent(in)  :: latvals(:) ! lat in degrees (ncol)
+    real(r8), intent(in)  :: lonvals(:) ! lon in degrees (ncol)
+    logical,  intent(in)  :: mask(:)    ! Only initialize where .true.
+    real(r8), intent(out) :: q(:,:)     ! kg tracer/kg dry air (gcol,plev)
 
-    integer,  intent(in)  :: m       ! global constituent index
-    real(r8), intent(out) :: q(:,:)  ! kg tracer/kg dry air (gcol,plev)
-    integer,  intent(in)  :: gcid(:) ! global column id
-
-    real(r8), allocatable :: lat(:)
-    integer :: plon, plat, ngcols
     integer :: j, k, gsize
     !-----------------------------------------------------------------------
 
-    if (masterproc) write(iulog,*) 'AGE-OF-AIR CONSTITUENTS: INITIALIZING ',cnst_name(m),m
+    if (masterproc) then
+      write(iulog,*) 'AGE-OF-AIR CONSTITUENTS: INITIALIZING ',cnst_name(m),m
+    end if
 
     if (m == ixaoa1) then
 
@@ -402,15 +402,10 @@ contains
 
     else if (m == ixht) then
 
-       call get_horiz_grid_dim_d( plon, plat )
-       ngcols = plon*plat
-       gsize = size(gcid)
-       allocate(lat(ngcols))
-       call get_horiz_grid_d(ngcols,clat_d_out=lat)
+       gsize = size(q, 1)
        do j = 1, gsize
-          q(j,:) = 2._r8 + sin(lat(gcid(j)))
+          q(j,:) = 2._r8 + sin(latvals(j))
        end do
-       deallocate(lat)
 
     else if (m == ixvt) then
 

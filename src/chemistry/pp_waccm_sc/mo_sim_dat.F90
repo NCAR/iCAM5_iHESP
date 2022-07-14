@@ -8,17 +8,18 @@
 
       subroutine set_sim_dat
 
-      use chem_mods,       only : clscnt, cls_rxt_cnt, clsmap, permute, adv_mass, fix_mass, crb_mass
-      use chem_mods,       only : diag_map
-      use chem_mods,       only : phtcnt, rxt_tag_cnt, rxt_tag_lst, rxt_tag_map
-      use chem_mods,       only : pht_alias_lst, pht_alias_mult
-      use chem_mods,       only : extfrc_lst, inv_lst, slvd_lst
-      use chem_mods,       only : enthalpy_cnt, cph_enthalpy, cph_rid
-      use cam_abortutils,  only : endrun
-      use mo_tracname,     only : solsym
-      use chem_mods,       only : frc_from_dataset
-      use shr_kind_mod,    only : r8 => shr_kind_r8
-      use cam_logfile,     only : iulog
+      use chem_mods,     only : clscnt, cls_rxt_cnt, clsmap, permute, adv_mass, fix_mass, crb_mass
+      use chem_mods,     only : diag_map
+      use chem_mods,     only : phtcnt, rxt_tag_cnt, rxt_tag_lst, rxt_tag_map
+      use chem_mods,     only : pht_alias_lst, pht_alias_mult
+      use chem_mods,     only : extfrc_lst, inv_lst, slvd_lst
+      use chem_mods,     only : enthalpy_cnt, cph_enthalpy, cph_rid, num_rnts, rxntot
+      use cam_abortutils,only : endrun
+      use mo_tracname,   only : solsym
+      use chem_mods,     only : frc_from_dataset
+      use chem_mods,     only : is_scalar, is_vector
+      use shr_kind_mod,  only : r8 => shr_kind_r8
+      use cam_logfile,   only : iulog
 
       implicit none
 
@@ -26,6 +27,9 @@
 !      ... local variables
 !--------------------------------------------------------------
       integer :: ios
+
+      is_scalar = .true.
+      is_vector = .false.
 
       clscnt(:) = (/      0,     0,     0,     5,     0 /)
 
@@ -63,9 +67,16 @@
          write(iulog,*) 'set_sim_dat: failed to allocate rxt_tag_map; error = ',ios
          call endrun
       end if
-      rxt_tag_lst(:rxt_tag_cnt) = (/ 'ch4_loss        ', 'n2o_loss        ', 'cfc11_loss      ', 'cfc12_loss      ', &
-                                     'lyman_alpha     ' /)
+      rxt_tag_lst(     1:     5) = (/ 'ch4_loss                        ', 'n2o_loss                        ', &
+                                      'cfc11_loss                      ', 'cfc12_loss                      ', &
+                                      'lyman_alpha                     ' /)
       rxt_tag_map(:rxt_tag_cnt) = (/    1,   2,   3,   4,   5 /)
+      allocate( num_rnts(rxntot-phtcnt),stat=ios )
+      if( ios /= 0 ) then
+         write(iulog,*) 'set_sim_dat: failed to allocate num_rnts; error = ',ios
+         call endrun
+      end if
+      num_rnts(:) = (/      1,     1,     1,     1,     1 /)
 
       end subroutine set_sim_dat
 

@@ -10,7 +10,7 @@ module noy_ubc
   use cam_logfile,      only : iulog
 
   use tracer_data,      only : trfld,trfile,MAXTRCRS
-  use cam_history,      only : addfld, phys_decomp
+  use cam_history,      only : addfld, horiz_only
 
   implicit none
 
@@ -29,7 +29,7 @@ module noy_ubc
   character(len=16) :: ubc_name(MAXTRCRS)
   integer :: map(MAXTRCRS) = -1
 
-  character(len=256) :: noy_ubc_filename  = ' '
+  character(len=256) :: noy_ubc_filename  = 'NONE'
   character(len=256) :: noy_ubc_filelist  = ' '
   character(len=256) :: noy_ubc_datapath  = ' '
   character(len=32)  :: noy_ubc_datatype  = 'SERIAL'
@@ -86,7 +86,7 @@ contains
     call mpi_bcast(noy_ubc_fixed_ymd, 1, mpi_integer, masterprocid, mpicom, ierr)
     call mpi_bcast(noy_ubc_fixed_tod, 1, mpi_integer, masterprocid, mpicom, ierr)
 
-    has_noy_ubc = len_trim(noy_ubc_filename) > 0
+    has_noy_ubc = len_trim(noy_ubc_filename) > 0 .and. noy_ubc_filename.ne.'NONE'
 
   end subroutine noy_ubc_readnl
 
@@ -123,7 +123,7 @@ contains
                                      ! are in the simulation so that the species mapping is correct
           map(ii) = vid
           ubc_name(ii) = trim(specifier(i))//'_ubc'
-          call addfld( ubc_name(ii), 'mol/mol', 1, 'I', 'upper boundary vmr', phys_decomp )
+          call addfld( ubc_name(ii), horiz_only, 'I', 'mol/mol', 'upper boundary vmr' )
 
        end if
     enddo

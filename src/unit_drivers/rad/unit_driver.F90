@@ -15,8 +15,18 @@ module unit_driver
 
   public :: unit_driver_run
   public :: unit_driver_init
+  public :: unit_driver_reg
 
 contains
+
+!================================================================================
+!================================================================================
+  subroutine unit_driver_reg
+    use radiation_data, only: rad_data_enable
+
+    call rad_data_enable()
+
+  end subroutine unit_driver_reg
 
 !================================================================================
 !================================================================================
@@ -76,16 +86,10 @@ contains
 
   ! local vars
     type(physics_ptend) :: ptend
-    real(r8) :: fsns(pcols)      ! Surface solar absorbed flux
-    real(r8) :: fsnt(pcols)      ! Net column abs solar flux at model top
-    real(r8) :: flns(pcols)      ! Srf longwave cooling (up-down) flux
-    real(r8) :: flnt(pcols)      ! Net outgoing lw flux at model top
-    real(r8) :: fsds(pcols)      ! Surface solar down flux
     real(r8) :: net_flx(pcols)
 
-    call radiation_tend( state, ptend, pbuf, cam_out, cam_in, &
-                         cam_in%landfrac, cam_in%icefrac, cam_in%snowhland, &
-                         fsns, fsnt, flns, flnt, fsds, net_flx )
+    call radiation_tend( &
+       state, ptend, pbuf, cam_out, cam_in, net_flx)
 
     call physics_ptend_dealloc(ptend)
 

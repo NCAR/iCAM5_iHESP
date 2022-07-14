@@ -59,6 +59,7 @@ contains
     use pio,              only : pio_seterrorhandling, PIO_BCAST_ERROR,PIO_INTERNAL_ERROR
     use chem_surfvals,    only : flbc_list
     use string_utils,     only : GLC
+    use m_MergeSorts,     only : IndexSort
 
     implicit none
 
@@ -82,6 +83,7 @@ contains
     character(len=16)  :: emis_species(gas_pcnst)
     character(len=256) :: emis_filenam(gas_pcnst)
     integer  :: emis_indexes(gas_pcnst)
+    integer  :: indx(gas_pcnst)
     real(r8) :: emis_scalefactor(gas_pcnst)
 
     integer :: vid, nvars, isec
@@ -102,6 +104,7 @@ contains
 
     has_emis(:) = .false.
     nn = 0
+    indx(:) = 0
 
     count_emis: do n=1,gas_pcnst
        if ( len_trim(srf_emis_specifier(n) ) == 0 ) then
@@ -127,19 +130,23 @@ contains
 
        if (m > 0) then
           has_emis(m) = .true.
-          has_emis(m) = has_emis(m) .and. ( .not. any( flbc_list == spc_name ) )
        else 
           write(iulog,*) 'srf_emis_inti: spc_name ',spc_name,' is not included in the simulation'
           call endrun('srf_emis_inti: invalid surface emission specification')
        endif
 
-       if ( has_emis(m) ) then
-          nn = nn+1
-          emis_species(nn) = spc_name
-          emis_filenam(nn) = filename
-          emis_indexes(nn) = m
-          emis_scalefactor(nn) = xdbl
+       if (any( flbc_list == spc_name )) then
+          call endrun('srf_emis_inti: ERROR -- cannot specify both fixed LBC ' &
+                    //'and emissions for the same species: '//trim(spc_name))
        endif
+
+       nn = nn+1
+       emis_species(nn) = spc_name
+       emis_filenam(nn) = filename
+       emis_indexes(nn) = m
+       emis_scalefactor(nn) = xdbl
+
+       indx(n)=n
 
     enddo count_emis
 
@@ -150,19 +157,27 @@ contains
     allocate( emissions(n_emis_files), stat=astat )
     if( astat/= 0 ) then
        write(iulog,*) 'srf_emis_inti: failed to allocate emissions array; error = ',astat
-       call endrun
+       call endrun('srf_emis_inti: failed to allocate emissions array')
+    end if
+
+    !-----------------------------------------------------------------------
+    ! Sort the input files so that the emissions sources are summed in the 
+    ! same order regardless of the order of the input files in the namelist
+    !-----------------------------------------------------------------------
+    if (n_emis_files > 0) then
+      call IndexSort(n_emis_files, indx, emis_filenam)
     end if
 
     !-----------------------------------------------------------------------
     ! 	... setup the emission type array
     !-----------------------------------------------------------------------
     do m=1,n_emis_files 
-       emissions(m)%spc_ndx          = emis_indexes(m)
+       emissions(m)%spc_ndx          = emis_indexes(indx(m))
        emissions(m)%units            = 'Tg/y'
-       emissions(m)%species          = emis_species(m)
-       emissions(m)%mw               = adv_mass(emis_indexes(m))                     ! g / mole
-       emissions(m)%filename         = emis_filenam(m)
-       emissions(m)%scalefactor      = emis_scalefactor(m)
+       emissions(m)%species          = emis_species(indx(m))
+       emissions(m)%mw               = adv_mass(emis_indexes(indx(m)))                     ! g / mole
+       emissions(m)%filename         = emis_filenam(indx(m))
+       emissions(m)%scalefactor      = emis_scalefactor(indx(m))
     enddo
 
     !-----------------------------------------------------------------------
@@ -336,13 +351,11 @@ contains
 
        flux(:) = 0._r8
        do isec = 1,emissions(m)%nsectors
-          flux(:ncol) = flux(:ncol) + emissions(m)%fields(isec)%data(:ncol,1,lchnk)
+          flux(:ncol) = flux(:ncol) + emissions(m)%scalefactor*emissions(m)%fields(isec)%data(:ncol,1,lchnk)
        enddo
 
-       flux(:ncol) = emissions(m)%scalefactor*flux(:ncol)
-
        units = to_lower(trim(emissions(m)%fields(1)%units(:GLC(emissions(m)%fields(1)%units))))
-       
+
        if ( any( mks_units(:) == units ) ) then
           sflx(:ncol,n) = sflx(:ncol,n) + flux(:ncol)
        else

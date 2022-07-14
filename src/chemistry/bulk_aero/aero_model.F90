@@ -18,6 +18,7 @@ module aero_model
   use spmd_utils,        only: masterproc
   use physics_buffer,    only: pbuf_get_field, pbuf_get_index
   use cam_history,       only: outfld
+  use infnan,            only: nan, assignment(=)
 
   implicit none
   private
@@ -50,6 +51,10 @@ module aero_model
 
   integer :: fracis_idx = 0
 
+  real(r8) :: aer_sol_facti(pcnst) ! in-cloud solubility factor
+  real(r8) :: aer_sol_factb(pcnst) ! below-cloud solubility factor
+  real(r8) :: aer_scav_coef(pcnst)
+
 contains
 
   !=============================================================================
@@ -72,8 +77,11 @@ contains
     character(len=16) :: aer_drydep_list(pcnst) = ' '
 
     namelist /aerosol_nl/ aer_wetdep_list, aer_drydep_list
-
+    namelist /aerosol_nl/ aer_sol_facti, aer_sol_factb, aer_scav_coef
     !-----------------------------------------------------------------------------
+    aer_sol_facti = nan
+    aer_sol_factb = nan
+    aer_scav_coef = nan
 
     ! Read namelist
     if (masterproc) then
@@ -92,8 +100,11 @@ contains
 
 #ifdef SPMD
     ! Broadcast namelist variables
-    call mpibcast(aer_wetdep_list,   len(aer_wetdep_list(1))*pcnst, mpichar, 0, mpicom)
-    call mpibcast(aer_drydep_list,   len(aer_drydep_list(1))*pcnst, mpichar, 0, mpicom)
+    call mpibcast(aer_wetdep_list, len(aer_wetdep_list(1))*pcnst, mpichar, 0, mpicom)
+    call mpibcast(aer_drydep_list, len(aer_drydep_list(1))*pcnst, mpichar, 0, mpicom)
+    call mpibcast(aer_sol_facti, pcnst, mpir8, 0, mpicom)
+    call mpibcast(aer_sol_factb, pcnst, mpir8, 0, mpicom)
+    call mpibcast(aer_scav_coef, pcnst, mpir8, 0, mpicom)
 #endif
 
     wetdep_list = aer_wetdep_list
@@ -103,7 +114,7 @@ contains
 
   !=============================================================================
   !=============================================================================
-  subroutine aero_model_register
+  subroutine aero_model_register()
     use mo_setsoa, only : soa_register
 
     call soa_register()
@@ -114,7 +125,7 @@ contains
   subroutine aero_model_init( pbuf2d )
 
     use mo_chem_utls,  only: get_inv_ndx, get_spc_ndx
-    use cam_history,   only: addfld, add_default, phys_decomp
+    use cam_history,   only: addfld, add_default, horiz_only
     use phys_control,  only: phys_getopts
     use mo_aerosols,   only: aerosols_inti
     use mo_setsoa,     only: soa_inti
@@ -122,6 +133,7 @@ contains
     use seasalt_model, only: seasalt_init
     use drydep_mod,    only: inidrydep
     use wetdep,        only: wetdep_init
+    use mo_setsox,     only: has_sox
 
     ! args
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
@@ -131,8 +143,11 @@ contains
     integer :: m, id
     character(len=20) :: dummy
     logical  :: history_aerosol ! Output MAM or SECT aerosol tendencies
+    logical  :: history_dust    ! Output dust
     
-    call phys_getopts( history_aerosol_out=history_aerosol   )
+    call phys_getopts( history_aerosol_out = history_aerosol,&
+                       history_dust_out    = history_dust   )
+
     call aerosols_inti()
     call soa_inti(pbuf2d)
     call dust_init()
@@ -200,27 +215,27 @@ contains
     do m = 1,ndrydep
        
        dummy = trim(drydep_list(m)) // 'TB'
-       call addfld (dummy,'kg/m2/s ',1, 'A',trim(drydep_list(m))//' turbulent dry deposition flux',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','kg/m2/s',trim(drydep_list(m))//' turbulent dry deposition flux')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
        dummy = trim(drydep_list(m))  // 'GV'
-       call addfld (dummy,'kg/m2/s ',1, 'A',trim(drydep_list(m)) //' gravitational dry deposition flux',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','kg/m2/s',trim(drydep_list(m)) //' gravitational dry deposition flux')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
        dummy = trim(drydep_list(m))  // 'DD'
-       call addfld (dummy,'kg/m2/s ',1, 'A',trim(drydep_list(m)) //' dry deposition flux at bottom (grav + turb)',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','kg/m2/s',trim(drydep_list(m)) //' dry deposition flux at bottom (grav + turb)')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
        dummy = trim(drydep_list(m)) // 'DT'
-       call addfld (dummy,'kg/kg/s ',pver, 'A',trim(drydep_list(m))//' dry deposition',phys_decomp)
+       call addfld (dummy,(/ 'lev' /), 'A','kg/kg/s',trim(drydep_list(m))//' dry deposition')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
        dummy = trim(drydep_list(m)) // 'DV'
-       call addfld (dummy,'m/s ',pver, 'A',trim(drydep_list(m))//' deposition velocity',phys_decomp)
+       call addfld (dummy,(/ 'lev' /), 'A','m/s',trim(drydep_list(m))//' deposition velocity')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
@@ -232,26 +247,26 @@ contains
        call inidrydep(rair, gravit)
 
        dummy = 'RAM1'
-       call addfld (dummy,'frac ',1, 'A','RAM1',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','frac','RAM1')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
        dummy = 'airFV'
-       call addfld (dummy,'frac ',1, 'A','FV',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','frac','FV')
        if ( history_aerosol ) then  
           call add_default (dummy, 1, ' ')
        endif
 
        if (sslt_active) then
           dummy = 'SSTSFDRY'
-          call addfld (dummy,'kg/m2/s',1, 'A','Sea salt deposition flux at surface',phys_decomp)
+          call addfld (dummy,horiz_only, 'A','kg/m2/s','Sea salt deposition flux at surface')
           if ( history_aerosol ) then  
              call add_default (dummy, 1, ' ')
           endif
        endif
        if (dust_active) then
           dummy = 'DSTSFDRY'
-          call addfld (dummy,'kg/m2/s',1, 'A','Dust deposition flux at surface',phys_decomp)
+          call addfld (dummy,horiz_only, 'A','kg/m2/s','Dust deposition flux at surface')
           if ( history_aerosol ) then  
              call add_default (dummy, 1, ' ')
           endif
@@ -261,39 +276,39 @@ contains
 
     do m = 1,nwetdep
 
-       call addfld (trim(wetdep_list(m))//'SFWET','kg/m2/s ', &
-            1,  'A','Wet deposition flux at surface',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SFSIC','kg/m2/s ', &
-            1,  'A','Wet deposition flux (incloud, convective) at surface',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SFSIS','kg/m2/s ', &
-            1,  'A','Wet deposition flux (incloud, stratiform) at surface',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SFSBC','kg/m2/s ', &
-            1,  'A','Wet deposition flux (belowcloud, convective) at surface',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SFSBS','kg/m2/s ', &
-            1,  'A','Wet deposition flux (belowcloud, stratiform) at surface',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'WET','kg/kg/s ', &
-            pver, 'A','wet deposition tendency',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SIC','kg/kg/s ', &
-            pver, 'A', trim(wetdep_list(m))//' ic wet deposition',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SIS','kg/kg/s ', &
-            pver, 'A', trim(wetdep_list(m))//' is wet deposition',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SBC','kg/kg/s ', &
-            pver, 'A', trim(wetdep_list(m))//' bc wet deposition',phys_decomp)
-       call addfld (trim(wetdep_list(m))//'SBS','kg/kg/s ', &
-            pver, 'A', trim(wetdep_list(m))//' bs wet deposition',phys_decomp)
+       call addfld (trim(wetdep_list(m))//'SFWET', horiz_only,  'A','kg/m2/s', &
+            'Wet deposition flux at surface')
+       call addfld (trim(wetdep_list(m))//'SFSIC', horiz_only,  'A','kg/m2/s', &
+            'Wet deposition flux (incloud, convective) at surface')
+       call addfld (trim(wetdep_list(m))//'SFSIS', horiz_only,  'A','kg/m2/s', &
+            'Wet deposition flux (incloud, stratiform) at surface')
+       call addfld (trim(wetdep_list(m))//'SFSBC', horiz_only,  'A','kg/m2/s', &
+            'Wet deposition flux (belowcloud, convective) at surface')
+       call addfld (trim(wetdep_list(m))//'SFSBS', horiz_only,  'A','kg/m2/s', &
+            'Wet deposition flux (belowcloud, stratiform) at surface')
+       call addfld (trim(wetdep_list(m))//'WET',   (/ 'lev' /), 'A','kg/kg/s', &
+            'wet deposition tendency')
+       call addfld (trim(wetdep_list(m))//'SIC',   (/ 'lev' /), 'A','kg/kg/s', &
+            trim(wetdep_list(m))//' ic wet deposition')
+       call addfld (trim(wetdep_list(m))//'SIS',   (/ 'lev' /), 'A','kg/kg/s', &
+            trim(wetdep_list(m))//' is wet deposition')
+       call addfld (trim(wetdep_list(m))//'SBC',   (/ 'lev' /), 'A','kg/kg/s', &
+            trim(wetdep_list(m))//' bc wet deposition')
+       call addfld (trim(wetdep_list(m))//'SBS',   (/ 'lev' /), 'A','kg/kg/s', &
+            trim(wetdep_list(m))//' bs wet deposition')
     enddo
     
     if (nwetdep>0) then
        if (sslt_active) then
           dummy = 'SSTSFWET'
-          call addfld (dummy,'kg/m2/s',1, 'A','Sea salt wet deposition flux at surface',phys_decomp)
+          call addfld (dummy,horiz_only, 'A','kg/m2/s','Sea salt wet deposition flux at surface')
           if ( history_aerosol ) then  
              call add_default (dummy, 1, ' ')
           endif
        endif
        if (dust_active) then
           dummy = 'DSTSFWET'
-          call addfld (dummy,'kg/m2/s',1, 'A','Dust wet deposition flux at surface',phys_decomp)
+          call addfld (dummy,horiz_only, 'A','kg/m2/s','Dust wet deposition flux at surface')
           if ( history_aerosol ) then  
              call add_default (dummy, 1, ' ')
           endif
@@ -305,20 +320,20 @@ contains
 
        do m = 1, dust_nbin
           dummy = trim(dust_names(m)) // 'SF'
-          call addfld (dummy,'kg/m2/s ',1, 'A',trim(dust_names(m))//' dust surface emission',phys_decomp)
+          call addfld (dummy,horiz_only, 'A','kg/m2/s',trim(dust_names(m))//' dust surface emission')
           if (history_aerosol) then
              call add_default (dummy, 1, ' ')
           endif
        enddo
 
        dummy = 'DSTSFMBL'
-       call addfld (dummy,'kg/m2/s',1, 'A','Mobilization flux at surface',phys_decomp)
-       if (history_aerosol) then
+       call addfld (dummy,horiz_only, 'A','kg/m2/s','Mobilization flux at surface')
+       if (history_aerosol .or. history_dust) then
           call add_default (dummy, 1, ' ')
        endif
 
        dummy = 'LND_MBL'
-       call addfld (dummy,'frac ',1, 'A','Soil erodibility factor',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','frac','Soil erodibility factor')
        if (history_aerosol) then
           call add_default (dummy, 1, ' ')
        endif
@@ -328,19 +343,27 @@ contains
     if (sslt_active) then
 
        dummy = 'SSTSFMBL'
-       call addfld (dummy,'kg/m2/s',1, 'A','Mobilization flux at surface',phys_decomp)
+       call addfld (dummy,horiz_only, 'A','kg/m2/s','Mobilization flux at surface')
        if (history_aerosol) then
           call add_default (dummy, 1, ' ')
        endif
 
        do m = 1, seasalt_nbin
           dummy = trim(seasalt_names(m)) // 'SF'
-          call addfld (dummy,'kg/m2/s ',1, 'A',trim(seasalt_names(m))//' seasalt surface emission',phys_decomp)
+          call addfld (dummy,horiz_only, 'A','kg/m2/s',trim(seasalt_names(m))//' seasalt surface emission')
           if (history_aerosol) then
              call add_default (dummy, 1, ' ')
           endif
        enddo
 
+    endif
+
+    if( has_sox ) then
+       call addfld( 'XPH_LWC',(/ 'lev' /), 'A','kg/kg', 'pH value multiplied by lwc')
+
+       if ( history_aerosol ) then
+          call add_default ('XPH_LWC', 1, ' ')
+       endif
     endif
 
     so4_ndx    = get_spc_ndx( 'SO4' )
@@ -593,15 +616,10 @@ contains
 
        mm = wetdep_indices(m)
 
-       if ( any( dust_names(:)==trim(cnst_name(mm)) ) ) then
-          sol_factb = 0.15_r8
-          sol_facti = 0.15_r8
-       else
-          sol_factb = 0.3_r8
-          sol_facti = 0.3_r8
-       endif
+       sol_factb = aer_sol_factb(m)
+       sol_facti = aer_sol_facti(m)
 
-       scavcoef(:ncol,:)=0.1_r8
+       scavcoef(:ncol,:) = aer_scav_coef(m)
 
        call wetdepa_v1( state%t, state%pmid, state%q(:,:,1), state%pdel, &
             dep_inputs%cldt, dep_inputs%cldcu, dep_inputs%cmfdqr, &
@@ -670,8 +688,8 @@ contains
   ! called from mo_usrrxt
   !-------------------------------------------------------------------------
   subroutine aero_model_surfarea( &
-                  mmr, radmean, relhum, pmid, temp, strato_sad, &
-                  sulfate,  m, ltrop, het1_ndx, pbuf, ncol, sfc, dm_aer, sad_total )
+                  mmr, radmean, relhum, pmid, temp, strato_sad, sulfate,  m, ltrop, &
+                  dlat, het1_ndx, pbuf, ncol, sfc, dm_aer, sad_total, reff_trop )
 
     use mo_constants, only : pi, avo => avogadro
 
@@ -683,6 +701,7 @@ contains
     real(r8), intent(in)    :: strato_sad(:,:)
     integer,  intent(in)    :: ncol
     integer,  intent(in)    :: ltrop(:)
+    real(r8), intent(in)    :: dlat(:)                    ! degrees latitude
     integer,  intent(in)    :: het1_ndx
     real(r8), intent(in)    :: relhum(:,:)
     real(r8), intent(in)    :: m(:,:) ! total atm density (/cm^3)
@@ -692,6 +711,7 @@ contains
     real(r8), intent(inout) :: sfc(:,:,:)
     real(r8), intent(inout) :: dm_aer(:,:,:)
     real(r8), intent(inout) :: sad_total(:,:)
+    real(r8), intent(out)   :: reff_trop(:,:)
 
     ! local vars
 
@@ -729,6 +749,7 @@ contains
 
     integer  ::  irh, rh_l, rh_u
     real(r8) ::  factor, rfac_sulf, rfac_oc, rfac_bc, rfac_ss
+    logical :: zero_aerosols
 
     !-----------------------------------------------------------------
     ! 	... table for hygroscopic growth effect on radius (Chin et al)
@@ -754,6 +775,8 @@ contains
     log_sd_sulf = log(sd_sulf)
     log_sd_orgc = log(sd_orgc)
     log_sd_bc   = log(sd_bc)
+
+    reff_trop(:,:) = 0._r8
 
     ver_loop: do k = 1,pver
        col_loop: do i = 1,ncol
@@ -795,10 +818,14 @@ contains
           !-------------------------------------------------------------------------
           ! 	... sulfate aerosols
           !-------------------------------------------------------------------------
+          zero_aerosols = k < ltrop(i)
+          if ( abs( dlat(i) ) > 50._r8 ) then
+             zero_aerosols = pmid(i,k) < 30000._r8
+          endif
           !-------------------------------------------------------------------------
           !       ... use ubvals climatology for stratospheric sulfate surface area density
           !-------------------------------------------------------------------------
-          if( k < ltrop(i) ) then
+          if( zero_aerosols ) then
              sfc_sulf = strato_sad(i,k)
              if ( het1_ndx > 0 ) then
                 sfc_sulf = 0._r8        ! reaction already taken into account in mo_strato_rates.F90
@@ -956,7 +983,7 @@ contains
   !-------------------------------------------------------------------------
   ! stub
   !-------------------------------------------------------------------------
-  subroutine aero_model_strat_surfarea( ncol, mmr, pmid, temp, ltrop, pbuf, strato_sad )
+  subroutine aero_model_strat_surfarea( ncol, mmr, pmid, temp, ltrop, pbuf, strato_sad, reff_strat )
 
     ! dummy args
     integer,  intent(in)    :: ncol
@@ -966,8 +993,10 @@ contains
     integer,  intent(in)    :: ltrop(:) ! tropopause level indices
     type(physics_buffer_desc), pointer :: pbuf(:)
     real(r8), intent(out)   :: strato_sad(:,:)
-    
+    real(r8), intent(out)   :: reff_strat(:,:)
+
     strato_sad(:,:) = 0._r8
+    reff_strat(:,:) = 0._r8
 
   end subroutine aero_model_strat_surfarea
   
@@ -1008,11 +1037,19 @@ contains
     real(r8), intent(in) :: cldnum(:,:)       ! droplet number concentration (#/kg)
     real(r8), intent(in) :: vmr0(:,:,:)       ! initial mixing ratios (before gas-phase chem changes)
     real(r8), intent(inout) :: vmr(:,:,:)         ! mixing ratios ( vmr )
+
     type(physics_buffer_desc), pointer :: pbuf(:)
     
     ! local vars 
 
     real(r8) :: vmrcw(ncol,pver,gas_pcnst)            ! cloud-borne aerosol (vmr)
+
+    real(r8) ::  aqso4(ncol,1)               ! aqueous phase chemistry
+    real(r8) ::  aqh2so4(ncol,1)             ! aqueous phase chemistry
+    real(r8) ::  aqso4_h2o2(ncol)            ! SO4 aqueous phase chemistry due to H2O2
+    real(r8) ::  aqso4_o3(ncol)              ! SO4 aqueous phase chemistry due to O3
+    real(r8) ::  xphlwc(ncol,pver)           ! pH value multiplied by lwc
+
 
   ! aqueous chemistry ...
 
@@ -1032,8 +1069,14 @@ contains
             airdens,  &
             invariants, &
             vmrcw,    &
-            vmr       &
+            vmr,      &
+            xphlwc,   & 
+            aqso4,    &
+            aqh2so4,  &
+            aqso4_h2o2,&
+            aqso4_o3  &
             )
+        call outfld( 'XPH_LWC',xphlwc(:ncol,:), ncol , lchnk )
     endif
 
     if( has_soa ) then
@@ -1043,6 +1086,7 @@ contains
     if( has_aerosols ) then
        call aerosols_formation( ncol, lchnk, tfld, relhum, vmr )
     endif
+
 
   end subroutine aero_model_gasaerexch
 

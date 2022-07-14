@@ -5,9 +5,12 @@ module nlte_fomichev
 !
   use ppgrid,             only: pcols, pver, pverp
   use shr_kind_mod,       only: r8 => shr_kind_r8
-  use physconst,          only: r_universal, rearth, avogad, boltz
+  use physconst,          only: r_universal, rearth, avogad, boltz, pi
   use chem_surfvals,      only: chem_surfvals_get
   use cam_abortutils,     only: endrun
+  use phys_grid,          only: get_rlon_p, get_rlat_p
+  use cam_logfile,        only: iulog
+  use spmd_utils,         only: masterproc
 
   implicit none
   private
@@ -17,7 +20,8 @@ module nlte_fomichev
   public &
      nlte_fomichev_init, &
      nlte_fomichev_calc, &
-     nocooling
+     nocooling,          &
+     o3pcooling
 
 ! Private module data
 
@@ -55,23 +59,13 @@ module nlte_fomichev
   real(r8), parameter :: const=2.63187E11_r8   ! reaction constant
   real(r8), parameter :: constb=9.08795e9_r8   ! reaction constant
 
+  real(r8), parameter :: ptop_co2cool=7.42e-3_r8 ! top pressure level for co2 cool calculation (Pa)
+  integer :: ktop_co2cool                        ! the level index defining the top of CO2 cool calculation
+
 !VERTICAL GRIDs to be used in IR scheme
 !XR(67) - pressure scale heights, psh's, (=0-16.5) at which input parameter
 !         should be given
-!XRH(59) - psh's at which cooling rates compute (=2-16.5)
-!XRF(17) - psh's at which the reccurence formula is utilized (=12.5-16.5)
   real(r8) xr(nrfm)
-  real(r8) xrh(nrfmc)
-  real(r8) xrf(nrfmnlte)
-
-!INDEX to organize the first entry calculations
-  integer irep
-
-!DATA on CO2 abundance
-!CO2VP(67) - volume mixing ratio (vmr) for basic CO2 prifile at XR grid
-!CO2CL(67) - CO2 column amount at XR grid calcilated with use of CO2VP
-  real(r8) co2vp(nrfm)
-  real(r8) co2cl(nrfm)
 
 !DATA for "LTE" parameterization (x=2-12.5)
 !IG(9) - indexes of level which should be used to account for the internal
@@ -121,41 +115,6 @@ module nlte_fomichev
        9.0_r8, 9.25_r8, 9.5_r8, 9.75_r8,10.0_r8,10.25_r8,10.5_r8,10.75_r8,11.0_r8,11.25_r8,11.5_r8,11.75_r8, &
       12.0_r8,12.25_r8,12.5_r8,12.75_r8,13.0_r8,13.25_r8,13.5_r8,13.75_r8,14.0_r8,14.25_r8,14.5_r8,14.75_r8, &
       15.0_r8,15.25_r8,15.5_r8,15.75_r8,16.0_r8,16.25_r8,16.5_r8/
-
-   data (xrh(i), i=1,59)/                                                &
-       2.0_r8, 2.25_r8, 2.5_r8, 2.75_r8, 3.0_r8, 3.25_r8, 3.5_r8, 3.75_r8, 4.0_r8, 4.25_r8, 4.5_r8, 4.75_r8, &
-       5.0_r8, 5.25_r8, 5.5_r8, 5.75_r8, 6.0_r8, 6.25_r8, 6.5_r8, 6.75_r8, 7.0_r8, 7.25_r8, 7.5_r8, 7.75_r8, &
-       8.0_r8, 8.25_r8, 8.5_r8, 8.75_r8, 9.0_r8, 9.25_r8, 9.5_r8, 9.75_r8,10.0_r8,10.25_r8,10.5_r8,10.75_r8, &
-      11.0_r8,11.25_r8,11.5_r8,11.75_r8,12.0_r8,12.25_r8,12.5_r8,12.75_r8,13.0_r8,13.25_r8,13.5_r8,13.75_r8, &
-      14.0_r8,14.25_r8,14.5_r8,14.75_r8,15.0_r8,15.25_r8,15.5_r8,15.75_r8,16.0_r8,16.25_r8,16.5_r8/
-
-   data (xrf(i), i=1,17)/                                                &
-      12.5_r8,12.75_r8,13.0_r8,13.25_r8,13.5_r8,13.75_r8,14.0_r8,14.25_r8,14.5_r8,14.75_r8,15.0_r8,15.25_r8, &
-      15.5_r8,15.75_r8,16.0_r8,16.25_r8,16.5_r8/
-
-   data irep/0/
-
-   data (co2vp(i), i=1,67)   / 50*3.600e-04_r8,                             &
-       3.58e-04_r8, 3.54e-04_r8, 3.50e-04_r8, 3.41e-04_r8, 3.28e-04_r8, 3.11e-04_r8,       &
-       2.93e-04_r8, 2.75e-04_r8, 2.56e-04_r8, 2.37e-04_r8, 2.18e-04_r8, 1.99e-04_r8,       &
-       1.80e-04_r8, 1.61e-04_r8, 1.42e-04_r8, 1.24e-04_r8, 1.06e-04_r8/
-
-   data (co2cl(i), i=1,67)/                                              &
-       7.760162e+21_r8,6.043619e+21_r8,4.706775e+21_r8,3.665639e+21_r8,2.854802e+21_r8, &
-       2.223321e+21_r8,1.731524e+21_r8,1.348511e+21_r8,1.050221e+21_r8,8.179120e+20_r8, &
-       6.369897e+20_r8,4.960873e+20_r8,3.863524e+20_r8,3.008908e+20_r8,2.343332e+20_r8, &
-       1.824981e+20_r8,1.421289e+20_r8,1.106894e+20_r8,8.620418e+19_r8,6.713512e+19_r8, &
-       5.228412e+19_r8,4.071814e+19_r8,3.171055e+19_r8,2.469544e+19_r8,1.923206e+19_r8, &
-       1.497717e+19_r8,1.166347e+19_r8,9.082750e+18_r8,7.072886e+18_r8,5.507602e+18_r8, &
-       4.288557e+18_r8,3.339164e+18_r8,2.599777e+18_r8,2.023941e+18_r8,1.575480e+18_r8, &
-       1.226217e+18_r8,9.542118e+17_r8,7.423736e+17_r8,5.773939e+17_r8,4.489076e+17_r8, &
-       3.488423e+17_r8,2.709114e+17_r8,2.102188e+17_r8,1.629513e+17_r8,1.261393e+17_r8, &
-       9.747013e+16_r8,7.514254e+16_r8,5.775381e+16_r8,4.421144e+16_r8,3.366464e+16_r8, &
-       2.546953e+16_r8,1.913609e+16_r8,1.425730e+16_r8,1.052205e+16_r8,7.700499e+15_r8, &
-       5.596946e+15_r8,4.044901e+15_r8,2.905406e+15_r8,2.073209e+15_r8,1.469497e+15_r8, &
-       1.033831e+15_r8,7.212717e+14_r8,4.986668e+14_r8,3.415852e+14_r8,2.320320e+14_r8, &
-       1.565317e+14_r8,1.052353e+14_r8/
-
 
    data (ig(i),i=1,9)/-25,-12,-7,-3,-1,0,1,3,6/
 
@@ -1011,11 +970,18 @@ module nlte_fomichev
        1.6539e+05_r8, 8.6958e+05_r8, 9.0836e+04_r8, 1.1753e+06_r8, 8.8077e+04_r8,      &
       -5.4751e+06_r8,-7.6386e+05_r8, 1.2589e+06_r8, 2.1098e+04_r8/
 
+      real(r8) :: o3pxfac(pver)      ! o3p cooling masking factors on WACCM vertical grids
+
+      logical :: apply_co2_limit = .false.
+      integer :: k1mb = 0
+      
 !================================================================================================
 contains
 !================================================================================================
 
-  subroutine nlte_fomichev_init ( co2_mwi, n2_mwi, o1_mwi, o2_mwi, o3_mwi, no_mwi )
+  subroutine nlte_fomichev_init ( co2_mwi, n2_mwi, o1_mwi, o2_mwi, o3_mwi, no_mwi, apply_co2_limit_in )
+     use interpolate_data, only : lininterp
+     use ref_pres,         only : pref_edge, pref_mid
 
 !     
 !     Original version from Ray Roble
@@ -1038,8 +1004,28 @@ contains
     real(r8), intent(in) :: co2_mwi                     ! CO2 molecular weight
     real(r8), intent(in) :: n2_mwi                      ! N2 molecular weight
     real(r8), intent(in) :: no_mwi                      ! NO molecular weight
+    logical,  intent(in) :: apply_co2_limit_in
 
+    real(r8), parameter :: p0=5.e-5_r8 ! TIE-GCM reference pressure in Pa            
+    integer, parameter :: tgcmlevs = 29
+    real(r8) :: pz(tgcmlevs)           ! TIE-GCM pressure grids (single resolution,pz=-7...7,dpz=0.5 ), dimensionless 
+    real(r8) :: pp(tgcmlevs)           ! convert pz to Pascal  
+    real(r8) :: xfac0(tgcmlevs)        ! masking factors on TIE-GCM pressure grids
+    integer :: k
 
+    apply_co2_limit = apply_co2_limit_in
+    find_k1mb: do k = 1, pverp
+       ! Find 1 mbar (or 100 Pa) level.
+       if (pref_edge(k) > 100._r8) then
+          k1mb = k
+          exit find_k1mb
+       endif
+    end do find_k1mb
+    if (masterproc) then
+       write(iulog,'(a,l8)')  'nlte_fomichev_init: apply_co2_limit: ',apply_co2_limit
+       write(iulog,'(a,i6,g12.6)') 'nlte_fomichev_init: check CO2 mixing ratios above 1-mbar level: ',k1mb,pref_mid(k1mb)
+    endif
+    
 ! set molecular weights
     co2_mw = co2_mwi
     n2_mw = n2_mwi
@@ -1047,6 +1033,34 @@ contains
     o2_mw = o2_mwi
     o3_mw = o3_mwi
     no_mw = no_mwi
+
+    ktop_co2cool = 1
+    do k=1,pver
+       if (pref_mid(k) < ptop_co2cool) ktop_co2cool = k
+    enddo
+
+    ! op3cooling masking factor  (from Kockarts and Peetermans [1981]
+    xfac0(1:3)=.01_r8
+    xfac0(4:10)=(/.05_r8,.1_r8,.2_r8,.4_r8,.55_r8,.7_r8,.75_r8/)
+    xfac0(11:tgcmlevs) = .8_r8
+
+    ! convert TIE-GCM pressure grid to Pascal
+
+    pz(1)=-7.0_r8
+    do k=2,tgcmlevs
+       pz(k)=pz(k-1)+0.5_r8
+    enddo
+    do k=1,tgcmlevs
+       pp(k)=p0*exp(-pz(k))
+    enddo
+    call lininterp( xfac0(tgcmlevs:1:-1), pp(tgcmlevs:1:-1), tgcmlevs, o3pxfac, pref_mid, pver )
+    do k=1,pver
+       if (pref_mid(k) > pp(1)) then
+          o3pxfac(k)=0._r8
+       else if (pref_mid(k) <= pp(tgcmlevs)) then
+          o3pxfac(k)=xfac0(tgcmlevs)
+       endif
+    enddo
 
   end subroutine nlte_fomichev_init
 
@@ -1127,7 +1141,9 @@ contains
 
 !==================================================================================================
 
-      subroutine nlte_fomichev_calc (ncol,pmid,pint,t,xo2,xo,xo3,xn2,xco2,coolf)
+      subroutine nlte_fomichev_calc (lchnk,ncol,pmid,pint,t,xo2,xo,xo3,xn2,xco2,coolf,&
+                                     co2cool_out, o3cool_out, c2scool_out )
+         use time_manager,  only: get_nstep
 
 !
 !     author: F. Sassi (Dec, 1999)
@@ -1174,6 +1190,7 @@ implicit none
 
 !     Input variables
       integer, intent(in) :: ncol                          ! number of atmospheric columns
+      integer, intent(in) :: lchnk                         ! chunk identifier
 
       real(r8), intent(in) :: pmid(pcols,pver)             ! model pressure at mid-point
       real(r8), intent(in) :: pint(pcols,pverp)            ! model pressure at interfaces
@@ -1186,29 +1203,30 @@ implicit none
 
 !     Output variables
       real(r8), intent(out) :: coolf(pcols,pver)          ! Total cooling
-      
+      real(r8), intent(out) :: co2cool_out(pcols,pver)        ! CO2 cooling 
+      real(r8), intent(out) :: o3cool_out(pcols,pver)         ! O3 cooling
+      real(r8), intent(out) :: c2scool_out(pcols,pver)        ! Cooling to Space
+
 !    Local variables
       
-      real(r8) rmo2                        ! O2 molecular weight
-      real(r8) rmo                         ! O molecular weight
-      real(r8) rmn2                        ! N2 molecular weight
-      real(r8) rmco2                       ! CO2 molecular weight
-      real(r8) rmo3                        ! O3 molecular weight
-      real(r8) c81                         ! standard pressure
+      real(r8) rmo2                         ! O2 molecular weight
+      real(r8) rmo                          ! O molecular weight
+      real(r8) rmn2                         ! N2 molecular weight
+      real(r8) rmco2                        ! CO2 molecular weight
+      real(r8) rmo3                         ! O3 molecular weight
       real(r8) xnorm(pcols,pver)            ! normalized X p.s.h. at midpoints
       real(r8) xnori(pcols,pverp)           ! normalized X p.s.h. at interfaces
       real(r8) dxnorm(pcols,pver)           ! xnorm(k+1)-xnorm(k)
       real(r8) presm(pcols,pver)            ! pressure at midpoint (dyn/cm^2)
-      real(r8) presi(pcols,pverp)                ! pressure at interfaces (dyn/cm^2)
-      real(r8) dpi(pcols,pver)                   ! pressure diff. between interfaces (dyn/cm^2)
+      real(r8) presi(pcols,pverp)           ! pressure at interfaces (dyn/cm^2)
+      real(r8) dpi(pcols,pver)              ! pressure diff. between interfaces (dyn/cm^2)
       real(r8) mwair(pcols,pver)            ! mean air molecular weight (g/mole)
       real(r8) ndenair(pcols,pver)          ! mean air number density (cm**-3)
       real(r8) colco2(pcols,pver)           ! CO2 column number density
-      real(r8) s3                          ! convertion factor from mmr to molecules/cm**3
       real(r8) uco2(pcols,nrfm)             ! column CO2
-      real(r8) dummyg(pver)                ! dummy
-      real(r8) dummyx(pver)                ! dummy
-      real(r8) dummyf(nrfm)                ! dummy
+      real(r8) dummyg(pver)                 ! dummy
+      real(r8) dummyx(pver)                 ! dummy
+      real(r8) dummyf(nrfm)                 ! dummy
       real(r8) hco2(pcols,nrfm)             ! CO2 cooling in Fomichev grid
       real(r8) ho3(pcols,nrfm)              ! O3 cooling in Fomichev grid
       real(r8) tf(pcols,nrfm)               ! neutral temp interpolated to Fomichev grid
@@ -1225,17 +1243,11 @@ implicit none
       real(r8) vo3(pcols,pver)              ! O3 vmr
       real(r8) vn2(pcols,pver)              ! N2 vmr
       real(r8) vco2(pcols,pver)             ! CO2 vmr
-      real(r8) tt                           ! dummy
-      real(r8) y                            ! dummy
-      real(r8) zn2                          ! dummy
-      real(r8) zo2                          ! dummy
-      real(r8) zz                           ! dummy
       real(r8) co2cooln(pcols,pver)         ! CO2 cooling 
       real(r8) o3cooln(pcols,pver)          ! O3 cooling
       real(r8) hc2s(pcols,pver)             ! cool to space heating
       real(r8) ps0                          ! Reference (surface) pressure
       real(r8) ti(pcols,pver)               ! T(PVER:1:-1)
-      real(r8) dumsum
       real(r8) alam(pcols,nrfm)             ! LAMBDA
       real(r8) djm(pcols,nrfm)              ! DJM in recurrence formula
       real(r8) dj0(pcols,nrfm)              ! DJ0 in recurrence formula
@@ -1244,14 +1256,14 @@ implicit none
       real(r8) zhgt(pcols,pver)             ! approx. elevation in cm
       real(r8) grav(pcols,pver)             ! accelration of gravity in cm/s^2
       real(r8) :: wrk(pcols)
-      real(r8) phi
-      real(r8) factor                      ! dummy
       
       integer k
       integer i
       integer kinv                     ! inverted vertical index (bottom up)
-      integer ktop                     ! dummy index
-      integer kk
+      real(r8), parameter :: co2_limit = 720.e-6_r8
+      integer :: nstep
+      character(len=200) :: errmsg
+      real(r8) :: latdeg, londeg
 
 !----------------------------------------------------------------
 
@@ -1392,13 +1404,33 @@ implicit none
          kinv=pver-k+1
          do i=1,ncol
 !-----------------------------------------------------------------
-!     Convert mmr in vmr
+!     Convert mmr to vmr
 !-----------------------------------------------------------------
             vo2 (i,k) = xo2 (i,kinv) *mwair(i,k)/rmo2
             vo  (i,k) = xo  (i,kinv) *mwair(i,k)/rmo
             vo3 (i,k) = xo3 (i,kinv) *mwair(i,k)/rmo3
             vn2 (i,k) = xn2 (i,kinv) *mwair(i,k)/rmn2
             vco2(i,k) = xco2(i,kinv) *mwair(i,k)/rmco2
+
+! CGB - The Formichev scheme was not designed to support CO2 > 720 ppmv, so
+! limit the amount of CO2 used to 720 ppmv. This keeps the model stable, but
+! may yield an incorrect scientific result. It would be nice to extend this
+! routine to support higher CO2 values. Putting the limiter here means that
+! that the other constituents will have their proper mixing ratio caclulated
+! (i.e. the mwair is correct), but vco2 will be limited.  Abort the run if CO2
+! exceeds the limit at altitudes above 1 mbar unless apply_co2_limit=.true.
+
+            if ((vco2(i,k)>co2_limit).and.(.not.apply_co2_limit).and.(kinv<k1mb)) then
+               nstep = get_nstep()
+               latdeg = get_rlat_p(lchnk,i)*180._r8/pi
+               londeg = get_rlon_p(lchnk,i)*180._r8/pi
+               write(errmsg,fmt='(a,i12,2(i6),g12.4,2(f8.2),g12.4)') &
+                    'nlte_fomichev_calc: CO2 has exceeded the limit: nstep,i,k,press(Pa),lon,lat,vco2(vmr)=',&
+                    nstep,i,kinv, pmid(i,kinv), londeg, latdeg, vco2(i,k)
+               write(iulog,*) trim(errmsg)
+               call endrun(trim(errmsg))
+            endif
+
 !-----------------------------------------------------------------
 !     Calculate mean air number density ( cm^(-3) )
 !
@@ -1412,8 +1444,14 @@ implicit none
 !-----------------------------------------------------------------
             ndenair(i,k) = presm(i,k)/(akbl*t(i,kinv))
          enddo
+
       enddo
 
+      ! apply the CO2 limiter for all levels and columns
+      where ( vco2(:ncol,:) > co2_limit )
+         vco2(:ncol,:) = co2_limit
+      end where
+      
 !-----------------------------------------------------------------
 !     Calculate CO2 vertical column above each level
 !     
@@ -1467,75 +1505,50 @@ implicit none
 
       do i=1,ncol
 
-!     Temperature
-         tf(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
-         dummyg(1:pver)=ti(i,1:pver)
          dummyx(1:pver)=xnorm(i,1:pver)
+
+!     Temperature
+         dummyg(1:pver)=ti(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          tf(i,1:nrfm)=dummyf(1:nrfm)
 
 !     O3
-         vo3f(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=vo3(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          vo3f(i,1:nrfm)=dummyf(1:nrfm)
 
 !     O2
-         vo2f(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=vo2(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          vo2f(i,1:nrfm)=dummyf(1:nrfm)
 
 !     N2
-         vn2f(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=vn2(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          vn2f(i,1:nrfm)=dummyf(1:nrfm)
 
 !     O
-         vof(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=vo(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          vof(i,1:nrfm)=dummyf(1:nrfm)
          
 !     CO2
-         vco2f(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=vco2(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          vco2f(i,1:nrfm)=dummyf(1:nrfm)
 
 !     COLCO2
-         uco2(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=colco2(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          uco2(i,1:nrfm)=dummyf(1:nrfm)
 
 !     DEN
-         ndenf(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=ndenair(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          ndenf(i,1:nrfm)=dummyf(1:nrfm)
          
 !     AM
-         mwairf(i,1:nrfm)=0.0_r8
-         dummyf(1:nrfm)=0.0_r8
          dummyg(1:pver)=mwair(i,1:pver)
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (xr,dummyf,dummyx,dummyg,pver,nrfm)
          mwairf(i,1:nrfm)=dummyf(1:nrfm)
          
@@ -1552,20 +1565,15 @@ implicit none
 
 !     Interpolate from Fomichev grid to CCM grid
       do i=1,ncol
+         dummyx(1:pver)=xnorm(i,1:pver)
 
 !     HCO2
-         co2cooln(i,1:pver)=0.0_r8
          dummyf(1:nrfm)=hco2(i,1:nrfm)
-         dummyg(1:pver)=0.0_r8
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (dummyx,dummyg,xr,dummyf,nrfm,pver)
          co2cooln(i,1:pver)=dummyg(1:pver)
 
 !     HO3
-         o3cooln(i,1:pver)=0.0_r8
          dummyf(1:nrfm)=ho3(i,1:nrfm)
-         dummyg(1:pver)=0.0_r8
-         dummyx(1:pver)=xnorm(i,1:pver)
          call a18linvne (dummyx,dummyg,xr,dummyf,nrfm,pver)
          o3cooln(i,1:pver)=dummyg(1:pver)
 
@@ -1575,12 +1583,30 @@ implicit none
       call cool2space (ncol,ti,mwair,vn2,vo2,vo,vco2,ndenair,xnorm,flux,hc2s)
 
 !     Calculate total cooling
-      do  k=1,pver
+
+      ! Above ptop_co2cool use cool to space approx.
+      do k=1,ktop_co2cool-1
          kinv=pver-k+1
          do  i=1,ncol
-! Convert to J/kg/s
-            coolf(i,kinv) = (co2cooln(i,k) + o3cooln(i,k) + hc2s(i,k)) * 1.e-4_r8
+            ! Convert to J/kg/s
+            coolf(i,k) = (o3cooln(i,kinv) + hc2s(i,kinv)) * 1.e-4_r8
          enddo
+      enddo
+      ! Below ptop_co2cool use nlte calculation
+      do k=ktop_co2cool,pver
+         kinv=pver-k+1
+         do  i=1,ncol
+            ! Convert to J/kg/s
+            coolf(i,k) = (co2cooln(i,kinv) + o3cooln(i,kinv)) * 1.e-4_r8
+         enddo
+      enddo
+
+      ! diagnostics ...
+      do k=1,pver
+         kinv=pver-k+1
+         co2cool_out(:ncol,k) = co2cooln(:ncol,kinv) * 1.e-4_r8
+         o3cool_out(:ncol,k) = o3cooln(:ncol,kinv) * 1.e-4_r8
+         c2scool_out(:ncol,k) = hc2s(:ncol,kinv) * 1.e-4_r8
       enddo
 
       return
@@ -1625,19 +1651,19 @@ implicit none
 !     IF X(I) < XN(1) THEN Y(I)=YN(1)
 !     
 
-!     Input variables
-      integer imax
-      integer n
-      real(r8) y(imax)
-      real(r8) x(imax)
-      real(r8) xn(n)
-      real(r8) yn(n)
+!     Arguments
+      integer, intent(in) :: imax
+      integer, intent(in) :: n
+      real(r8), intent(out) :: y(imax)
+      real(r8), intent(in) :: x(imax)
+      real(r8), intent(in) :: xn(n)
+      real(r8), intent(in) :: yn(n)
 
-      integer i
 
 !     Local variables
       integer kk(imax)                 
       integer nn
+      integer i
 
 !     ****                                                               
 !     ****     Where:                                                    
@@ -1680,6 +1706,8 @@ implicit none
 !     ****     Perform interpolation prescribed above                    
 !     ****                                                               
 
+      y(:) = 0._r8
+      
       do i = 1,imax      
 
          if (kk(i).gt.0) then
@@ -2016,9 +2044,6 @@ implicit none
       real(r8) H2(pcols)
       real(r8) H3(pcols)
 
-      integer kk
-      integer km
-      integer ksc
       integer jj
       integer k
       integer i
@@ -2302,11 +2327,11 @@ real(r8) function a18lin (x,xn,yn,m,n)
       integer :: k,i
 
       k=m-1
-      do 1 i=m,n
-      k=k+1
-      if(x-xn(i)) 2,2,1
-    1 continue
-    2 if(k.eq.1) k=2
+      the_loop: do i=m,n
+         k=k+1
+         if (x-xn(i).le.0._r8) exit the_loop
+      enddo the_loop
+      if(k.eq.1) k=2
 
 ! k has been found so that xn(k).le.x.lt.xn(k+1)
 
@@ -2340,7 +2365,7 @@ real(r8) function a18lin (x,xn,yn,m,n)
 !
 ! Local:
       real(r8) :: a(150),e(150),f(150),h(150),h2,h1,f1,f2,f3,g
-      integer :: nvs,k,kr,l,i
+      integer :: nvs,k,kr,l
 !
       h2=x1(1)
       nvs=n1-1
@@ -2395,14 +2420,12 @@ real(r8) function a18lin (x,xn,yn,m,n)
 
 !==================================================================================================
 
-   subroutine nocooling(lchnk,ncol                      &
-        ,t,pmid,nommr,o1mmr,o2mmr,o3mmr,n2mmr,nocool)
+   subroutine nocooling(ncol,t,pmid,nommr,o1mmr,o2mmr,o3mmr,n2mmr,nocool)
 
 !
 ! Calculate NO cooling (ref: Kockarts, GRL, vol. 7, pp 137-140, 1980)
 !
 
-     integer, intent(in) :: lchnk                 ! chunck number
      integer, intent(in) :: ncol                  ! number of column in chunck
 
      real(r8), intent(in) :: t(pcols,pver)        ! neutral gas temperature (K)
@@ -2418,12 +2441,9 @@ real(r8) function a18lin (x,xn,yn,m,n)
 ! Local space
      real(r8) :: mwair(pcols,pver)                ! mean molecular weight
      real(r8) :: pres_cgs(pcols,pver)             ! pressure in cgs units
-     real(r8) :: cp(pcols,pver)                   ! specific heat at constant pressure (ergs/g/K)
      real(r8) :: nair(pcols,pver)                 ! mean air number density (molecules/cm3)
      real(r8) :: o1vmr(pcols,pver)                ! O (vmr)
      real(r8) :: o2vmr(pcols,pver)                ! O2 (vmr)
-     real(r8) :: o3vmr(pcols,pver)                ! O3 (vmr)
-     real(r8) :: n2vmr(pcols,pver)                ! N2 (vmr)
      real(r8) :: no_conc                          ! NO concentration divided by mean air density
      real(r8) :: no_deact                         ! effective NO deactivation rate multiplied by air concentration
 
@@ -2448,15 +2468,10 @@ real(r8) function a18lin (x,xn,yn,m,n)
 ! convert mmr to vmr
            o1vmr(i,k) = o1mmr(i,k) * mwair(i,k) / o1_mw
            o2vmr(i,k) = o2mmr(i,k) * mwair(i,k) / o2_mw
-           o3vmr(i,k) = o3mmr(i,k) * mwair(i,k) / o3_mw
-           n2vmr(i,k) = n2mmr(i,k) * mwair(i,k) / n2_mw
 ! Convert pressure to cgs units
            pres_cgs(i,k) = pmid(i,k) * 10._r8
 ! calculate mean air number density
            nair(i,k) = anav * pres_cgs(i,k) / (ur*t(i,k)) 
-! Calculate specific heat at constant pressure
-           cp(i,k)= 0.5_r8 * ur *             &
-                (7._r8* o2vmr(i,k) / o2_mw + 7._r8* n2vmr(i,k) / n2_mw + 5._r8* (o1vmr(i,k)+o3vmr(i,k)) / o1_mw )
         end do
      end do
 
@@ -2495,5 +2510,48 @@ real(r8) function a18lin (x,xn,yn,m,n)
 !
    end subroutine nocooling
 
+!==================================================================================================
+
+   subroutine o3pcooling( ncol, t, o1mmr, o3pcool )
+     !
+     ! Adapted from TIE-GCM 
+     ! Original equation is from Bates [1951]
+     ! Masking factors are from Kockarts and Peetermans [1981]
+     !
+     
+     integer, intent(in) :: ncol                  ! number of column in chunck
+
+     real(r8), intent(in) :: t(pcols,pver)        ! neutral gas temperature (K)
+     real(r8), intent(in) :: o1mmr(pcols,pver)    ! O (in mmr)
+
+     real(r8), intent(out) :: o3pcool(pcols,pver)  ! O(3p)-cooling (K/S)
+
+     ! Local space
+
+     integer  :: i,k
+     real(r8) :: invtemp(ncol,pver)
+     real(r8) :: work1(ncol,pver)             
+     real(r8) :: work2(ncol,pver)            
+     real(r8) :: anavfac
+
+     real(r8),parameter :: &
+          an(3) = (/0.835E-18_r8, 0.6_r8, 0.2_r8/), &  
+          bn(3) = (/228._r8,228._r8,325._r8/)      ! coefficients in Bates equation
+
+     invtemp(:ncol,:) = 1.0_r8/t(:ncol,:)
+     anavfac = anav/o1_mw
+
+     do k=1,pver
+        do i=1,ncol
+           work1(i,k) = an(1)*o3pxfac(k)*anavfac
+           work1(i,k) = work1(i,k)*o1mmr(i,k)*exp(-bn(1)*invtemp(i,k))
+           work2(i,k) = 1._r8 + an(2)*exp(-bn(2)*invtemp(i,k)) &
+                              + an(3)*exp(-bn(3)*invtemp(i,k))
+           o3pcool(i,k) = -work1(i,k)/work2(i,k)   ! erg/g/s
+           o3pcool(i,k) = o3pcool(i,k) * 1E-04_r8  ! convert units from erg/g/s to J/kg/s
+        enddo
+     enddo
+
+   end subroutine o3pcooling
 
 end module nlte_fomichev

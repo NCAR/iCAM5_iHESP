@@ -1,50 +1,47 @@
 module camsrfexch
-!-----------------------------------------------------------------------
-!
-! Module to handle data that is exchanged between the CAM atmosphere
-! model and the surface models (land, sea-ice, and ocean).
-!
-!-----------------------------------------------------------------------
-!
-! USES:
-!
-  use shr_kind_mod,  only: r8 => shr_kind_r8, r4 => shr_kind_r4
-  use constituents,  only: pcnst
-  use ppgrid,        only: pcols, begchunk, endchunk
-  use phys_grid,     only: get_ncols_p, phys_grid_initialized
-  use infnan,        only: posinf, assignment(=)
-  use cam_abortutils,only: endrun
-  use cam_logfile,   only: iulog
+
+  !-----------------------------------------------------------------------
+  ! Module to handle data that is exchanged between the CAM atmosphere
+  ! model and the surface models (land, sea-ice, and ocean).
+  !-----------------------------------------------------------------------
+
+  use shr_kind_mod,    only: r8 => shr_kind_r8, r4 => shr_kind_r4
+  use constituents,    only: pcnst
+  use ppgrid,          only: pcols, begchunk, endchunk
+  use phys_grid,       only: get_ncols_p, phys_grid_initialized
+  use infnan,          only: posinf, assignment(=)
+  use cam_abortutils,  only: endrun
+  use cam_logfile,     only: iulog
+  use srf_field_check, only: active_Sl_ram1, active_Sl_fv, active_Sl_soilw,                &
+                             active_Fall_flxdst1, active_Fall_flxvoc, active_Fall_flxfire, &
+                             active_Faxa_nhx, active_Faxa_noy
+
+
 
   implicit none
+  private
 
-!----------------------------------------------------------------------- 
-! PRIVATE: Make default data and interfaces private
-!----------------------------------------------------------------------- 
-  private     ! By default all data is private to this module
-!
-! Public interfaces
-!
+  ! Public interfaces
   public atm2hub_alloc              ! Atmosphere to surface data allocation method
   public hub2atm_alloc              ! Merged hub surface to atmosphere data allocation method
   public atm2hub_deallocate
   public hub2atm_deallocate
   public cam_export
-!
-! Public data types
-!
+
+  ! Public data types
   public cam_out_t                  ! Data from atmosphere
   public cam_in_t                   ! Merged surface data
 
-!---------------------------------------------------------------------------
-! This is the data that is sent from the atmosphere to the surface models
-!---------------------------------------------------------------------------
+  !---------------------------------------------------------------------------
+  ! This is the data that is sent from the atmosphere to the surface models
+  !---------------------------------------------------------------------------
 
   type cam_out_t 
      integer  :: lchnk               ! chunk index
      integer  :: ncol                ! number of columns in chunk
      real(r8) :: tbot(pcols)         ! bot level temperature
      real(r8) :: zbot(pcols)         ! bot level height above surface
+     real(r8) :: topo(pcols)         ! surface topographic height (m)
      real(r8) :: ubot(pcols)         ! bot level u wind
      real(r8) :: vbot(pcols)         ! bot level v wind
      real(r8) :: qbot(pcols,pcnst)   ! bot level specific humidity
@@ -78,24 +75,34 @@ module camsrfexch
      real(r8) :: dstdry3(pcols)      ! dry deposition of dust (bin3)
      real(r8) :: dstwet4(pcols)      ! wet deposition of dust (bin4)
      real(r8) :: dstdry4(pcols)      ! dry deposition of dust (bin4)
+     real(r8), pointer, dimension(:) :: nhx_nitrogen_flx ! nitrogen deposition fluxes (kgN/m2/s)
+     real(r8), pointer, dimension(:) :: noy_nitrogen_flx ! nitrogen deposition fluxes (kgN/m2/s)
      !water tracers/isotopes:
-     real(r8) :: precrl_16O(pcols)   !Large-scale rain
-     real(r8) :: precrl_HDO(pcols)
-     real(r8) :: precrl_18O(pcols)
-     real(r8) :: precsl_16O(pcols)   !Large-scale snow
-     real(r8) :: precsl_HDO(pcols)
-     real(r8) :: precsl_18O(pcols)
-     real(r8) :: precrc_16O(pcols)   !Convective rain
-     real(r8) :: precrc_HDO(pcols)
-     real(r8) :: precrc_18O(pcols)   
-     real(r8) :: precsc_16O(pcols)   !Convective snow
-     real(r8) :: precsc_HDO(pcols)
-     real(r8) :: precsc_18O(pcols)
+     real(r8),allocatable :: precrl_16O(:)   !Large-scale rain
+     real(r8),allocatable :: precrl_HDO(:)
+     real(r8),allocatable :: precrl_18O(:)
+     real(r8),allocatable :: precrl_17O(:)
+     real(r8),allocatable :: precrl_HTO(:)
+     real(r8),allocatable :: precsl_16O(:)   !Large-scale snow
+     real(r8),allocatable :: precsl_HDO(:)
+     real(r8),allocatable :: precsl_18O(:)
+     real(r8),allocatable :: precsl_17O(:)
+     real(r8),allocatable :: precsl_HTO(:)
+     real(r8),allocatable :: precrc_16O(:)   !Convective rain
+     real(r8),allocatable :: precrc_HDO(:)
+     real(r8),allocatable :: precrc_18O(:)
+     real(r8),allocatable :: precrc_17O(:)
+     real(r8),allocatable :: precrc_HTO(:)
+     real(r8),allocatable :: precsc_16O(:)   !Convective snow
+     real(r8),allocatable :: precsc_HDO(:)
+     real(r8),allocatable :: precsc_18O(:)
+     real(r8),allocatable :: precsc_17O(:)
+     real(r8),allocatable :: precsc_HTO(:)
   end type cam_out_t 
 
-!---------------------------------------------------------------------------
-! This is the merged state of sea-ice, land and ocean surface parameterizations
-!---------------------------------------------------------------------------
+  !---------------------------------------------------------------------------
+  ! This is the merged state of sea-ice, land and ocean surface parameterizations
+  !---------------------------------------------------------------------------
 
   type cam_in_t    
      integer  :: lchnk                   ! chunk index
@@ -122,67 +129,48 @@ module camsrfexch
      real(r8) :: landfrac(pcols)         ! land area fraction
      real(r8) :: icefrac(pcols)          ! sea-ice areal fraction
      real(r8) :: ocnfrac(pcols)          ! ocean areal fraction
-     real(r8), pointer, dimension(:) :: ram1  !aerodynamical resistance (s/m) (pcols)
-     real(r8), pointer, dimension(:) :: fv    !friction velocity (m/s) (pcols)
-     real(r8), pointer, dimension(:) :: soilw !volumetric soil water (m3/m3)
      real(r8) :: cflx(pcols,pcnst)       ! constituent flux (emissions)
      real(r8) :: ustar(pcols)            ! atm/ocn saved version of ustar
      real(r8) :: re(pcols)               ! atm/ocn saved version of re
      real(r8) :: ssq(pcols)              ! atm/ocn saved version of ssq
+     real(r8), pointer, dimension(:)   :: ram1  !aerodynamical resistance (s/m) (pcols)
+     real(r8), pointer, dimension(:)   :: fv    !friction velocity (m/s) (pcols)
+     real(r8), pointer, dimension(:)   :: soilw !volumetric soil water (m3/m3)
      real(r8), pointer, dimension(:,:) :: depvel ! deposition velocities
      real(r8), pointer, dimension(:,:) :: dstflx ! dust fluxes
      real(r8), pointer, dimension(:,:) :: meganflx ! MEGAN fluxes
-     !simple land model:
-     real(r8) :: buckH(pcols)        !bulk water bucket mass
-     real(r8) :: buck16(pcols)       !isotopic water bucket masses
-     real(r8) :: buckD(pcols)
-     real(r8) :: buck18(pcols)
+     real(r8), pointer, dimension(:,:) :: fireflx ! wild fire emissions
+     real(r8), pointer, dimension(:)   :: fireztop ! wild fire emissions vert distribution top
+
   end type cam_in_t    
 
 !===============================================================================
 CONTAINS
 !===============================================================================
 
-!----------------------------------------------------------------------- 
-! 
-! BOP
-!
-! !IROUTINE: hub2atm_alloc
-!
-! !DESCRIPTION:
-!
-!   Allocate space for the surface to atmosphere data type. And initialize
-!   the values.
-! 
-!-----------------------------------------------------------------------
-!
-! !INTERFACE
-!
   subroutine hub2atm_alloc( cam_in )
-    use seq_drydep_mod,  only: lnd_drydep, n_drydep
-    use cam_cpl_indices, only: index_x2a_Sl_ram1, index_x2a_Sl_fv, index_x2a_Sl_soilw, index_x2a_Fall_flxdst1
-    use cam_cpl_indices, only: index_x2a_Fall_flxvoc
-    use shr_megan_mod,   only: shr_megan_mechcomps_n
 
-   use water_tracer_vars, only: wtrc_srf_bucket_mode
-!
-!!ARGUMENTS:
-!
-   type(cam_in_t), pointer ::  cam_in(:)     ! Merged surface state
-!
-!!LOCAL VARIABLES:
-!
+    ! Allocate space for the surface to atmosphere data type. And initialize
+    ! the values.
+
+    use seq_drydep_mod,  only: lnd_drydep, n_drydep
+    use shr_megan_mod,   only: shr_megan_mechcomps_n
+    use shr_fire_emis_mod,only: shr_fire_emis_mechcomps_n
+
+    ! ARGUMENTS:
+    type(cam_in_t), pointer ::  cam_in(:)     ! Merged surface state
+
+    ! LOCAL VARIABLES:
     integer :: c        ! chunk index
     integer :: ierror   ! Error code
-!----------------------------------------------------------------------- 
-! 
-! EOP
-!
-    if ( .not. phys_grid_initialized() ) call endrun( "HUB2ATM_ALLOC error: phys_grid not called yet" )
+    character(len=*), parameter :: sub = 'hub2atm_alloc'
+    !----------------------------------------------------------------------- 
+
+    if ( .not. phys_grid_initialized() ) call endrun(sub//": phys_grid not called yet")
     allocate (cam_in(begchunk:endchunk), stat=ierror)
     if ( ierror /= 0 )then
-      write(iulog,*) 'Allocation error: ', ierror
-      call endrun('HUB2ATM_ALLOC error: allocation error')
+      write(iulog,*) sub//': Allocation error: ', ierror
+      call endrun(sub//': allocation error')
     end if
 
     do c = begchunk,endchunk
@@ -192,36 +180,47 @@ CONTAINS
        nullify(cam_in(c)%depvel)
        nullify(cam_in(c)%dstflx)
        nullify(cam_in(c)%meganflx)
+       nullify(cam_in(c)%fireflx)
+       nullify(cam_in(c)%fireztop)
     enddo  
     do c = begchunk,endchunk 
-       if (index_x2a_Sl_ram1>0) then
+       if (active_Sl_ram1) then
           allocate (cam_in(c)%ram1(pcols), stat=ierror)
-          if ( ierror /= 0 ) call endrun('HUB2ATM_ALLOC error: allocation error ram1')
+          if ( ierror /= 0 ) call endrun(sub//': allocation error ram1')
        endif
-       if (index_x2a_Sl_fv>0) then
+       if (active_Sl_fv) then
           allocate (cam_in(c)%fv(pcols), stat=ierror)
-          if ( ierror /= 0 ) call endrun('HUB2ATM_ALLOC error: allocation error fv')
+          if ( ierror /= 0 ) call endrun(sub//': allocation error fv')
        endif
-       if (index_x2a_Sl_soilw /= 0) then
+       if (active_Sl_soilw) then
           allocate (cam_in(c)%soilw(pcols), stat=ierror)
-          if ( ierror /= 0 ) call endrun('HUB2ATM_ALLOC error: allocation error soilw')
+          if ( ierror /= 0 ) call endrun(sub//': allocation error soilw')
        end if
-       if (index_x2a_Fall_flxdst1>0) then
+       if (active_Fall_flxdst1) then
           ! Assume 4 bins from surface model ....
           allocate (cam_in(c)%dstflx(pcols,4), stat=ierror)
-          if ( ierror /= 0 ) call endrun('HUB2ATM_ALLOC error: allocation error dstflx')
+          if ( ierror /= 0 ) call endrun(sub//': allocation error dstflx')
        endif
-       if ( index_x2a_Fall_flxvoc>0 .and. shr_megan_mechcomps_n>0 ) then
+       if (active_Fall_flxvoc .and. shr_megan_mechcomps_n>0) then
           allocate (cam_in(c)%meganflx(pcols,shr_megan_mechcomps_n), stat=ierror)
-          if ( ierror /= 0 ) call endrun('HUB2ATM_ALLOC error: allocation error meganflx')
+          if ( ierror /= 0 ) call endrun(sub//': allocation error meganflx')
        endif
     end do
 
     if (lnd_drydep .and. n_drydep>0) then
        do c = begchunk,endchunk 
           allocate (cam_in(c)%depvel(pcols,n_drydep), stat=ierror)
-          if ( ierror /= 0 ) call endrun('HUB2ATM_ALLOC error: allocation error depvel')
+          if ( ierror /= 0 ) call endrun(sub//': allocation error depvel')
        end do
+    endif
+
+    if (active_Fall_flxfire .and. shr_fire_emis_mechcomps_n>0) then
+       do c = begchunk,endchunk 
+          allocate(cam_in(c)%fireflx(pcols,shr_fire_emis_mechcomps_n), stat=ierror)
+          if ( ierror /= 0 ) call endrun(sub//': allocation error fireflx')
+          allocate(cam_in(c)%fireztop(pcols), stat=ierror)
+          if ( ierror /= 0 ) call endrun(sub//': allocation error fireztop')
+       enddo
     endif
 
     do c = begchunk,endchunk
@@ -268,57 +267,143 @@ CONTAINS
        if (lnd_drydep .and. n_drydep>0) then
           cam_in(c)%depvel (:,:) = 0._r8
        endif
-       !For simple land model:
-       if ( wtrc_srf_bucket_mode ) then
-          cam_in(c)%buckH(:)    = 0.021_r8 !initalize as half-full bucket
-          cam_in(c)%buck16(:)   = 0.021_r8
-          cam_in(c)%buckD(:)    = 0.021_r8
-          cam_in(c)%buck18(:)   = 0.021_r8
-       end if
+       if (active_Fall_flxfire .and. shr_fire_emis_mechcomps_n>0) then
+          cam_in(c)%fireflx(:,:) = 0._r8
+          cam_in(c)%fireztop(:) = 0._r8
+       endif
+
     end do
 
   end subroutine hub2atm_alloc
 
-!
-!===============================================================================
-!
+  !===============================================================================
 
-!----------------------------------------------------------------------- 
-! 
-! BOP
-!
-! !IROUTINE: atm2hub_alloc
-!
-! !DESCRIPTION:
-!
-!   Allocate space for the atmosphere to surface data type. And initialize
-!   the values.
-! 
-!-----------------------------------------------------------------------
-!
-! !INTERFACE
-!
   subroutine atm2hub_alloc( cam_out )
-!
-!!USES:
-   use water_tracer_vars, only: wtrc_srf_bucket_mode
-!
-!
-!!ARGUMENTS:
-!
-   type(cam_out_t), pointer :: cam_out(:)    ! Atmosphere to surface input
-!
-!!LOCAL VARIABLES:
-!
+
+    use water_tracer_vars,  only: trace_water
+
+    ! Allocate space for the atmosphere to surface data type. And initialize
+    ! the values.
+
+    ! ARGUMENTS:
+    type(cam_out_t), pointer :: cam_out(:)    ! Atmosphere to surface input
+
+    ! LOCAL VARIABLES:
     integer :: c            ! chunk index
     integer :: ierror       ! Error code
+    character(len=*), parameter :: sub = 'atm2hub_alloc'
     !----------------------------------------------------------------------- 
 
-    if ( .not. phys_grid_initialized() ) call endrun( "ATM2HUB_ALLOC error: phys_grid not called yet" )
+    if (.not. phys_grid_initialized()) call endrun(sub//": phys_grid not called yet")
     allocate (cam_out(begchunk:endchunk), stat=ierror)
     if ( ierror /= 0 )then
-      write(iulog,*) 'Allocation error: ', ierror
-      call endrun('ATM2HUB_ALLOC error: allocation error')
+      write(iulog,*) sub//': Allocation error: ', ierror
+      call endrun(sub//': allocation error: cam_out')
+    end if
+
+    if (trace_water) then
+     do c = begchunk,endchunk
+       allocate(cam_out(c)%precrl_16O(pcols), stat=ierror)   !Large-scale rain
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrl_HDO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrl_18O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrl_17O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrl_HTO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsl_16O(pcols), stat=ierror)   !Large-scale snow
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsl_HDO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsl_18O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsl_17O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsl_HTO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrc_16O(pcols), stat=ierror)   !Convective rain
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrc_HDO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrc_18O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrc_17O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precrc_HTO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsc_16O(pcols), stat=ierror)   !Convective snow
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsc_HDO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsc_18O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsc_17O(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+       allocate(cam_out(c)%precsc_HTO(pcols), stat=ierror)
+       if ( ierror /= 0 )then
+         write(iulog,*) 'Allocation error: ', ierror
+         call endrun('ATM2HUB_ALLOC error: allocation error')
+       end if
+     end do
     end if
 
     do c = begchunk,endchunk
@@ -326,6 +411,7 @@ CONTAINS
        cam_out(c)%ncol        = get_ncols_p(c)
        cam_out(c)%tbot(:)     = 0._r8
        cam_out(c)%zbot(:)     = 0._r8
+       cam_out(c)%topo(:)     = 0._r8
        cam_out(c)%ubot(:)     = 0._r8
        cam_out(c)%vbot(:)     = 0._r8
        cam_out(c)%qbot(:,:)   = 0._r8
@@ -359,34 +445,68 @@ CONTAINS
        cam_out(c)%dstwet3(:)  = 0._r8
        cam_out(c)%dstdry4(:)  = 0._r8
        cam_out(c)%dstwet4(:)  = 0._r8
+
        !water tracers/isotopes:
        cam_out(c)%precrl_16O  = 0._r8
        cam_out(c)%precrl_HDO  = 0._r8
        cam_out(c)%precrl_18O  = 0._r8
+       cam_out(c)%precrl_17O  = 0._r8
+       cam_out(c)%precrl_HTO  = 0._r8
        cam_out(c)%precsl_16O  = 0._r8
        cam_out(c)%precsl_HDO  = 0._r8
        cam_out(c)%precsl_18O  = 0._r8
+       cam_out(c)%precsl_17O  = 0._r8
+       cam_out(c)%precsl_HTO  = 0._r8
        cam_out(c)%precrc_16O  = 0._r8
        cam_out(c)%precrc_HDO  = 0._r8
        cam_out(c)%precrc_18O  = 0._r8
+       cam_out(c)%precrc_17O  = 0._r8
+       cam_out(c)%precrc_HTO  = 0._r8
        cam_out(c)%precsc_16O  = 0._r8
        cam_out(c)%precsc_HDO  = 0._r8
        cam_out(c)%precsc_18O  = 0._r8
+       cam_out(c)%precrc_17O  = 0._r8
+       cam_out(c)%precrc_HTO  = 0._r8
+
+       nullify(cam_out(c)%nhx_nitrogen_flx)
+       nullify(cam_out(c)%noy_nitrogen_flx)
+
+       if (active_Faxa_nhx) then
+          allocate (cam_out(c)%nhx_nitrogen_flx(pcols), stat=ierror)
+          if ( ierror /= 0 ) call endrun(sub//': allocation error nhx_nitrogen_flx')
+          cam_out(c)%nhx_nitrogen_flx(:) = 0._r8
+       endif
+       if (active_Faxa_noy) then
+          allocate (cam_out(c)%noy_nitrogen_flx(pcols), stat=ierror)
+          if ( ierror /= 0 ) call endrun(sub//': allocation error noy_nitrogen_flx')
+          cam_out(c)%noy_nitrogen_flx(:) = 0._r8
+       endif
     end do
 
   end subroutine atm2hub_alloc
 
+  !===============================================================================
+
   subroutine atm2hub_deallocate(cam_out)
+
     type(cam_out_t), pointer :: cam_out(:)    ! Atmosphere to surface input
+    !----------------------------------------------------------------------- 
+
     if(associated(cam_out)) then
        deallocate(cam_out)
     end if
     nullify(cam_out)
 
   end subroutine atm2hub_deallocate
+
+  !===============================================================================
+
   subroutine hub2atm_deallocate(cam_in)
+
     type(cam_in_t), pointer :: cam_in(:)    ! Atmosphere to surface input
+
     integer :: c
+    !----------------------------------------------------------------------- 
 
     if(associated(cam_in)) then
        do c=begchunk,endchunk
@@ -428,48 +548,40 @@ CONTAINS
 
 subroutine cam_export(state,cam_out,pbuf)
 
-!----------------------------------------------------------------------- 
-! 
-! Purpose: 
-! Transfer atmospheric fields into necessary surface data structures
-! 
-! Author: L. Bath  CMS Contact: M. Vertenstein
-! 
-!-----------------------------------------------------------------------
+   ! Transfer atmospheric fields into necessary surface data structures
+
    use physics_types,    only: physics_state
    use ppgrid,           only: pver
    use cam_history,      only: outfld
-   use comsrf,           only: psm1, srfrpdel, prcsnw
    use chem_surfvals,    only: chem_surfvals_get
    use co2_cycle,        only: co2_transport, c_i
-   use physconst,        only: mwdry, mwco2
+   use physconst,        only: rair, mwdry, mwco2, gravit
    use constituents,     only: pcnst
-   use cam_control_mod,  only: rair
    use physics_buffer,   only: pbuf_get_index, pbuf_get_field, physics_buffer_desc
    !water tracers:
    use water_tracer_vars,only: trace_water, wtrc_srfpcp_indices, wtrc_nwset, wtrc_iatype,&
                                iwspec
    use water_types,      only: iwtstrain, iwtstsnow, iwtcvrain, iwtcvsnow
-   use water_isotopes,   only: isph2o, isph216o, isphdo, isph218o
+   use water_isotopes,   only: isph2o, isph216o, isphdo, isph218o, isph217o, isphto
+
    implicit none
 
-   !------------------------------Arguments--------------------------------
-   !
    ! Input arguments
-   !
    type(physics_state),  intent(in)    :: state
    type (cam_out_t),     intent(inout) :: cam_out
    type(physics_buffer_desc), pointer  :: pbuf(:)
 
-   !
-   !---------------------------Local variables-----------------------------
-   !
+   ! Local variables
+
    integer :: i              ! Longitude index
    integer :: m              ! constituent index
    integer :: lchnk          ! Chunk index
    integer :: ncol
+   integer :: psl_idx
    integer :: prec_dp_idx, snow_dp_idx, prec_sh_idx, snow_sh_idx
    integer :: prec_sed_idx,snow_sed_idx,prec_pcw_idx,snow_pcw_idx
+
+   real(r8), pointer :: psl(:)
 
    real(r8), pointer :: prec_dp(:)                 ! total precipitation   from ZM convection
    real(r8), pointer :: snow_dp(:)                 ! snow from ZM   convection
@@ -480,22 +592,30 @@ subroutine cam_export(state,cam_out,pbuf)
    real(r8), pointer :: prec_pcw(:)                ! total precipitation   from Hack convection
    real(r8), pointer :: snow_pcw(:)                ! snow from Hack   convection
    !water tracers/isotopes:
-   logical           :: exist16, existD, exist18   !logicals that determine whether or not species exists in run.
-   logical           :: pass16, passD, pass18      !logicals that prevent the passing of water tag infromation to iCLM4.
+   logical           :: exist16, existD, exist18, exist17, existT !logicals that determine whether or not species exists in run.
+   logical           :: pass16, passD, pass18, pass17, passT      !logicals that prevent the passing of water tag infromation to iCLM4.
    real(r8), pointer :: precrl_16O(:)
    real(r8), pointer :: precrl_HDO(:)
    real(r8), pointer :: precrl_18O(:)
+   real(r8), pointer :: precrl_17O(:)
+   real(r8), pointer :: precrl_HTO(:)
    real(r8), pointer :: precsl_16O(:)
    real(r8), pointer :: precsl_HDO(:)
    real(r8), pointer :: precsl_18O(:)
+   real(r8), pointer :: precsl_17O(:)
+   real(r8), pointer :: precsl_HTO(:)
    real(r8), pointer :: precrc_16O(:)
    real(r8), pointer :: precrc_HDO(:)
    real(r8), pointer :: precrc_18O(:)
+   real(r8), pointer :: precrc_17O(:)
+   real(r8), pointer :: precrc_HTO(:)
    real(r8), pointer :: precsc_16O(:)
    real(r8), pointer :: precsc_HDO(:)
    real(r8), pointer :: precsc_18O(:)
+   real(r8), pointer :: precsc_17O(:)
+   real(r8), pointer :: precsc_HTO(:)
 
-   !NOTE:  This water tracer code can currently only handle three water tracers/isotopes.
+   !NOTE:  This water tracer code can currently only handle five water tracers/isotopes.
    !It might be beneficial in the future to make this setup more flexible, with
    !a few variables containing all of the needed data [e.g., prec(n), where n is the
    !number of water tracers or isotopes]. - JN.
@@ -505,23 +625,42 @@ subroutine cam_export(state,cam_out,pbuf)
    lchnk = state%lchnk
    ncol  = state%ncol
 
-   prec_dp_idx = pbuf_get_index('PREC_DP')
-   snow_dp_idx = pbuf_get_index('SNOW_DP')
-   prec_sh_idx = pbuf_get_index('PREC_SH')
-   snow_sh_idx = pbuf_get_index('SNOW_SH')
-   prec_sed_idx = pbuf_get_index('PREC_SED')
-   snow_sed_idx = pbuf_get_index('SNOW_SED')
-   prec_pcw_idx = pbuf_get_index('PREC_PCW')
-   snow_pcw_idx = pbuf_get_index('SNOW_PCW')
+   psl_idx = pbuf_get_index('PSL')
+   call pbuf_get_field(pbuf, psl_idx, psl)
 
-   call pbuf_get_field(pbuf, prec_dp_idx, prec_dp)
-   call pbuf_get_field(pbuf, snow_dp_idx, snow_dp)
-   call pbuf_get_field(pbuf, prec_sh_idx, prec_sh)
-   call pbuf_get_field(pbuf, snow_sh_idx, snow_sh)
-   call pbuf_get_field(pbuf, prec_sed_idx, prec_sed)
-   call pbuf_get_field(pbuf, snow_sed_idx, snow_sed)
-   call pbuf_get_field(pbuf, prec_pcw_idx, prec_pcw)
-   call pbuf_get_field(pbuf, snow_pcw_idx, snow_pcw)
+   prec_dp_idx = pbuf_get_index('PREC_DP', errcode=i)
+   snow_dp_idx = pbuf_get_index('SNOW_DP', errcode=i)
+   prec_sh_idx = pbuf_get_index('PREC_SH', errcode=i)
+   snow_sh_idx = pbuf_get_index('SNOW_SH', errcode=i)
+   prec_sed_idx = pbuf_get_index('PREC_SED', errcode=i)
+   snow_sed_idx = pbuf_get_index('SNOW_SED', errcode=i)
+   prec_pcw_idx = pbuf_get_index('PREC_PCW', errcode=i)
+   snow_pcw_idx = pbuf_get_index('SNOW_PCW', errcode=i)
+
+   if (prec_dp_idx > 0) then
+     call pbuf_get_field(pbuf, prec_dp_idx, prec_dp)
+   end if
+   if (snow_dp_idx > 0) then
+     call pbuf_get_field(pbuf, snow_dp_idx, snow_dp)
+   end if
+   if (prec_sh_idx > 0) then
+     call pbuf_get_field(pbuf, prec_sh_idx, prec_sh)
+   end if
+   if (snow_sh_idx > 0) then
+     call pbuf_get_field(pbuf, snow_sh_idx, snow_sh)
+   end if
+   if (prec_sed_idx > 0) then
+     call pbuf_get_field(pbuf, prec_sed_idx, prec_sed)
+   end if
+   if (snow_sed_idx > 0) then
+     call pbuf_get_field(pbuf, snow_sed_idx, snow_sed)
+   end if
+   if (prec_pcw_idx > 0) then
+     call pbuf_get_field(pbuf, prec_pcw_idx, prec_pcw)
+   end if
+   if (snow_pcw_idx > 0) then
+     call pbuf_get_field(pbuf, snow_pcw_idx, snow_pcw)
+   end if
 
   !water tracers/isotopes:
   !----------------------
@@ -529,13 +668,16 @@ subroutine cam_export(state,cam_out,pbuf)
      exist16 = .false. !Initalize logicals
      existD  = .false.
      exist18 = .false.
+     exist17 = .false.
+     existT  = .false.
      pass16  = .true.
      passD   = .true.
      pass18  = .true.
+     pass17  = .true.
+     passT   = .true.
      do m=1, wtrc_nwset !loop over water tracer precip.
        select case(iwspec(wtrc_iatype(m,iwtstrain))) !determine water species
-         case(isph2o) !H2O
-         !Do nothing. This call may not be needed... -JN
+         !Do nothing for H2O, so start with H216O.
          case(isph216o) !H216O 
            if(pass16) then !first call for H216O?
              exist16 = .true.
@@ -563,6 +705,24 @@ subroutine cam_export(state,cam_out,pbuf)
              call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtcvsnow,m), precsc_18O)
              pass18 = .false.
            end if
+         case(isph217o) !H218O
+           if(pass17) then !first call for H217O?
+             exist17 = .true.
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtstrain,m), precrl_17O)
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtstsnow,m), precsl_17O)
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtcvrain,m), precrc_17O)
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtcvsnow,m), precsc_17O)
+             pass17 = .false.
+           end if
+         case(isphto) !HT16O
+           if(passT) then !first call for HTO?
+             existT = .true.
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtstrain,m), precrl_HTO)
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtstsnow,m), precsl_HTO)
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtcvrain,m), precrc_HTO)
+             call pbuf_get_field(pbuf,wtrc_srfpcp_indices(iwtcvsnow,m), precsc_HTO)
+             passT = .false.
+           end if
        end select
      end do
    end if
@@ -572,12 +732,12 @@ subroutine cam_export(state,cam_out,pbuf)
       cam_out%tbot(i)  = state%t(i,pver)
       cam_out%thbot(i) = state%t(i,pver) * state%exner(i,pver)
       cam_out%zbot(i)  = state%zm(i,pver)
+      cam_out%topo(i)  = state%phis(i) / gravit
       cam_out%ubot(i)  = state%u(i,pver)
       cam_out%vbot(i)  = state%v(i,pver)
       cam_out%pbot(i)  = state%pmid(i,pver)
+      cam_out%psl(i)   = psl(i)
       cam_out%rho(i)   = cam_out%pbot(i)/(rair*cam_out%tbot(i))
-      psm1(i,lchnk)    = state%ps(i)
-      srfrpdel(i,lchnk)= state%rpdel(i,pver)
    end do
    do m = 1, pcnst
      do i = 1, ncol
@@ -596,10 +756,34 @@ subroutine cam_export(state,cam_out,pbuf)
    ! Compute total convective and stratiform precipitation and snow rates
    !
    do i=1,ncol
-      cam_out%precc (i) = prec_dp(i)  + prec_sh(i)
-      cam_out%precl (i) = prec_sed(i) + prec_pcw(i)
-      cam_out%precsc(i) = snow_dp(i)  + snow_sh(i)
-      cam_out%precsl(i) = snow_sed(i) + snow_pcw(i)
+      cam_out%precc (i) = 0._r8
+      cam_out%precl (i) = 0._r8
+      cam_out%precsc(i) = 0._r8
+      cam_out%precsl(i) = 0._r8
+      if (prec_dp_idx > 0) then
+        cam_out%precc (i) = cam_out%precc (i) + prec_dp(i)
+      end if
+      if (prec_sh_idx > 0) then
+        cam_out%precc (i) = cam_out%precc (i) + prec_sh(i)
+      end if
+      if (prec_sed_idx > 0) then
+        cam_out%precl (i) = cam_out%precl (i) + prec_sed(i)
+      end if
+      if (prec_pcw_idx > 0) then
+        cam_out%precl (i) = cam_out%precl (i) + prec_pcw(i)
+      end if
+      if (snow_dp_idx > 0) then
+        cam_out%precsc(i) = cam_out%precsc(i) + snow_dp(i)
+      end if
+      if (snow_sh_idx > 0) then
+        cam_out%precsc(i) = cam_out%precsc(i) + snow_sh(i)
+      end if
+      if (snow_sed_idx > 0) then
+        cam_out%precsl(i) = cam_out%precsl(i) + snow_sed(i)
+      end if
+      if (snow_pcw_idx > 0) then
+        cam_out%precsl(i) = cam_out%precsl(i) + snow_pcw(i)
+      end if
 
       ! jrm These checks should not be necessary if they exist in the parameterizations
       if (cam_out%precc(i) .lt.0._r8) cam_out%precc(i)=0._r8
@@ -608,7 +792,7 @@ subroutine cam_export(state,cam_out,pbuf)
       if (cam_out%precsl(i).lt.0._r8) cam_out%precsl(i)=0._r8
       if (cam_out%precsc(i).gt.cam_out%precc(i)) cam_out%precsc(i)=cam_out%precc(i)
       if (cam_out%precsl(i).gt.cam_out%precl(i)) cam_out%precsl(i)=cam_out%precl(i)
-      ! end jrm
+
       !water tracers/isotopes:
       !----------------------
       if(trace_water) then
@@ -630,25 +814,42 @@ subroutine cam_export(state,cam_out,pbuf)
           cam_out%precrc_18O(i)  = precrc_18O(i)
           cam_out%precsc_18O(i)  = precsc_18O(i)  
         end if
+        if(exist17) then
+          cam_out%precrl_17O(i)  = precrl_17O(i)
+          cam_out%precsl_17O(i)  = precsl_17O(i)
+          cam_out%precrc_17O(i)  = precrc_17O(i)
+          cam_out%precsc_17O(i)  = precsc_17O(i)
+        end if
+        if(existT) then
+          cam_out%precrl_HTO(i)  = precrl_HTO(i)
+          cam_out%precsl_HTO(i)  = precsl_HTO(i)
+          cam_out%precrc_HTO(i)  = precrc_HTO(i)
+          cam_out%precsc_HTO(i)  = precsc_HTO(i)
+        end if
        !negative value prevention:
         if (cam_out%precrl_16O(i) .lt. 0._r8) cam_out%precrl_16O(i)=0._r8
         if (cam_out%precrl_HDO(i) .lt. 0._r8) cam_out%precrl_HDO(i)=0._r8
         if (cam_out%precrl_18O(i) .lt. 0._r8) cam_out%precrl_18O(i)=0._r8
+        if (cam_out%precrl_17O(i) .lt. 0._r8) cam_out%precrl_17O(i)=0._r8
+        if (cam_out%precrl_HTO(i) .lt. 0._r8) cam_out%precrl_HTO(i)=0._r8
         if (cam_out%precsl_16O(i) .lt. 0._r8) cam_out%precsl_16O(i)=0._r8
         if (cam_out%precsl_HDO(i) .lt. 0._r8) cam_out%precsl_HDO(i)=0._r8
         if (cam_out%precsl_18O(i) .lt. 0._r8) cam_out%precsl_18O(i)=0._r8
+        if (cam_out%precsl_17O(i) .lt. 0._r8) cam_out%precsl_17O(i)=0._r8
+        if (cam_out%precsl_HTO(i) .lt. 0._r8) cam_out%precsl_HTO(i)=0._r8
         if (cam_out%precrc_16O(i) .lt. 0._r8) cam_out%precrc_16O(i)=0._r8
         if (cam_out%precrc_HDO(i) .lt. 0._r8) cam_out%precrc_HDO(i)=0._r8
         if (cam_out%precrc_18O(i) .lt. 0._r8) cam_out%precrc_18O(i)=0._r8
+        if (cam_out%precrc_17O(i) .lt. 0._r8) cam_out%precrc_17O(i)=0._r8
+        if (cam_out%precrc_HTO(i) .lt. 0._r8) cam_out%precrc_HTO(i)=0._r8
         if (cam_out%precsc_16O(i) .lt. 0._r8) cam_out%precsc_16O(i)=0._r8
         if (cam_out%precsc_HDO(i) .lt. 0._r8) cam_out%precsc_HDO(i)=0._r8
         if (cam_out%precsc_18O(i) .lt. 0._r8) cam_out%precsc_18O(i)=0._r8
+        if (cam_out%precsc_17O(i) .lt. 0._r8) cam_out%precsc_17O(i)=0._r8
+        if (cam_out%precsc_HTO(i) .lt. 0._r8) cam_out%precsc_HTO(i)=0._r8
       end if
       !----------------------
    end do
-
-   ! total snowfall rate: needed by slab ocean model
-   prcsnw(:ncol,lchnk) = cam_out%precsc(:ncol) + cam_out%precsl(:ncol)   
 
 end subroutine cam_export
 

@@ -2,28 +2,22 @@ module restart_physics
 
   use shr_kind_mod,       only: r8 => shr_kind_r8
   use spmd_utils,         only: masterproc
-  use ppgrid,             only: pcols, pver, pverp, begchunk, endchunk
+  use co2_cycle,          only: co2_transport
   use constituents,       only: pcnst
-  use co2_cycle,          only: c_i, co2_transport
-  use dyn_grid,           only: ptimelevels
-  use radae,              only: abstot_3d, absnxt_3d, emstot_3d, initialize_radbuffer, ntoplw
-  use comsrf,             only: sgh, sgh30, landm, trefmxav, trefmnav, & 
-       fsnt, flns, fsns, fsds, flnt, initialize_comsrf
+
+  use radiation,          only: radiation_define_restart, radiation_write_restart, &
+                                radiation_read_restart
+
   use ioFileMod
   use cam_abortutils,     only: endrun
-  use units,              only: getunit
   use camsrfexch,         only: cam_in_t, cam_out_t
-  use cam_control_mod,    only: adiabatic, ideal_phys
   use cam_logfile,        only: iulog
   use pio,                only: file_desc_t, io_desc_t, var_desc_t, &
                                 pio_double, pio_int, pio_noerr, &
-                                pio_seterrorhandling, pio_internal_error, pio_bcast_error, &
-                                pio_inq_dimid, pio_inq_varname, pio_inq_varid, &
+                                pio_seterrorhandling, pio_bcast_error, &
+                                pio_inq_varid, &
                                 pio_def_var, pio_def_dim, &
-                                pio_put_att, pio_put_var, pio_get_var, &
-                                pio_write_darray, pio_read_darray
-  use cospsimulator_intr, only: docosp
-  use radiation,          only: cosp_cnt_init, cosp_cnt
+                                pio_put_var, pio_get_var
 
   implicit none
   private
@@ -33,188 +27,136 @@ module restart_physics
 !
   public :: write_restart_physics    ! Write the physics restart info out
   public :: read_restart_physics     ! Read the physics restart info in
-  public :: get_abs_restart_filepath ! Get the name of the restart filepath
   public :: init_restart_physics
 
 !
 ! Private data
 !
-    integer :: nrg2 = -1         ! Abs/ems restart dataset unit number
-    character(len=256) :: pname  ! Full abs-ems restart filepath
 
-    type(var_desc_t) :: trefmxav_desc, trefmnav_desc, flwds_desc, landm_desc, sgh_desc, &
-         sgh30_desc, solld_desc, co2prog_desc, co2diag_desc, sols_desc, soll_desc, &
-         solsd_desc, fsnt_desc, flns_desc, emstot_desc, absnxt_desc(4), &
-         pblh_desc,  tpert_desc, qpert_desc, flnt_desc, fsds_desc, fsns_desc
+    type(var_desc_t) :: flwds_desc, &
+         solld_desc, co2prog_desc, co2diag_desc, sols_desc, soll_desc, &
+         solsd_desc
 
     type(var_desc_t) :: bcphidry_desc, bcphodry_desc, ocphidry_desc, ocphodry_desc, &
        dstdry1_desc, dstdry2_desc, dstdry3_desc, dstdry4_desc
 
     type(var_desc_t) :: cflx_desc(pcnst)
 
-    type(var_desc_t), allocatable :: abstot_desc(:)
-
-    type(var_desc_t) :: cospcnt_desc
+    type(var_desc_t) :: wsx_desc
+    type(var_desc_t) :: wsy_desc
+    type(var_desc_t) :: shf_desc
 
   CONTAINS
-    subroutine init_restart_physics ( File, pbuf2d, hdimids)
+    subroutine init_restart_physics ( File, pbuf2d)
       
-    use cam_pio_utils,       only: fillvalue
-    
-    use physics_buffer,              only: pbuf_init_restart, physics_buffer_desc
-    use dyn_grid,            only: get_horiz_grid_dim_d
-    use radiation,           only: radiation_do
+    use physics_buffer,      only: pbuf_init_restart, physics_buffer_desc
+    use ppgrid,              only: pver, pverp
     use chemistry,           only: chem_init_restart
     use prescribed_ozone,    only: init_prescribed_ozone_restart
     use prescribed_ghg,      only: init_prescribed_ghg_restart
     use prescribed_aero,     only: init_prescribed_aero_restart
     use prescribed_volcaero, only: init_prescribed_volcaero_restart
+    use cam_grid_support,    only: cam_grid_write_attr, cam_grid_id
+    use cam_grid_support,    only: cam_grid_header_info_t
+    use cam_pio_utils,       only: cam_pio_def_dim
     use subcol_utils,        only: is_subcol_on
     use subcol,              only: subcol_init_restart
 
     type(file_desc_t), intent(inout) :: file
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
-    integer,intent(in) :: hdimids(:)
 
-    integer :: hdimcnt, ierr, hdim1_d, hdim2_d, i, vsize, lwrdim
-    integer :: dimids(4)
-    integer :: pver_id, pverp_id, pcnst_id
-    integer, pointer :: ldof(:)
-    character(len=4) :: num
-
-
-    hdimcnt=size(hdimids)
-    dimids(1:hdimcnt) = hdimids
-    call get_horiz_grid_dim_d(hdim1_d, hdim2_d)
+    integer                      :: grid_id
+    integer                      :: hdimcnt, ierr, i
+    integer                      :: dimids(4)
+    integer, allocatable         :: hdimids(:)
+    type(cam_grid_header_info_t) :: info
+    character(len=4)   :: num
 
     call pio_seterrorhandling(File, PIO_BCAST_ERROR)
-    ierr = pio_inq_dimid(File, 'lev', pver_id)
-    call pio_seterrorhandling(File, PIO_INTERNAL_ERROR)
-    if(ierr/=PIO_NOERR) then
-       ierr = pio_def_dim(File, 'lev', pver, pver_id)
-    end if
-    call pio_seterrorhandling(File, PIO_BCAST_ERROR)
-    ierr = pio_inq_dimid(File, 'ilev', pverp_id)
-    call pio_seterrorhandling(File, PIO_INTERNAL_ERROR)
-    if(ierr/=PIO_NOERR) then
-       ierr = pio_def_dim(File, 'ilev', pverp, pverp_id)
-    end if
+    ! Probably should have the grid write this out.
+    grid_id = cam_grid_id('physgrid')
+    call cam_grid_write_attr(File, grid_id, info)
+    hdimcnt = info%num_hdims()
+
+    do i = 1, hdimcnt
+      dimids(i) = info%get_hdimid(i)
+    end do
+    allocate(hdimids(hdimcnt))
+    hdimids(1:hdimcnt) = dimids(1:hdimcnt)
 
     call pbuf_init_restart(File, pbuf2d)
 
-    if ( .not. adiabatic .and. .not. ideal_phys )then
-       
-       call chem_init_restart(File)
+    call chem_init_restart(File)
 
-       call init_prescribed_ozone_restart(File)
-       call init_prescribed_ghg_restart(File)
-       call init_prescribed_aero_restart(File)
-       call init_prescribed_volcaero_restart(File)
+    call init_prescribed_ozone_restart(File)
+    call init_prescribed_ghg_restart(File)
+    call init_prescribed_aero_restart(File)
+    call init_prescribed_volcaero_restart(File)
 
-       call pio_seterrorhandling(File, PIO_BCAST_ERROR)
-       ierr = pio_inq_dimid(File, 'pcnst', pcnst_id)
-       call pio_seterrorhandling(File, PIO_INTERNAL_ERROR)
-       if(ierr/=PIO_NOERR) then
-          ierr = pio_def_dim(File, 'pcnst', pcnst, pcnst_id)
-       end if
-    
-       ierr = pio_def_var(File, 'FSNT',     pio_double, hdimids, fsnt_desc)
-       ierr = pio_def_var(File, 'FSNS',     pio_double, hdimids, fsns_desc)
-       ierr = pio_def_var(File, 'FSDS',     pio_double, hdimids, fsds_desc)
-       ierr = pio_def_var(File, 'FLNT',     pio_double, hdimids, flnt_desc)
-       ierr = pio_def_var(File, 'FLNS',     pio_double, hdimids, flns_desc)
-       ierr = pio_def_var(File, 'LANDM',    pio_double, hdimids, landm_desc)
-       ierr = pio_def_var(File, 'SGH',      pio_double, hdimids, sgh_desc)
-       ierr = pio_def_var(File, 'SGH30',    pio_double, hdimids, sgh30_desc)
-       ierr = pio_def_var(File, 'TREFMXAV', pio_double, hdimids, trefmxav_desc)
-       ierr = pio_def_var(File, 'TREFMNAV', pio_double, hdimids, trefmnav_desc)
-       
-       ierr = pio_def_var(File, 'FLWDS', pio_double, hdimids, flwds_desc)
-       ierr = pio_def_var(File, 'SOLS', pio_double, hdimids, sols_desc)
-       ierr = pio_def_var(File, 'SOLL', pio_double, hdimids, soll_desc)
-       ierr = pio_def_var(File, 'SOLSD', pio_double, hdimids, solsd_desc)
-       ierr = pio_def_var(File, 'SOLLD', pio_double, hdimids, solld_desc)
+    ierr = pio_def_var(File, 'FLWDS', pio_double, hdimids, flwds_desc)
+    ierr = pio_def_var(File, 'SOLS', pio_double, hdimids, sols_desc)
+    ierr = pio_def_var(File, 'SOLL', pio_double, hdimids, soll_desc)
+    ierr = pio_def_var(File, 'SOLSD', pio_double, hdimids, solsd_desc)
+    ierr = pio_def_var(File, 'SOLLD', pio_double, hdimids, solld_desc)
 
-       ierr = pio_def_var(File, 'BCPHIDRY', pio_double, hdimids, bcphidry_desc)
-       ierr = pio_def_var(File, 'BCPHODRY', pio_double, hdimids, bcphodry_desc)
-       ierr = pio_def_var(File, 'OCPHIDRY', pio_double, hdimids, ocphidry_desc)
-       ierr = pio_def_var(File, 'OCPHODRY', pio_double, hdimids, ocphodry_desc)
-       ierr = pio_def_var(File, 'DSTDRY1',  pio_double, hdimids, dstdry1_desc)
-       ierr = pio_def_var(File, 'DSTDRY2',  pio_double, hdimids, dstdry2_desc)
-       ierr = pio_def_var(File, 'DSTDRY3',  pio_double, hdimids, dstdry3_desc)
-       ierr = pio_def_var(File, 'DSTDRY4',  pio_double, hdimids, dstdry4_desc)
+    ierr = pio_def_var(File, 'BCPHIDRY', pio_double, hdimids, bcphidry_desc)
+    ierr = pio_def_var(File, 'BCPHODRY', pio_double, hdimids, bcphodry_desc)
+    ierr = pio_def_var(File, 'OCPHIDRY', pio_double, hdimids, ocphidry_desc)
+    ierr = pio_def_var(File, 'OCPHODRY', pio_double, hdimids, ocphodry_desc)
+    ierr = pio_def_var(File, 'DSTDRY1',  pio_double, hdimids, dstdry1_desc)
+    ierr = pio_def_var(File, 'DSTDRY2',  pio_double, hdimids, dstdry2_desc)
+    ierr = pio_def_var(File, 'DSTDRY3',  pio_double, hdimids, dstdry3_desc)
+    ierr = pio_def_var(File, 'DSTDRY4',  pio_double, hdimids, dstdry4_desc)
 
-       if(co2_transport()) then
-          ierr = pio_def_var(File, 'CO2PROG', pio_double, hdimids, co2prog_desc)
-          ierr = pio_def_var(File, 'CO2DIAG', pio_double, hdimids, co2diag_desc)
-       end if
-
-       ! cam_import variables -- write the constituent surface fluxes as individual 2D arrays
-       ! rather than as a single variable with a pcnst dimension.  Note that the cflx components
-       ! are only needed for those constituents that are not passed to the coupler.  The restart
-       ! for constituents passed through the coupler are handled by the .rs. restart file.  But
-       ! we don't currently have a mechanism to know whether the constituent is handled by the
-       ! coupler or not, so we write all of cflx to the CAM restart file.
-       do i = 1, pcnst
-          write(num,'(i4.4)') i
-          ierr = pio_def_var(File, 'CFLX'//num,  pio_double, hdimids, cflx_desc(i))
-       end do
-
+    if(co2_transport()) then
+      ierr = pio_def_var(File, 'CO2PROG', pio_double, hdimids, co2prog_desc)
+      ierr = pio_def_var(File, 'CO2DIAG', pio_double, hdimids, co2diag_desc)
     end if
 
+    ! cam_import variables -- write the constituent surface fluxes as individual 2D arrays
+    ! rather than as a single variable with a pcnst dimension.  Note that the cflx components
+    ! are only needed for those constituents that are not passed to the coupler.  The restart
+    ! for constituents passed through the coupler are handled by the .rs. restart file.  But
+    ! we don't currently have a mechanism to know whether the constituent is handled by the
+    ! coupler or not, so we write all of cflx to the CAM restart file.
+    do i = 1, pcnst
+      write(num,'(i4.4)') i
+      ierr = pio_def_var(File, 'CFLX'//num,  pio_double, hdimids, cflx_desc(i))
+    end do
 
-    if( radiation_do('aeres')  ) then
-       vsize = (pverp-ntoplw+1)
-       if(vsize/=pverp) then
-          ierr = pio_def_dim(File, 'lwcols', vsize, dimids(hdimcnt+1))
-       else
-          dimids(hdimcnt+1) = pverp_id
-       end if
-!
-! split this into vsize variables to avoid excessive memory usage in IO
-!
-       allocate(abstot_desc(ntoplw:pverp))
-       do i=ntoplw,pverp
-          write(pname,'(a,i3.3)') 'NAL_absorp',i
-          ierr = pio_def_var(File, trim(pname), pio_double, dimids(1:hdimcnt+1), abstot_desc(i))
-       end do
-	
-       dimids(hdimcnt+1) = pverp_id
-       ierr = pio_def_var(File, 'Emissivity', pio_double, dimids(1:hdimcnt+1), emstot_desc)
-
-       dimids(hdimcnt+1) = pver_id
-       do i=1,4
-          write(pname,'(a,i3.3)') 'NN_absorp',i
-          ierr = pio_def_var(File, pname, pio_double, dimids(1:hdimcnt+1), absnxt_desc(i))
-       end do
-
-
-    end if
-    if (docosp) then
-      ierr = pio_def_var(File, 'cosp_cnt_init', pio_int, cospcnt_desc)
-    end if
+    ierr = pio_def_var(File, 'wsx',  pio_double, hdimids, wsx_desc)
+    ierr = pio_def_var(File, 'wsy',  pio_double, hdimids, wsy_desc)
+    ierr = pio_def_var(File, 'shf',  pio_double, hdimids, shf_desc)
+ 
+    call radiation_define_restart(file)
 
     if (is_subcol_on()) then
       call subcol_init_restart(file, hdimids)
     end if
-      
+
   end subroutine init_restart_physics
 
   subroutine write_restart_physics (File, cam_in, cam_out, pbuf2d)
 
       !-----------------------------------------------------------------------
-      use physics_buffer,             only: physics_buffer_desc, pbuf_write_restart
+      use physics_buffer,      only: physics_buffer_desc, pbuf_write_restart
+      use phys_grid,           only: phys_decomp
       
-      use chemistry,          only: chem_write_restart
-      use prescribed_ozone,   only: write_prescribed_ozone_restart
-      use prescribed_ghg,     only: write_prescribed_ghg_restart
-      use prescribed_aero,    only: write_prescribed_aero_restart
-      use prescribed_volcaero,only: write_prescribed_volcaero_restart
-      use radiation,          only: radiation_do
-      use cam_pio_utils,      only: get_phys_decomp, fillvalue
-      use spmd_utils,         only: iam
-      use subcol_utils,       only: is_subcol_on
-      use subcol,             only: subcol_write_restart
+      use ppgrid,              only: begchunk, endchunk, pcols, pverp
+      use chemistry,           only: chem_write_restart
+      use prescribed_ozone,    only: write_prescribed_ozone_restart
+      use prescribed_ghg,      only: write_prescribed_ghg_restart
+      use prescribed_aero,     only: write_prescribed_aero_restart
+      use prescribed_volcaero, only: write_prescribed_volcaero_restart
+
+      use cam_history_support, only: fillvalue
+      use spmd_utils,          only: iam
+      use cam_grid_support,    only: cam_grid_write_dist_array, cam_grid_id
+      use cam_grid_support,    only: cam_grid_get_decomp, cam_grid_dimensions
+      use cam_grid_support,    only: cam_grid_write_var
+      use pio,                 only: pio_write_darray
+      use subcol_utils,        only: is_subcol_on
+      use subcol,              only: subcol_write_restart
       !
       ! Input arguments
       !
@@ -225,15 +167,18 @@ module restart_physics
       !
       ! Local workspace
       !
-      real(r8):: tmpfield(pcols*(endchunk-begchunk+1))
-      integer :: i, ii, j, m       ! loop index
-      integer :: n3tmp             ! timestep index
-      character(len=256) fname  ! abs-ems restart filename
-      integer :: ioerr             ! I/O status
+      type(io_desc_t), pointer :: iodesc
+      real(r8):: tmpfield(pcols, begchunk:endchunk)
+      integer :: i, m          ! loop index
       integer :: ncol          ! number of vertical columns
       integer :: ierr
-      type(io_desc_t), pointer :: iodesc
+      integer :: physgrid
+      integer :: dims(3), gdims(3)
+      integer :: nhdims
       !-----------------------------------------------------------------------
+
+      ! Write grid vars
+      call cam_grid_write_var(File, phys_decomp)
 
       ! Physics buffer
       if (is_subcol_on()) then
@@ -242,255 +187,148 @@ module restart_physics
 
       call pbuf_write_restart(File, pbuf2d)
 
-      if ( .not. adiabatic .and. .not. ideal_phys )then
+      physgrid = cam_grid_id('physgrid')
+      call cam_grid_dimensions(physgrid, gdims(1:2), nhdims)
 
-         ! data for chemistry
-         call chem_write_restart(File)
+      ! data for chemistry
+      call chem_write_restart(File)
 
-         call write_prescribed_ozone_restart(File)
-         call write_prescribed_ghg_restart(File)
-         call write_prescribed_aero_restart(File)
-         call write_prescribed_volcaero_restart(File)
- 
-	 do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            if(ncol<pcols) then
-               fsnt(ncol+1:pcols,i) = fillvalue
-               fsns(ncol+1:pcols,i) = fillvalue
-               fsds(ncol+1:pcols,i) = fillvalue
-               flnt(ncol+1:pcols,i) = fillvalue
-               flns(ncol+1:pcols,i) = fillvalue
-               landm(ncol+1:pcols,i) = fillvalue
-               sgh(ncol+1:pcols,i) = fillvalue
-               sgh30(ncol+1:pcols,i) = fillvalue
+      call write_prescribed_ozone_restart(File)
+      call write_prescribed_ghg_restart(File)
+      call write_prescribed_aero_restart(File)
+      call write_prescribed_volcaero_restart(File)
 
-               trefmxav(ncol+1:pcols,i) = fillvalue
-               trefmnav(ncol+1:pcols,i) = fillvalue
-            end if
-         end do
+      ! cam_in/out variables
+      ! This is a group of surface variables so can reuse dims
+      dims(1) = pcols
+      dims(2) = endchunk - begchunk + 1
+      call cam_grid_get_decomp(physgrid, dims(1:2), gdims(1:nhdims), &
+           pio_double, iodesc)
 
-! the transfer intrinsic function fails if we are writting a 0 sized array, but the call to pio_write_darray 
-! needs to be made because it is collective. 
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%flwds(:ncol)
+        ! Only have to do this once (cam_in/out vars all same shape)
+        if (ncol < pcols) then
+          tmpfield(ncol+1:, i) = fillvalue
+        end if
+      end do
+      call pio_write_darray(File, flwds_desc, iodesc, tmpfield, ierr)
 
-         call get_phys_decomp(iodesc, 1,1,1,pio_double)
-            
-            ! Comsrf module variables (can following coup_csm definitions be removed?)
-         call pio_write_darray(File, fsnt_desc, iodesc, fsnt, ierr)
-         call pio_write_darray(File, fsns_desc, iodesc, fsns, ierr)
-         call pio_write_darray(File, fsds_desc, iodesc, fsds, ierr)
-         call pio_write_darray(File, flnt_desc, iodesc, flnt, ierr)
-         
-         call pio_write_darray(File, flns_desc,  iodesc,  flns, ierr)
-         call pio_write_darray(File, landm_desc, iodesc, landm, ierr)
-         call pio_write_darray(File, sgh_desc,   iodesc,   sgh, ierr)
-         call pio_write_darray(File, sgh30_desc, iodesc, sgh30, ierr)
-         
-         call pio_write_darray(File, trefmxav_desc, iodesc, trefmxav, ierr)
-         call pio_write_darray(File, trefmnav_desc, iodesc, trefmnav, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%sols(:ncol)
+      end do
+      call pio_write_darray(File, sols_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         tmpfield(:) = fillvalue
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-	       if(j<=ncol) tmpfield(ii) = cam_out(i)%flwds(j)
-            end do
-         end do
-         call pio_write_darray(File, flwds_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%soll(:ncol)
+      end do
+      call pio_write_darray(File, soll_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%sols(j)
-            end do
-         end do
-         call pio_write_darray(File, sols_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%solsd(:ncol)
+      end do
+      call pio_write_darray(File, solsd_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%soll(j)
-            end do
-         end do
-         call pio_write_darray(File, soll_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%solld(:ncol)
+      end do
+      call pio_write_darray(File, solld_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%solsd(j)
-            end do
-         end do
-         call pio_write_darray(File, solsd_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%bcphidry(:ncol)
+      end do
+      call pio_write_darray(File, bcphidry_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%solld(j)
-            end do
-         end do
-         call pio_write_darray(File, solld_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%bcphodry(:ncol)
+      end do
+      call pio_write_darray(File, bcphodry_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%bcphidry(j)
-            end do
-         end do
-         call pio_write_darray(File, bcphidry_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%ocphidry(:ncol)
+      end do
+      call pio_write_darray(File, ocphidry_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%bcphodry(j)
-            end do
-         end do
-         call pio_write_darray(File, bcphodry_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%ocphodry(:ncol)
+      end do
+      call pio_write_darray(File, ocphodry_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%ocphidry(j)
-            end do
-         end do
-         call pio_write_darray(File, ocphidry_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%dstdry1(:ncol)
+      end do
+      call pio_write_darray(File, dstdry1_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%ocphodry(j)
-            end do
-         end do
-         call pio_write_darray(File, ocphodry_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%dstdry2(:ncol)
+      end do
+      call pio_write_darray(File, dstdry2_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%dstdry1(j)
-            end do
-         end do
-         call pio_write_darray(File, dstdry1_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%dstdry3(:ncol)
+      end do
+      call pio_write_darray(File, dstdry3_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%dstdry2(j)
-            end do
-         end do
-         call pio_write_darray(File, dstdry2_desc, iodesc, tmpfield, ierr)
+      do i = begchunk, endchunk
+        ncol = cam_out(i)%ncol
+        tmpfield(:ncol, i) = cam_out(i)%dstdry4(:ncol)
+      end do
+      call pio_write_darray(File, dstdry4_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%dstdry3(j)
-            end do
-         end do
-         call pio_write_darray(File, dstdry3_desc, iodesc, tmpfield, ierr)
+      if (co2_transport()) then
+        do i = begchunk, endchunk
+          ncol = cam_out(i)%ncol
+          tmpfield(:ncol, i) = cam_out(i)%co2prog(:ncol)
+        end do
+        call pio_write_darray(File, co2prog_desc, iodesc, tmpfield, ierr)
 
-	 ii=0
-         do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            do j=1,pcols
-               ii=ii+1
-               if(j<=ncol) tmpfield(ii) = cam_out(i)%dstdry4(j)
-            end do
-         end do
-         call pio_write_darray(File, dstdry4_desc, iodesc, tmpfield, ierr)
-
-         if (co2_transport()) then
-            ii=0
-            do i=begchunk,endchunk
-               ncol = cam_out(i)%ncol
-               do j=1,pcols
-                  ii=ii+1
-                  if(j<=ncol) tmpfield(ii) = cam_out(i)%co2prog(j)
-               end do
-            end do
-            call pio_write_darray(File, co2prog_desc, iodesc, tmpfield, ierr)
-            ii=0
-            do i=begchunk,endchunk
-               ncol = cam_out(i)%ncol
-               do j=1,pcols
-                  ii=ii+1
-                  if(j<=ncol) tmpfield(ii) = cam_out(i)%co2diag(j)
-               end do
-            end do
-            call pio_write_darray(File, co2diag_desc, iodesc, tmpfield, ierr)
-         end if
-
-         ! cam_in components
-         do m = 1, pcnst
-            ii = 0
-            do i = begchunk, endchunk
-               ncol = cam_in(i)%ncol
-               do j = 1, pcols
-                  ii = ii + 1
-                  if (j <= ncol) tmpfield(ii) = cam_in(i)%cflx(j,m)
-               end do
-            end do
-            call pio_write_darray(File, cflx_desc(m), iodesc, tmpfield, ierr)
-         end do
-
-      end if
-      !
-      !-----------------------------------------------------------------------
-      ! Write the abs/ems restart dataset if necessary    
-      !-----------------------------------------------------------------------
-      !
-
-      if ( radiation_do('aeres')  ) then
-         
-	 do i=begchunk,endchunk
-            ncol = cam_out(i)%ncol
-            if(ncol<pcols) then
-               abstot_3d(ncol+1:pcols,:,:,i) = fillvalue
-               absnxt_3d(ncol+1:pcols,:,:,i) = fillvalue
-               emstot_3d(ncol+1:pcols,:,i) = fillvalue
-            end if
-         end do
-         call get_phys_decomp(iodesc, 1,(pverp-ntoplw+1),1,pio_double)
-         do i=ntoplw,pverp
-            call pio_write_darray(File, abstot_desc(i), iodesc, abstot_3d(:,:,i,:), ierr)
-         end do
-         if(ntoplw/=1) then
-            call get_phys_decomp(iodesc, 1,pverp,1,pio_double)
-         end if
-         call pio_write_darray(File, emstot_desc, iodesc, emstot_3d, ierr)
-         call get_phys_decomp(iodesc, 1,pver,1,pio_double)
-
-         do i=1,4
-            call pio_write_darray(File, absnxt_desc(i), iodesc, absnxt_3d(:,:,i,:), ierr)
-         end do
-
-         deallocate(abstot_desc)
+        do i = begchunk, endchunk
+          ncol = cam_out(i)%ncol
+          tmpfield(:ncol, i) = cam_out(i)%co2diag(:ncol)
+        end do
+        call pio_write_darray(File, co2diag_desc, iodesc, tmpfield, ierr)
       end if
 
-      if (docosp) then
-        ierr = pio_put_var(File, cospcnt_desc, (/cosp_cnt(begchunk)/))
-      end if
+      ! cam_in components
+      do m = 1, pcnst
+        do i = begchunk, endchunk
+          ncol = cam_in(i)%ncol
+          tmpfield(:ncol, i) = cam_in(i)%cflx(:ncol, m)
+        end do
+        call pio_write_darray(File, cflx_desc(m), iodesc, tmpfield, ierr)
+      end do
 
+      do i = begchunk, endchunk
+        ncol = cam_in(i)%ncol
+        tmpfield(:ncol,i) = cam_in(i)%wsx(:ncol)
+      end do
+      call pio_write_darray(File, wsx_desc, iodesc, tmpfield, ierr)
+
+      do i = begchunk, endchunk
+        ncol = cam_in(i)%ncol
+        tmpfield(:ncol,i) = cam_in(i)%wsy(:ncol)
+      end do
+      call pio_write_darray(File, wsy_desc, iodesc, tmpfield, ierr)
+
+      do i = begchunk, endchunk
+        ncol = cam_in(i)%ncol
+        tmpfield(:ncol,i) = cam_in(i)%shf(:ncol)
+      end do
+      call pio_write_darray(File, shf_desc, iodesc, tmpfield, ierr)
+
+      call radiation_write_restart(file)
       
     end subroutine write_restart_physics
 
@@ -499,17 +337,21 @@ module restart_physics
     subroutine read_restart_physics(File, cam_in, cam_out, pbuf2d)
 
      !-----------------------------------------------------------------------
-     use physics_buffer,            only: physics_buffer_desc, pbuf_read_restart
+     use physics_buffer,      only: physics_buffer_desc, pbuf_read_restart
      
-     use chemistry,          only: chem_read_restart
-     use cam_pio_utils,      only: get_phys_decomp, fillvalue
-     use radiation,          only: radiation_do
-     use prescribed_ozone,   only: read_prescribed_ozone_restart
-     use prescribed_ghg,     only: read_prescribed_ghg_restart
-     use prescribed_aero,    only: read_prescribed_aero_restart
-     use prescribed_volcaero,only: read_prescribed_volcaero_restart
-     use subcol_utils,       only: is_subcol_on
-     use subcol,             only: subcol_read_restart
+     use ppgrid,              only: begchunk, endchunk, pcols, pver, pverp
+     use chemistry,           only: chem_read_restart
+     use cam_grid_support,    only: cam_grid_read_dist_array, cam_grid_id
+     use cam_grid_support,    only: cam_grid_get_decomp, cam_grid_dimensions
+     use cam_history_support, only: fillvalue
+
+     use prescribed_ozone,    only: read_prescribed_ozone_restart
+     use prescribed_ghg,      only: read_prescribed_ghg_restart
+     use prescribed_aero,     only: read_prescribed_aero_restart
+     use prescribed_volcaero, only: read_prescribed_volcaero_restart
+     use subcol_utils,        only: is_subcol_on
+     use subcol,              only: subcol_read_restart
+     use pio,                 only: pio_read_darray
      !
      ! Arguments
      !
@@ -520,24 +362,17 @@ module restart_physics
      !
      ! Local workspace
      !
-     real(r8), allocatable :: tmpfield(:)
-     integer :: i, c, ii, m       ! loop index
-     integer :: n3tmp             ! timestep index
-     character*80  locfn          ! Local filename
-     integer :: ioerr             ! I/O status
-     integer :: ncol           ! number of columns in a chunk
+     real(r8), allocatable :: tmpfield2(:,:)
+     integer :: i, c, m           ! loop index
+     integer :: ierr             ! I/O status
      type(io_desc_t), pointer :: iodesc
-     type(var_desc_t) :: vardesc
-     integer :: ierr, csize, vsize
-     character(len=4) :: num
+     type(var_desc_t)         :: vardesc
+     integer                  :: csize, vsize
+     character(len=4)         :: num
+     integer                  :: dims(3), gdims(3), nhdims
+     integer                  :: err_handling
+     integer                  :: physgrid
      !-----------------------------------------------------------------------
-
-     ! Allocate memory in physics buffer, buffer, comsrf, and radbuffer modules.
-     ! (This is done in subroutine initial_conds for an initial run.)
-     call initialize_comsrf()
-     call initialize_radbuffer()
-
-     ! Physics buffer
 
      ! subcol_read_restart must be called before pbuf_read_restart
      if (is_subcol_on()) then
@@ -547,315 +382,214 @@ module restart_physics
      call pbuf_read_restart(File, pbuf2d)
 
      csize=endchunk-begchunk+1
+     dims(1) = pcols
+     dims(2) = csize
+
+     physgrid = cam_grid_id('physgrid')
+
+     call cam_grid_dimensions(physgrid, gdims(1:2))
+
+     if (gdims(2) == 1) then
+       nhdims = 1
+     else
+       nhdims = 2
+     end if
+     call cam_grid_get_decomp(physgrid, dims(1:2), gdims(1:nhdims), pio_double, &
+          iodesc)
      
-     if ( .not. adiabatic .and. .not. ideal_phys )then
+     ! data for chemistry
+     call chem_read_restart(File)
 
-        ! data for chemistry
-        call chem_read_restart(File)
+     call read_prescribed_ozone_restart(File)
+     call read_prescribed_ghg_restart(File)
+     call read_prescribed_aero_restart(File)
+     call read_prescribed_volcaero_restart(File)
 
-        call read_prescribed_ozone_restart(File)
-        call read_prescribed_ghg_restart(File)
-        call read_prescribed_aero_restart(File)
-        call read_prescribed_volcaero_restart(File)
+     allocate(tmpfield2(pcols, begchunk:endchunk))
+     tmpfield2 = fillvalue
 
-        allocate(tmpfield(pcols*csize))
-        tmpfield(:)=fillvalue
+     ierr = pio_inq_varid(File, 'FLWDS', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%flwds(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        call get_phys_decomp(iodesc,1,1,1,pio_double)
+     ierr = pio_inq_varid(File, 'SOLS', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%sols(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'FSNT', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        fsnt(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'SOLL', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%soll(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'FSNS', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        fsns(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'SOLSD', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%solsd(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'FSDS', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        fsds(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'SOLLD', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%solld(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'FLNT', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        flnt(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'BCPHIDRY', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%bcphidry(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'FLNS', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        flns(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'BCPHODRY', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%bcphodry(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'LANDM', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        landm(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'OCPHIDRY', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%ocphidry(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'SGH', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        sgh(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'OCPHODRY', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%ocphodry(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'SGH30', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        sgh30(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'DSTDRY1', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%dstdry1(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'TREFMXAV', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        trefmxav(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'DSTDRY2', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%dstdry2(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'TREFMNAV', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        trefmnav(:,:) = reshape(tmpfield, (/pcols, csize/))
+     ierr = pio_inq_varid(File, 'DSTDRY3', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%dstdry3(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'FLWDS', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%flwds(i) = tmpfield(ii)
-           end do
-        end do
+     ierr = pio_inq_varid(File, 'DSTDRY4', vardesc)
+     call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+     do c=begchunk,endchunk
+       do i=1,pcols
+         cam_out(c)%dstdry4(i) = tmpfield2(i, c)
+       end do
+     end do
 
-        ierr = pio_inq_varid(File, 'SOLS', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%sols(i) = tmpfield(ii)
-           end do
-        end do
+     if (co2_transport()) then
+       ierr = pio_inq_varid(File, 'CO2PROG', vardesc)
+       call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+       do c=begchunk,endchunk
+         do i=1,pcols
+           cam_out(c)%co2prog(i) = tmpfield2(i, c)
+         end do
+       end do
 
-        ierr = pio_inq_varid(File, 'SOLL', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%soll(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'SOLSD', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%solsd(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'SOLLD', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%solld(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'BCPHIDRY', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%bcphidry(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'BCPHODRY', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%bcphodry(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'OCPHIDRY', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%ocphidry(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'OCPHODRY', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%ocphodry(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'DSTDRY1', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%dstdry1(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'DSTDRY2', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%dstdry2(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'DSTDRY3', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%dstdry3(i) = tmpfield(ii)
-           end do
-        end do
-
-        ierr = pio_inq_varid(File, 'DSTDRY4', vardesc)
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        ii=0
-        do c=begchunk,endchunk
-           do i=1,pcols
-              ii=ii+1
-              cam_out(c)%dstdry4(i) = tmpfield(ii)
-           end do
-        end do
-
-        if (co2_transport()) then
-           ierr = pio_inq_varid(File, 'CO2PROG', vardesc)
-           call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-           ii=0
-           do c=begchunk,endchunk
-              do i=1,pcols
-                 ii=ii+1
-                 cam_out(c)%co2prog(i) = tmpfield(ii)
-              end do
-           end do
-
-           ierr = pio_inq_varid(File, 'CO2DIAG', vardesc)
-           call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-           ii=0
-           do c=begchunk,endchunk
-              do i=1,pcols
-                 ii=ii+1
-                 cam_out(c)%co2diag(i) = tmpfield(ii)
-              end do
-           end do
-        end if
-
-        ! Reading the CFLX* components from the restart is optional for
-        ! backwards compatibility.  These fields were not needed for an
-        ! exact restart until the UNICON scheme was added.  More generally,
-        ! these components are only needed if they are not handled by the
-        ! coupling layer restart (the ".rs." file), and if the values are
-        ! used in the tphysbc physics before the tphysac code has a chance
-        ! to update the values that are coming from boundary datasets.
-        do m = 1, pcnst
-
-           write(num,'(i4.4)') m
-
-           call pio_seterrorhandling(File, PIO_BCAST_ERROR)
-           ierr = pio_inq_varid(File, 'CFLX'//num, vardesc)
-           call pio_seterrorhandling(File, PIO_INTERNAL_ERROR)
-
-           if (ierr == PIO_NOERR) then ! CFLX variable found on restart file
-              call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-              ii = 0
-              do c= begchunk, endchunk
-                 do i = 1, pcols
-                    ii = ii + 1
-                    cam_in(c)%cflx(i,m) = tmpfield(ii)
-                 end do
-              end do
-           end if
-
-        end do
-
-        deallocate(tmpfield)	
-
+       ierr = pio_inq_varid(File, 'CO2DIAG', vardesc)
+       call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+       do c=begchunk,endchunk
+         do i=1,pcols
+           cam_out(c)%co2diag(i) = tmpfield2(i, c)
+         end do
+       end do
      end if
 
-     !
-     !-----------------------------------------------------------------------
-     ! Read the abs/ems restart dataset if necessary    
-     !-----------------------------------------------------------------------
-     !
-     if ( radiation_do('aeres')  ) then
-        call pio_seterrorhandling( File, PIO_BCAST_ERROR)
-        ierr = pio_inq_varid(File, 'Emissivity', vardesc)
-        call pio_seterrorhandling( File, PIO_INTERNAL_ERROR)
-        if(ierr/=PIO_NOERR) then
-           if(masterproc) write(iulog,*) 'Warning: Emissivity variable not found on restart file.'
-           return
-        end if
+     ! Reading the CFLX* components from the restart is optional for
+     ! backwards compatibility.  These fields were not needed for an
+     ! exact restart until the UNICON scheme was added.  More generally,
+     ! these components are only needed if they are not handled by the
+     ! coupling layer restart (the ".rs." file), and if the values are
+     ! used in the tphysbc physics before the tphysac code has a chance
+     ! to update the values that are coming from boundary datasets.
+     do m = 1, pcnst
 
-        call get_phys_decomp(iodesc,1,pverp,1,pio_double)
-        allocate(tmpfield(pcols*pverp*csize))         
-        tmpfield(:)=fillvalue
-        call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-        emstot_3d = reshape(tmpfield, (/pcols, pverp, csize/))
-        
-        vsize = pverp-ntoplw+1
-        if(vsize/=pverp) then
-           deallocate(tmpfield)
-           call get_phys_decomp(iodesc,1,(pverp-ntoplw+1),1,pio_double)
-           allocate(tmpfield(pcols*vsize*csize))         
-        end if
-        tmpfield(:)=fillvalue
-        
-        do i=ntoplw,pverp
-           write(pname,'(a,i3.3)') 'NAL_absorp',i
-           ierr = pio_inq_varid(File, trim(pname), vardesc)
-           call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-           abstot_3d(:,:,i,:) = reshape(tmpfield, (/pcols, vsize, csize/))
-        end do
+       write(num,'(i4.4)') m
 
-        deallocate(tmpfield)
-        call get_phys_decomp(iodesc,1,pver,1,pio_double)
+       call pio_seterrorhandling(File, PIO_BCAST_ERROR, err_handling)
+       ierr = pio_inq_varid(File, 'CFLX'//num, vardesc)
+       call pio_seterrorhandling(File, err_handling)
 
-        allocate(tmpfield(pcols*pver*csize))         
-        tmpfield(:)=fillvalue
+       if (ierr == PIO_NOERR) then ! CFLX variable found on restart file
+         call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+         do c= begchunk, endchunk
+           do i = 1, pcols
+             cam_in(c)%cflx(i,m) = tmpfield2(i, c)
+           end do
+         end do
+       end if
 
-        do i=1,4
-           write(pname,'(a,i3.3)') 'NN_absorp',i
-           ierr = pio_inq_varid(File, trim(pname), vardesc)
-           call pio_read_darray(File, vardesc, iodesc, tmpfield, ierr)
-           absnxt_3d(:,:,i,:) = reshape(tmpfield, (/pcols, pver, csize/))
-        end do
-        deallocate(tmpfield)
+     end do
+
+     call pio_seterrorhandling(File, PIO_BCAST_ERROR, err_handling)
+     ierr = pio_inq_varid(File, 'wsx', vardesc)
+     if (ierr == PIO_NOERR) then ! variable found on restart file
+       call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+       do c= begchunk, endchunk
+         do i = 1, pcols
+           cam_in(c)%wsx(i) = tmpfield2(i, c)
+         end do
+       end do
      end if
-
-     if (docosp) then
-           call pio_seterrorhandling( File, PIO_BCAST_ERROR)
-           ierr = pio_inq_varid(File, 'cosp_cnt_init', vardesc)
-           call pio_seterrorhandling( File, PIO_INTERNAL_ERROR)
-           if(ierr/=PIO_NOERR) then
-             cosp_cnt_init=0
-           else
-             ierr = pio_get_var(File, vardesc, cosp_cnt_init)
-           end if
+     ierr = pio_inq_varid(File, 'wsy', vardesc)
+     if (ierr == PIO_NOERR) then ! variable found on restart file
+       call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+       do c= begchunk, endchunk
+         do i = 1, pcols
+           cam_in(c)%wsy(i) = tmpfield2(i, c)
+         end do
+       end do
      end if
+     ierr = pio_inq_varid(File, 'shf', vardesc)
+     if (ierr == PIO_NOERR) then ! variable found on restart file
+       call pio_read_darray(File, vardesc, iodesc, tmpfield2, ierr)
+       do c= begchunk, endchunk
+         do i = 1, pcols
+           cam_in(c)%shf(i) = tmpfield2(i, c)
+         end do
+       end do
+     endif
+     call pio_seterrorhandling(File, err_handling)
+
+     deallocate(tmpfield2)
+
+     call radiation_read_restart(file)
 
    end subroutine read_restart_physics
-
-
-   character(len=256) function get_abs_restart_filepath ( )
-     !	
-     ! Return the full filepath to the abs-ems restart file
-     !	
-     get_abs_restart_filepath = pname
-   end function get_abs_restart_filepath
 
  end module restart_physics

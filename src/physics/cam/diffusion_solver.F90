@@ -67,9 +67,6 @@
   real(r8), private   :: cpair                           ! Specific heat of dry air
   real(r8), private   :: gravit                          ! Acceleration due to gravity
   real(r8), private   :: rair                            ! Gas constant for dry air
-  real(r8), private   :: zvir                            ! rh2o/rair - 1
-  real(r8), private   :: latvap                          ! Latent heat of vaporization
-  real(r8), private   :: karman                          ! von Karman constant
 
   logical,  private   :: do_iss                          ! Use implicit turbulent surface stress computation
 
@@ -79,7 +76,8 @@
   real(r8), parameter :: z0max   = 100._r8               ! Max value of z_0 for orography
   real(r8), parameter :: horomin = 10._r8                ! Min value of subgrid orographic height for mountain stress
   real(r8), parameter :: dv2min  = 0.01_r8               ! Minimum shear squared
-  real(r8), private   :: oroconst                        ! Converts from standard deviation to height
+
+  logical :: am_correction ! logical switch for AM correction 
 
   contains
 
@@ -87,14 +85,16 @@
   !                                                                                 !
   ! =============================================================================== !
 
-  subroutine init_vdiff( kind, iulog_in, rair_in, gravit_in, do_iss_in, &
-                         errstring )
+  subroutine init_vdiff( kind, iulog_in, rair_in, cpair_in, gravit_in, do_iss_in, &
+                         am_correction_in, errstring )
 
     integer,              intent(in)  :: kind            ! Kind used for reals
     integer,              intent(in)  :: iulog_in        ! Unit number for log output.
     real(r8),             intent(in)  :: rair_in         ! Input gas constant for dry air
+    real(r8),             intent(in)  :: cpair_in        ! Input heat capacity for dry air
     real(r8),             intent(in)  :: gravit_in       ! Input gravitational acceleration
     logical,              intent(in)  :: do_iss_in       ! Input ISS flag
+    logical,              intent(in)  :: am_correction_in! for angular momentum conservation
     character(128),       intent(out) :: errstring       ! Output status
     
     errstring = ''
@@ -105,9 +105,11 @@
         return
     endif
 
-    rair   = rair_in     
-    gravit = gravit_in 
+    rair   = rair_in
+    cpair  = cpair_in
+    gravit = gravit_in
     do_iss = do_iss_in
+    am_correction = am_correction_in
 
   end subroutine init_vdiff
 
@@ -129,15 +131,19 @@
   ! =============================================================================== !
 
   subroutine compute_vdiff( lchnk           ,                                                                   &
-                            pcols           , pver               , ncnst         , ncol         , pmid        , &
-                            pint            , pdel, rpdel              , t             , ztodt        , taux        , &
-                            tauy            , shflx              , cflx          , ntop         , nbot        , &
+                            pcols           , pver               , ncnst         , ncol         , tint        , &
+                            p               , t                  , rhoi          , ztodt        , taux        , &
+                            tauy            , shflx              , cflx          , &
                             kvh             , kvm                , kvq           , cgs          , cgh         , &
-                            zi              , ksrftms            , qmincg        , fieldlist    , fieldlistm  , &
+                            zi              , ksrftms            , dragblj       , & 
+                            qmincg          , fieldlist          , fieldlistm    , &
                             u               , v                  , q             , dse          ,               &
                             tautmsx         , tautmsy            , dtk           , topflx       , errstring   , &
-                            tauresx         , tauresy            , itaures       , cpairv       , rairi       , &
-                            do_molec_diff  , compute_molec_diff, vd_lu_qdecomp, kvt )
+                            tauresx         , tauresy            , itaures       , cpairv       , dse_top, &
+                            do_molec_diff   , use_temperature_molec_diff, vd_lu_qdecomp, &
+                            ubc_mmr, ubc_flux, kvt, pmid, &
+                            cnst_mw, cnst_fixed_ubc, cnst_fixed_ubflx, nbot_molec, &
+                            kq_scal, mw_fac)
 
     !-------------------------------------------------------------------------- !
     ! Driver routine to compute vertical diffusion of momentum, moisture, trace !
@@ -155,7 +161,12 @@
     use linear_1d_operators, only : BoundaryType, BoundaryFixedLayer, &
          BoundaryData, BoundaryFlux, TriDiagDecomp
     use vdiff_lu_solver,     only : fin_vol_lu_decomp
+    use beljaars_drag_cam,   only : do_beljaars
+    ! FIXME: This should not be needed
+    use physconst, only: rairv
   
+    use phys_control,        only : phys_getopts 
+ 
   ! Modification : Ideally, we should diffuse 'liquid-ice static energy' (sl), not the dry static energy.
   !                Also, vertical diffusion of cloud droplet number concentration and aerosol number
   !                concentration should be done very carefully in the future version.
@@ -169,16 +180,13 @@
     integer,  intent(in)    :: pver
     integer,  intent(in)    :: ncnst
     integer,  intent(in)    :: ncol                      ! Number of atmospheric columns
-    integer,  intent(in)    :: ntop                      ! Top    interface level to which vertical diffusion is applied ( = 1 ).
-    integer,  intent(in)    :: nbot                      ! Bottom interface level to which vertical diffusion is applied ( = pver ).
     integer,  intent(in)    :: itaures                   ! Indicator determining whether 'tauresx,tauresy'
                                                          ! is updated (1) or non-updated (0) in this subroutine.
 
-    real(r8), intent(in)    :: pmid(pcols,pver)          ! Mid-point pressures [ Pa ]
-    real(r8), intent(in)    :: pint(pcols,pver+1)        ! Interface pressures [ Pa ]
-    real(r8), intent(in)    :: pdel(pcols, pver)         ! Thickness of model layers.
-    real(r8), intent(in)    :: rpdel(pcols,pver)         ! 1./pdel
+    type(Coords1D), intent(in) :: p                      ! Pressure coordinates [ Pa ]
+    real(r8), intent(in)    :: tint(pcols,pver+1)        ! Temperature [ K ]
     real(r8), intent(in)    :: t(pcols,pver)             ! Temperature [ K ]
+    real(r8), intent(in)    :: rhoi(pcols,pver+1)        ! Density of air at interfaces [ kg/m3 ]
     real(r8), intent(in)    :: ztodt                     ! 2 delta-t [ s ]
     real(r8), intent(in)    :: taux(pcols)               ! Surface zonal      stress.
                                                          ! Input u-momentum per unit time per unit area into the atmosphere [ N/m2 ]
@@ -188,24 +196,29 @@
     real(r8), intent(in)    :: cflx(pcols,ncnst)         ! Surface constituent flux [ kg/m2/s ]
     real(r8), intent(in)    :: zi(pcols,pver+1)          ! Interface heights [ m ]
     real(r8), intent(in)    :: ksrftms(pcols)            ! Surface drag coefficient for turbulent mountain stress. > 0. [ kg/s/m2 ]
+    real(r8), intent(in)    :: dragblj(pcols,pver)       ! Drag profile from Beljaars SGO form drag  > 0. [ 1/s ]
     real(r8), intent(in)    :: qmincg(ncnst)             ! Minimum constituent mixing ratios from cg fluxes
     real(r8), intent(in)    :: cpairv(pcols,pver)        ! Specific heat at constant pressure
-    real(r8), intent(in)    :: rairi(pcols,pver+1)       ! Gas constant on interface levels
     real(r8), intent(in)    :: kvh(pcols,pver+1)         ! Eddy diffusivity for heat [ m2/s ]
 
     logical,  intent(in)    :: do_molec_diff             ! Flag indicating multiple constituent diffusivities
+    logical,  intent(in)    :: use_temperature_molec_diff! Flag indicating that molecular diffusion should apply to temperature, not
+                                                         ! dry static energy.
 
     type(vdiff_selector), intent(in) :: fieldlist        ! Array of flags selecting which fields to diffuse
     type(vdiff_selector), intent(in) :: fieldlistm       ! Array of flags selecting which fields for molecular diffusion
 
+    ! Dry static energy top boundary condition.
+    real(r8), intent(in) :: dse_top(pcols)
+
+    real(r8), intent(in) :: kvm(pcols,pver+1)         ! Eddy viscosity ( Eddy diffusivity for momentum ) [ m2/s ]
+    real(r8), intent(in) :: kvq(pcols,pver+1)         ! Eddy diffusivity for constituents
+    real(r8), intent(in) :: cgs(pcols,pver+1)         ! Counter-gradient star [ cg/flux ]
+    real(r8), intent(in) :: cgh(pcols,pver+1)         ! Counter-gradient term for heat
+
     ! ---------------------- !
     ! Input-Output Arguments !
     ! ---------------------- !
-
-    real(r8), intent(inout) :: kvm(pcols,pver+1)         ! Eddy viscosity ( Eddy diffusivity for momentum ) [ m2/s ]
-    real(r8), intent(inout) :: kvq(pcols,pver+1)         ! Eddy diffusivity for constituents
-    real(r8), intent(inout) :: cgs(pcols,pver+1)         ! Counter-gradient star [ cg/flux ]
-    real(r8), intent(inout) :: cgh(pcols,pver+1)         ! Counter-gradient term for heat
 
     real(r8), intent(inout) :: u(pcols,pver)             ! U wind. This input is the 'raw' input wind to
                                                          ! PBL scheme without iterative provisional update. [ m/s ]
@@ -237,59 +250,20 @@
     ! the future, and this module may directly depend on it after that.
     ! Until then, we have these highly specific interfaces hard-coded.
 
-    optional :: compute_molec_diff   ! Constituent-independent molecular diffusivity routine
     optional :: vd_lu_qdecomp        ! Constituent-dependent molecular diffusivity routine
 
     interface
-       integer function compute_molec_diff( lchnk             ,                                          &
-            pcols             , pver                , ncnst     , ncol     , t      , pmid   , pint   ,  &
-            zi                , ztodt               , kvm       , kvt      , tint   , rhoi   , tmpi2  ,  &
-            kq_scal           , ubc_t               , ubc_mmr   , ubc_flux , dse_top, cc_top ,           &
-            cnst_mw_out       , cnst_fixed_ubc_out  , cnst_fixed_ubflx_out , mw_fac_out      ,           &
-            ntop_molec_out    , nbot_molec_out      , kvt_returned )
-         import :: r8
-         integer,  intent(in)    :: pcols
-         integer,  intent(in)    :: pver
-         integer,  intent(in)    :: ncnst
-         integer,  intent(in)    :: ncol
-         integer,  intent(in)    :: lchnk
-         real(r8), intent(in)    :: t(pcols,pver)
-         real(r8), intent(in)    :: pmid(pcols,pver)
-         real(r8), intent(in)    :: pint(pcols,pver+1)
-         real(r8), intent(in)    :: zi(pcols,pver+1)
-         real(r8), intent(in)    :: ztodt
-         real(r8), intent(inout) :: kvm(pcols,pver+1)
-         real(r8), intent(out)   :: kvt(pcols,pver+1)
-         real(r8), intent(inout) :: tint(pcols,pver+1)
-         real(r8), intent(inout) :: rhoi(pcols,pver+1)
-         real(r8), intent(inout) :: tmpi2(pcols,pver+1)
-         real(r8), intent(out)   :: kq_scal(pcols,pver+1)
-         real(r8), intent(out)   :: ubc_t(pcols)
-         real(r8), intent(out)   :: ubc_mmr(pcols,ncnst)
-         real(r8), intent(out)   :: ubc_flux(ncnst)
-         real(r8), intent(out)   :: cnst_mw_out(ncnst)
-         logical,  intent(out)   :: cnst_fixed_ubc_out(ncnst)
-         logical,  intent(out)   :: cnst_fixed_ubflx_out(ncnst)
-         real(r8), intent(out)   :: mw_fac_out(pcols,pver+1,ncnst)
-         real(r8), intent(out)   :: dse_top(pcols)
-         real(r8), intent(out)   :: cc_top(pcols)
-         integer,  intent(out)   :: ntop_molec_out
-         integer,  intent(out)   :: nbot_molec_out
-         logical,  intent(out)   :: kvt_returned
-       end function compute_molec_diff
        function vd_lu_qdecomp( &
             pcols , pver   , ncol       , fixed_ubc  , mw     , &
             kv    , kq_scal, mw_facm    , dpidz_sq   , coords , &
-            interface_boundary, molec_boundary, rhoi   ,        &
-            tint  , ztodt  , ntop_molec , nbot_molec , nbot   , &
+            interface_boundary, molec_boundary, &
+            tint  , ztodt  , nbot_molec , &
             lchnk , t          , m      , no_molec_decomp) result(decomp)
          import
          integer,  intent(in)    :: pcols
          integer,  intent(in)    :: pver
          integer,  intent(in)    :: ncol
-         integer,  intent(in)    :: ntop_molec
          integer,  intent(in)    :: nbot_molec
-         integer,  intent(in)    :: nbot
          logical,  intent(in)    :: fixed_ubc
          real(r8), intent(in)    :: kv(pcols,pver+1)
          real(r8), intent(in)    :: kq_scal(pcols,pver+1)
@@ -299,7 +273,6 @@
          type(Coords1D), intent(in) :: coords
          type(BoundaryType), intent(in) :: interface_boundary
          type(BoundaryType), intent(in) :: molec_boundary
-         real(r8), intent(in)    :: rhoi(pcols,pver+1)
          real(r8), intent(in)    :: tint(pcols,pver+1)
          real(r8), intent(in)    :: ztodt
          integer,  intent(in)    :: lchnk
@@ -310,19 +283,31 @@
        end function vd_lu_qdecomp
     end interface
 
-    real(r8), intent(out), optional :: kvt(pcols,pver+1) ! Kinematic molecular conductivity
+    real(r8), intent(in), optional :: ubc_mmr(pcols,ncnst) ! Upper boundary mixing ratios [ kg/kg ]
+    real(r8), intent(in), optional :: ubc_flux(pcols,ncnst)      ! Upper boundary flux [ kg/s/m^2 ]
+
+    real(r8), intent(in), optional :: kvt(pcols,pver+1) ! Kinematic molecular conductivity
+
+    ! FIXME: This input should not be needed (and should not be passed in in vertical_diffusion).
+    real(r8), intent(in), optional :: pmid(pcols,pver)
+
+    real(r8), intent(in), optional :: cnst_mw(ncnst)          ! Molecular weight [ kg/kmole ]
+    logical, intent(in), optional  :: cnst_fixed_ubc(ncnst)   ! Whether upper boundary condition is fixed
+    logical, intent(in), optional  :: cnst_fixed_ubflx(ncnst) ! Whether upper boundary flux is a fixed non-zero value
+
+    integer, intent(in), optional  :: nbot_molec              ! Bottom level where molecular diffusivity is applied
+
+    ! kq_fac*sqrt(T)*m_d/rho for molecular diffusivity
+    real(r8), intent(in), optional :: kq_scal(pcols,pver+1)
+    ! Local sqrt(1/M_q + 1/M_d) for each constituent
+    real(r8), intent(in), optional :: mw_fac(pcols,pver+1,ncnst)
 
     ! --------------- !
     ! Local Variables ! 
     ! --------------- !
 
-    integer  :: i, k, m, icol                            ! Longitude, level, constituent indices
-    integer  :: status                                   ! Status indicator
-    integer  :: nbot_molec                               ! Bottom level where molecular diffusivity is applied
-    integer  :: ntop_molec                               ! Top level where molecular diffusivity is applied
+    integer  :: i, k, m                                  ! Longitude, level, constituent indices
     logical  :: lqtst(pcols)                             ! Adjust vertical profiles
-    logical  :: cnst_fixed_ubc(ncnst)                    ! Whether upper boundary condition is fixed
-    logical  :: cnst_fixed_ubflx(ncnst)                  ! Whether upper boundary flux is a fixed non-zero value
 
     ! LU decomposition information.
     type(TriDiagDecomp) :: decomp
@@ -330,9 +315,6 @@
 
     ! Square of derivative of pressure with height (on interfaces).
     real(r8) :: dpidz_sq(ncol,pver+1)
-
-    ! Pressure coordinates.
-    type(Coords1D) :: p
 
     ! Pressure coordinates over the molecular diffusion range only.
     type(Coords1D) :: p_molec
@@ -343,9 +325,9 @@
 
     real(r8) :: tmp1(pcols)                              ! Temporary storage
     real(r8) :: tmpi1(pcols,pver+1)                      ! Interface KE dissipation
-    real(r8) :: tint(pcols,pver+1)                       ! Interface temperature
-    real(r8) :: rhoi(pcols,pver+1)                       ! rho at interfaces
     real(r8) :: tmpi2(pcols,pver+1)                      ! dt*(g*rho)**2/dp at interfaces
+    real(r8) :: keg_in(pcols,pver)                       ! KE on entry to subroutine
+    real(r8) :: keg_out(pcols,pver)                      ! KE after U and V dissipation/diffusion
     real(r8) :: rrho(pcols)                              ! 1./bottom level density 
 
     real(r8) :: tautotx(pcols)                           ! Total surface stress ( zonal )
@@ -355,15 +337,8 @@
     real(r8) :: dinp_v(pcols,pver+1)                     ! Vertical difference at interfaces, input v
     real(r8) :: dout_u                                   ! Vertical difference at interfaces, output u
     real(r8) :: dout_v                                   ! Vertical difference at interfaces, output v
-    real(r8) :: rghd(pcols,pver+1)                       ! (1/H_i - 1/H) *(g*rho)^(-1)
 
     real(r8) :: qtm(pcols,pver)                          ! Temporary copy of q
-    real(r8) :: kq_scal(pcols,pver+1)                    ! kq_fac*sqrt(T)*m_d/rho for molecular diffusivity
-    real(r8) :: mw_fac(ncnst)                            ! sqrt(1/M_q + 1/M_d) for this constituent
-    real(r8) :: cnst_mw(ncnst)                           ! Molecular weight [ kg/kmole ]
-    real(r8) :: ubc_mmr(pcols,ncnst)                     ! Upper boundary mixing ratios [ kg/kg ]
-    real(r8) :: ubc_flux(ncnst)                          ! Upper boundary flux [ kg/s/m^2 ]
-    real(r8) :: ubc_t(pcols)                             ! Upper boundary temperature [ K ]
 
     real(r8) :: ws(pcols)                                ! Lowest-level wind speed [ m/s ]
     real(r8) :: tau(pcols)                               ! Turbulent surface stress ( not including mountain stress )
@@ -381,20 +356,10 @@
     real(r8) :: vsum_out(pcols)                          ! Vertical integral of v-momentum after doing implicit diffusion
     real(r8) :: tauimpx(pcols)                           ! Actual net stress added at the current step other than mountain stress
     real(r8) :: tauimpy(pcols)                           ! Actual net stress added at the current step other than mountain stress
-    real(r8) :: wsmin                                    ! Minimum sfc wind speed for estimating frictional
-                                                         ! transfer velocity ksrf. [ m/s ]
-    real(r8) :: ksrfmin                                  ! Minimum surface drag coefficient [ kg/s/m^2 ]
-    real(r8) :: timeres                                  ! Relaxation time scale of residual stress ( >= dt ) [ s ]
     real(r8) :: ramda                                    ! dt/timeres [ no unit ]
-    real(r8) :: psum
-    real(r8) :: u_in, u_res, tauresx_in
-    real(r8) :: v_in, v_res, tauresy_in  
 
-    real(r8) :: mw_fac_loc(pcols,pver+1,ncnst)           ! Local sqrt(1/M_q + 1/M_d) for this constituent
-
-    ! Arrays specifying boundary conditions
-    real(r8) :: dse_top(pcols)                           ! dse on top boundary
-    real(r8) :: cc_top(pcols)                            ! Lower diagonal at top interface
+    real(r8) :: taubljx(pcols)                           ! recomputed explicit/residual beljaars stress
+    real(r8) :: taubljy(pcols)                           ! recomputed explicit/residual beljaars stress
 
     ! Rate at which external (surface) stress damps wind speeds (1/s).
     real(r8) :: tau_damp_rate(ncol, pver)
@@ -402,10 +367,11 @@
     ! Combined molecular and eddy diffusion.
     real(r8) :: kv_total(pcols,pver+1)
 
+    logical  :: use_spcam
+
     !--------------------------------
     ! Variables needed for WACCM-X
     !--------------------------------
-    logical  :: kvt_returned
     real(r8) :: ttemp(ncol,pver)			 ! temporary temperature array
     real(r8) :: ttemp0(ncol,pver)			 ! temporary temperature array
 
@@ -413,48 +379,22 @@
     ! Parameters for implicit surface stress treatment !
     ! ------------------------------------------------ !
 
-    wsmin    = 1._r8                                     ! Minimum wind speed for ksrfturb computation        [ m/s ]
-    ksrfmin  = 1.e-4_r8                                  ! Minimum surface drag coefficient                   [ kg/s/m^2 ]
-    timeres  = 7200._r8                                  ! Relaxation time scale of residual stress ( >= dt ) [ s ]
+    real(r8), parameter :: wsmin = 1._r8                 ! Minimum sfc wind speed for estimating frictional
+                                                         ! transfer velocity ksrf. [ m/s ]
+    real(r8), parameter :: ksrfmin = 1.e-4_r8            ! Minimum surface drag coefficient [ kg/s/m^2 ]
+    real(r8), parameter :: timeres = 7200._r8            ! Relaxation time scale of residual stress ( >= dt ) [ s ]
 
     ! ----------------------- !
     ! Main Computation Begins !
     ! ----------------------- !
+
+    call phys_getopts(use_spcam_out = use_spcam)
 
     errstring = ''
     if( ( diffuse(fieldlist,'u') .or. diffuse(fieldlist,'v') ) .and. .not. diffuse(fieldlist,'s') ) then
           errstring = 'diffusion_solver.compute_vdiff: must diffuse s if diffusing u or v'
           return
     end if
-
-    ! Set up grid for solver calls.
-    p = Coords1D(pint(:ncol,:))
-
-    ! Boundary condition for a fixed concentration directly on a boundary
-    ! interface (i.e. a boundary layer of size 0).
-    interface_boundary = BoundaryFixedLayer(spread(0._r8, 1, ncol))
-
-    ! Compute 'rho' and 'dt*(g*rho)^2/dp' at interfaces
-
-    tint(:ncol,1) = t(:ncol,1)
-    rhoi(:ncol,1) = p%ifc(:,1) / (rairi(:ncol,1)*tint(:ncol,1))
-    do k = 2, pver
-       do i = 1, ncol
-          tint(i,k)  = 0.5_r8 * ( t(i,k) + t(i,k-1) )
-          rhoi(i,k)  = p%ifc(i,k) / (rairi(i,k)*tint(i,k))
-       end do
-    end do
-    tint(:ncol,pver+1) = t(:ncol,pver)
-    rhoi(:ncol,pver+1) = p%ifc(:,pver+1) / ( rair*tint(:ncol,pver+1) )
-
-    ! Note that the *derivative* dp/dz is g*rho
-    dpidz_sq = gravit*rhoi(:ncol,:)
-    dpidz_sq = dpidz_sq * dpidz_sq
-
-    tmpi2(:ncol,2:pver) = ztodt * dpidz_sq(:,2:pver) * p%rdst
-
-    rrho(:ncol) = rair  * t(:ncol,pver) / p%mid(:,pver)
-    tmp1(:ncol) = ztodt * gravit * p%rdel(:,pver)
 
     !--------------------------------------- !
     ! Computation of Molecular Diffusivities !
@@ -464,45 +404,48 @@
 
     if( do_molec_diff ) then
 
-        if( (.not.present(compute_molec_diff)) .or. (.not.present(vd_lu_qdecomp)) .or. (.not.present(kvt)) ) then
-              errstring = 'compute_vdiff: do_molec_diff true but compute_molec_diff or vd_lu_qdecomp or kvt missing'
+        if( (.not.present(vd_lu_qdecomp)) .or. (.not.present(kvt)) &
+             .or. (.not. present(ubc_mmr)) .or. (.not. present(ubc_flux)) ) then
+              errstring = 'compute_vdiff: do_molec_diff true but vd_lu_qdecomp or kvt missing'
               return
         endif
-
-      ! The next subroutine 'compute_molec_diff' :
-      !     Modifies : kvh, kvm, tint, rhoi, and tmpi2
-      !     Returns  : kq_scal, ubc_t, ubc_mmr, dse_top, cc_top, cnst_mw, 
-      !                cnst_fixed_ubc , mw_fac , ntop_molec 
-
-        mw_fac_loc(:,:,:) = 0._r8
-
-        !--------------------------------------------------------------------------------------------------------
-        ! In Extended WACCM, kvt is calculated rather than kvh. This is because molecular diffusion operates on 
-        ! temperature, while eddy diffusion operates on dse.  Also, pass in constituent dependent "constants"
-        !--------------------------------------------------------------------------------------------------------
-
-        status = compute_molec_diff( lchnk         ,                                                                              &
-                                     pcols         , pver            , ncnst      , ncol      , t      , pmid   , pint   ,        &
-                                     zi            , ztodt           , kvm        , kvt       , tint   , rhoi   , tmpi2  ,        &
-                                     kq_scal       , ubc_t           , ubc_mmr    , ubc_flux  , dse_top, cc_top , cnst_mw,        &
-                                     cnst_fixed_ubc, cnst_fixed_ubflx, mw_fac_loc , ntop_molec, nbot_molec,       kvt_returned )
 
         p_molec = p%section([1, ncol], [1, nbot_molec])
         molec_boundary = BoundaryFixedLayer(p%del(:,nbot_molec+1))
 
-    else
-
-        kq_scal = 0._r8
-        ubc_mmr = 0._r8
-        cc_top  = 0._r8
-        dse_top = 0._r8
-        kvt_returned = .false.
-
     endif
+
+    ! Boundary condition for a fixed concentration directly on a boundary
+    ! interface (i.e. a boundary layer of size 0).
+    interface_boundary = BoundaryFixedLayer(spread(0._r8, 1, ncol))
+
+    ! Note that the *derivative* dp/dz is g*rho
+    dpidz_sq = gravit*rhoi(:ncol,:)
+    dpidz_sq = dpidz_sq * dpidz_sq
+
+    rrho(:ncol) = rair  * t(:ncol,pver) / p%mid(:,pver)
+
+    tmpi2(:ncol,1) = ztodt * dpidz_sq(:,1) / ( p%mid(:,1) - p%ifc(:,1) )
+    tmpi2(:ncol,2:pver) = ztodt * dpidz_sq(:,2:pver) * p%rdst
+
+    ! FIXME: The following four lines are kept in only to preserve answers;
+    !        they really should be taken out completely.
+    if (do_molec_diff) &
+         tmpi2(:ncol,1) = ztodt * (gravit * rhoi(:ncol,1))**2 / ( pmid(:ncol,1) - p%ifc(:,1) )
+    dpidz_sq(:,1) = gravit*(p%ifc(:,1) / (rairv(:ncol,1,lchnk)*t(:ncol,1)))
+    dpidz_sq(:,1) = dpidz_sq(:,1)*dpidz_sq(:,1)
+
+    tmp1(:ncol) = ztodt * gravit * p%rdel(:,pver)
 
     !---------------------------- !
     ! Diffuse Horizontal Momentum !
     !---------------------------- !
+
+    do k = 1, pver
+       do i = 1, ncol
+          keg_in(i,k) = 0.5_r8 * ( u(i,k)*u(i,k) + v(i,k)*v(i,k) )
+       end do
+    end do
 
     if( diffuse(fieldlist,'u') .or. diffuse(fieldlist,'v') ) then
 
@@ -532,13 +475,13 @@
        if( do_iss ) then
 
          ! Compute surface drag coefficient for implicit diffusion 
-         ! including turbulent turbulent mountain stress. 
+         ! including turbulent mountain stress. 
 
            do i = 1, ncol
               ws(i)       = max( sqrt( u(i,pver)**2._r8 + v(i,pver)**2._r8 ), wsmin )
               tau(i)      = sqrt( taux(i)**2._r8 + tauy(i)**2._r8 )
               ksrfturb(i) = max( tau(i) / ws(i), ksrfmin )
-           end do              
+           end do
            ksrf(:ncol) = ksrfturb(:ncol) + ksrftms(:ncol)  ! Do all surface stress ( normal + tms ) implicitly
 
          ! Vertical integration of input momentum. 
@@ -558,7 +501,13 @@
          ! Add residual stress of previous time step explicitly into the lowest
          ! model layer with a relaxation time scale of 'timeres'.
 
-           ramda         = ztodt / timeres
+           if (am_correction) then
+              ! preserve time-mean torque 
+              ramda         = 1._r8
+           else
+              ramda         = ztodt / timeres
+           endif
+
            u(:ncol,pver) = u(:ncol,pver) + tmp1(:ncol)*tauresx(:ncol)*ramda
            v(:ncol,pver) = v(:ncol,pver) + tmp1(:ncol)*tauresy(:ncol)*ramda
 
@@ -574,24 +523,12 @@
               end do
            end do              
 
-         ! Debug 
-         ! icol = phys_debug_col(lchnk) 
-         ! if ( icol > 0 .and. get_nstep() .ge. 1 ) then
-         !      tauresx_in = tauresx(icol)
-         !      tauresy_in = tauresy(icol)
-         !      u_in  = u(icol,pver) - tmp1(icol) * tauresx(icol) * ramda
-         !      v_in  = v(icol,pver) - tmp1(icol) * tauresy(icol) * ramda
-         !      u_res = u(icol,pver)
-         !      v_res = v(icol,pver)
-         ! endif
-         ! Debug
-
        else
 
          ! In this case, do 'turbulent mountain stress' implicitly, 
          ! but do 'normal turbulent stress' explicitly.
          ! In this case, there is no 'residual stress' as long as 'tms' is
-         ! treated in a fully implicit wway, which is true.
+         ! treated in a fully implicit way, which is true.
 
          ! 1. Do 'tms' implicitly
 
@@ -624,7 +561,14 @@
        ! Therefore, gravit*ksrf/p%del is the acceleration of wind per unit
        ! wind speed, i.e. the rate at which wind is exponentially damped by
        ! surface stress.
+
+       ! Beljaars et al SGO scheme incorporated here. It 
+       ! appears as a "3D" tau_damp_rate specification.
+
        tau_damp_rate(:,pver) = -gravit*ksrf(:ncol)*p%rdel(:,pver)
+       do k=1,pver
+          tau_damp_rate(:,k) = tau_damp_rate(:,k) + dragblj(:ncol,k)
+       end do
 
        decomp = fin_vol_lu_decomp(ztodt, p, &
             coef_q=tau_damp_rate, coef_q_diff=kvm(:ncol,:)*dpidz_sq)
@@ -649,6 +593,16 @@
           tautmsx(i) = -ksrftms(i)*u(i,pver)
           tautmsy(i) = -ksrftms(i)*v(i,pver)
 
+          ! We want to add vertically-integrated Beljaars drag to residual stress.
+          ! So this has to be calculated locally. 
+          ! We may want to rethink the residual drag calculation performed here on. (jtb)
+          taubljx(i) = 0._r8
+          taubljy(i) = 0._r8
+          do k = 1, pver
+             taubljx(i) = taubljx(i) + (1._r8/gravit)*dragblj(i,k)*u(i,k)*p%del(i,k)
+             taubljy(i) = taubljy(i) + (1._r8/gravit)*dragblj(i,k)*v(i,k)*p%del(i,k)
+          end do
+        
           if( do_iss ) then
 
             ! Compute vertical integration of final horizontal momentum
@@ -677,42 +631,20 @@
             ! the sum of 'taux(i) - ksrftms(i)*u(i,pver) + tauresx(i)'.
 
               if( itaures .eq. 1 ) then
-                  tauresx(i) = taux(i) + tautmsx(i) + tauresx(i) - tauimpx(i)
-                  tauresy(i) = tauy(i) + tautmsy(i) + tauresy(i) - tauimpy(i)
+                 tauresx(i) = taux(i) + tautmsx(i) + taubljx(i) + tauresx(i)- tauimpx(i)
+                 tauresy(i) = tauy(i) + tautmsy(i) + taubljy(i) + tauresy(i)- tauimpy(i)
               endif
 
           else
 
-              tautotx(i) = tautmsx(i) + taux(i)
-              tautoty(i) = tautmsy(i) + tauy(i)
-              tauresx(i) = 0._r8
-              tauresy(i) = 0._r8
+             tautotx(i) = tautmsx(i) + taux(i)
+             tautoty(i) = tautmsy(i) + tauy(i)
+             tauresx(i) = 0._r8
+             tauresy(i) = 0._r8
 
           end if  ! End of 'do_iss' if
 
        end do ! End of 'do i = 1, ncol' loop
-
-     ! Debug 
-     ! icol = phys_debug_col(lchnk) 
-     ! if ( icol > 0 .and. get_nstep() .ge. 1 ) then
-     !      write(iulog,*)
-     !      write(iulog,*)  'diffusion_solver debug'  
-     !      write(iulog,*)
-     !      write(iulog,*)  'u_in, u_res, u_out'
-     !      write(iulog,*)   u_in, u_res, u(icol,pver)
-     !      write(iulog,*)  'tauresx_in, tautmsx, tauimpx(actual), tauimpx(derived), tauresx_out, taux'
-     !      write(iulog,*)   tauresx_in, tautmsx(icol), tauimpx(icol), -ksrf(icol)*u(icol,pver), tauresx(icol), taux(icol)
-     !      write(iulog,*)
-     !      write(iulog,*)  'v_in, v_res, v_out'
-     !      write(iulog,*)   v_in, v_res, v(icol,pver)
-     !      write(iulog,*)  'tauresy_in, tautmsy, tauimpy(actual), tauimpy(derived), tauresy_out, tauy'
-     !      write(iulog,*)   tauresy_in, tautmsy(icol), tauimpy(icol), -ksrf(icol)*v(icol,pver), tauresy(icol), tauy(icol)
-     !      write(iulog,*)
-     !      write(iulog,*)  'itaures, ksrf, ksrfturb, ksrftms'
-     !      write(iulog,*)   itaures, ksrf(icol), ksrfturb(icol), ksrftms(icol)
-     !      write(iulog,*) 
-     ! endif
-     ! Debug
 
        ! ------------------------------------ !
        ! Calculate kinetic energy dissipation !
@@ -745,14 +677,33 @@
           end do
        end do
 
-       ! 2. Compute dissipation term at midpoints, add to dry static energy
+       if (do_beljaars) then
 
-       do k = 1, pver
-          do i = 1, ncol
-             dtk(i,k) = ( tmpi1(i,k+1) + tmpi1(i,k) ) * p%rdel(i,k)
-             dse(i,k) = dse(i,k) + dtk(i,k)
+          ! 2. Add Kinetic Energy change across dissipation to Static Energy
+          do k = 1, pver
+             do i = 1, ncol
+                keg_out(i,k) = 0.5_r8 * ( u(i,k)*u(i,k) + v(i,k)*v(i,k) )
+             end do
           end do
-       end do
+    
+          do k = 1, pver
+             do i = 1, ncol
+                dtk(i,k) = keg_in(i,k) - keg_out(i,k)
+                dse(i,k) = dse(i,k) + dtk(i,k) ! + dkeblj(i,k)
+             end do
+          end do
+
+       else
+
+          ! 2. Compute dissipation term at midpoints, add to dry static energy
+          do k = 1, pver
+             do i = 1, ncol
+                dtk(i,k) = ( tmpi1(i,k+1) + tmpi1(i,k) ) * p%rdel(i,k)
+                dse(i,k) = dse(i,k) + dtk(i,k)
+             end do
+          end do
+
+       end if
 
     end if ! End of diffuse horizontal momentum, diffuse(fieldlist,'u') routine
 
@@ -764,17 +715,17 @@
   !                moist static energy,not the dry static energy.
 
     if( diffuse(fieldlist,'s') ) then
+      if (.not. use_spcam) then
 
-      ! Add counter-gradient to input static energy profiles
+       ! Add counter-gradient to input static energy profiles
 
-        do k = 1, pver
-           dse(:ncol,k) = dse(:ncol,k) + ztodt * p%rdel(:,k) * gravit  * &
-                                       ( rhoi(:ncol,k+1) * kvh(:ncol,k+1) * cgh(:ncol,k+1) &
-                                       - rhoi(:ncol,k  ) * kvh(:ncol,k  ) * cgh(:ncol,k  ) )
-       end do
-
-     ! Add the explicit surface fluxes to the lowest layer
-
+         do k = 1, pver
+            dse(:ncol,k) = dse(:ncol,k) + ztodt * p%rdel(:,k) * gravit  *                &
+                                        ( rhoi(:ncol,k+1) * kvh(:ncol,k+1) * cgh(:ncol,k+1) &
+                                        - rhoi(:ncol,k  ) * kvh(:ncol,k  ) * cgh(:ncol,k  ) )
+         end do
+       endif
+       ! Add the explicit surface fluxes to the lowest layer
        dse(:ncol,pver) = dse(:ncol,pver) + tmp1(:ncol) * shflx(:ncol)
 
      ! Diffuse dry static energy
@@ -782,7 +733,7 @@
        !---------------------------------------------------
        ! Solve for temperature using thermal conductivity 
        !---------------------------------------------------
-       if ( kvt_returned ) then 
+       if ( use_temperature_molec_diff ) then 
           !----------------------------------------------------------------------------------------------------
           ! In Extended WACCM, kvt is calculated rather kvh. This is because molecular diffusion operates on 
           ! temperature, while eddy diffusion operates on dse.  Also, pass in constituent dependent "constants"
@@ -794,8 +745,10 @@
                coef_q_diff=kvh(:ncol,:)*dpidz_sq, &
                upper_bndry=interface_boundary)
 
-          call decomp%left_div(dse(:ncol,:), &
-               l_cond=BoundaryData(dse_top(:ncol)))
+          if (.not. use_spcam) then
+           call decomp%left_div(dse(:ncol,:), &
+                l_cond=BoundaryData(dse_top(:ncol)))
+          endif
 
           call decomp%finalize()
 
@@ -803,10 +756,8 @@
 
           ! Modification : Why molecular diffusion does not work for dry static energy in all layers ?
 
-          if( do_molec_diff ) then
-             topflx(:ncol) =  - kvh(:ncol,ntop_molec) * tmpi2(:ncol,ntop_molec) / (ztodt*gravit) * &
-                  ( dse(:ncol,ntop_molec) - dse_top(:ncol) )
-          end if
+          topflx(:ncol) =  - kvh(:ncol,1) * tmpi2(:ncol,1) / (ztodt*gravit) * &
+               ( dse(:ncol,1) - dse_top(:ncol) )
 
           decomp = fin_vol_lu_decomp(ztodt, p, &
                coef_q_diff=kvt(:ncol,:)*dpidz_sq, &
@@ -816,7 +767,9 @@
           ttemp = ttemp0
 
           ! upper boundary is zero flux for extended model
-          call decomp%left_div(ttemp)
+          if (.not. use_spcam) then
+             call decomp%left_div(ttemp)
+          end if
 
           call decomp%finalize()
 
@@ -831,7 +784,7 @@
        else
 
           if (do_molec_diff) then
-             kv_total(:ncol,:) = kvh(:ncol,:) + kvt(:ncol,:)/cpairv(1,1)
+             kv_total(:ncol,:) = kvh(:ncol,:) + kvt(:ncol,:)/cpair
           else
              kv_total(:ncol,:) = kvh(:ncol,:)
           end if
@@ -842,8 +795,10 @@
                coef_q_diff=kv_total(:ncol,:)*dpidz_sq, &
                upper_bndry=interface_boundary)
 
-          call decomp%left_div(dse(:ncol,:), &
-               l_cond=BoundaryData(dse_top(:ncol)))
+          if (.not. use_spcam) then
+             call decomp%left_div(dse(:ncol,:), &
+                  l_cond=BoundaryData(dse_top(:ncol)))
+          end if
 
           call decomp%finalize()
 
@@ -852,8 +807,10 @@
           ! Modification : Why molecular diffusion does not work for dry static energy in all layers ?
 
           if( do_molec_diff ) then
-             topflx(:ncol) =  - kv_total(:ncol,ntop_molec) * tmpi2(:ncol,ntop_molec) / (ztodt*gravit) * &
-                  ( dse(:ncol,ntop_molec) - dse_top(:ncol) )
+             topflx(:ncol) =  - kv_total(:ncol,1) * tmpi2(:ncol,1) / (ztodt*gravit) * &
+                  ( dse(:ncol,1) - dse_top(:ncol) )
+          else
+             topflx(:ncol) = 0._r8
           end if
 
        endif
@@ -875,25 +832,27 @@
     do m = 1, ncnst
 
        if( diffuse(fieldlist,'q',m) ) then
+           if (.not. use_spcam) then
 
-           ! Add the nonlocal transport terms to constituents in the PBL.
-           ! Check for neg q's in each constituent and put the original vertical
-           ! profile back if a neg value is found. A neg value implies that the
-           ! quasi-equilibrium conditions assumed for the countergradient term are
-           ! strongly violated.
-
-           qtm(:ncol,:pver) = q(:ncol,:pver,m)
-
-           do k = 1, pver
-              q(:ncol,k,m) = q(:ncol,k,m) + &
-                             ztodt * p%rdel(:,k) * gravit  * ( cflx(:ncol,m) * rrho(:ncol) ) * &
-                           ( rhoi(:ncol,k+1) * kvh(:ncol,k+1) * cgs(:ncol,k+1)                 &
-                           - rhoi(:ncol,k  ) * kvh(:ncol,k  ) * cgs(:ncol,k  ) )
-           end do
-           lqtst(:ncol) = all(q(:ncol,1:pver,m) >= qmincg(m), 2)
-           do k = 1, pver
-              q(:ncol,k,m) = merge( q(:ncol,k,m), qtm(:ncol,k), lqtst(:ncol) )
-           end do
+              ! Add the nonlocal transport terms to constituents in the PBL.
+              ! Check for neg q's in each constituent and put the original vertical
+              ! profile back if a neg value is found. A neg value implies that the
+              ! quasi-equilibrium conditions assumed for the countergradient term are
+              ! strongly violated.
+   
+              qtm(:ncol,:pver) = q(:ncol,:pver,m)
+   
+              do k = 1, pver
+                 q(:ncol,k,m) = q(:ncol,k,m) + &
+                                ztodt * p%rdel(:,k) * gravit  * ( cflx(:ncol,m) * rrho(:ncol) ) * &
+                              ( rhoi(:ncol,k+1) * kvh(:ncol,k+1) * cgs(:ncol,k+1)                 &
+                              - rhoi(:ncol,k  ) * kvh(:ncol,k  ) * cgs(:ncol,k  ) )
+              end do
+              lqtst(:ncol) = all(q(:ncol,1:pver,m) >= qmincg(m), 2)
+              do k = 1, pver
+                 q(:ncol,k,m) = merge( q(:ncol,k,m), qtm(:ncol,k), lqtst(:ncol) )
+              end do
+           endif
 
            ! Add the explicit surface fluxes to the lowest layer
 
@@ -907,9 +866,9 @@
            if( do_molec_diff .and. diffuse(fieldlistm,'q',m)) then
 
               decomp = vd_lu_qdecomp( pcols , pver   , ncol              , cnst_fixed_ubc(m), cnst_mw(m), &
-                   kvq   , kq_scal, mw_fac_loc(:,:,m) ,dpidz_sq          , p_molec, &
-                   interface_boundary, molec_boundary, rhoi      ,               &
-                   tint  , ztodt  , ntop_molec        , nbot_molec       , nbot      , &
+                   kvq   , kq_scal, mw_fac(:,:,m) ,dpidz_sq          , p_molec, &
+                   interface_boundary, molec_boundary, &
+                   tint  , ztodt  , nbot_molec       , &
                    lchnk , t                , m         , no_molec_decomp)
 
               ! This to calculate the upper boundary flux of H.    -Hanli Liu
@@ -922,7 +881,7 @@
 
                  call decomp%left_div(q(:ncol,:,m), &
                       l_cond=BoundaryFlux( &
-                      spread(-gravit*ubc_flux(m),1,ncol), ztodt, &
+                      -gravit*ubc_flux(:ncol,m), ztodt, &
                       p%del(:,1)))
 
               else
@@ -934,9 +893,11 @@
 
            else
 
-              ! Currently, no ubc for constituents without molecular
-              ! diffusion (they cannot diffuse out the top of the model).
-              call no_molec_decomp%left_div(q(:ncol,:,m))
+              if (.not. use_spcam) then
+                 ! Currently, no ubc for constituents without molecular
+                 ! diffusion (they cannot diffuse out the top of the model).
+                 call no_molec_decomp%left_div(q(:ncol,:,m))
+              end if
 
            end if
 
@@ -944,7 +905,6 @@
     end do
 
     call no_molec_decomp%finalize()
-    call p%finalize()
 
   end subroutine compute_vdiff
 

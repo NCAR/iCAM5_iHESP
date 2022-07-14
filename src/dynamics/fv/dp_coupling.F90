@@ -4,17 +4,17 @@ module dp_coupling
 ! !MODULE: dp_coupling --- dynamics-physics coupling module
 !
    use shr_kind_mod,      only: r8 => shr_kind_r8
-   use rgrid,             only: nlon
-   use ppgrid,            only: pcols, pver, pverp
+   use ppgrid,            only: pcols, pver
    use phys_grid
-   
+
    use physics_types,     only: physics_state, physics_tend
-   use constituents,      only: pcnst, qmin
-   use physconst,         only: cpair, gravit, rair, zvir, cpairv, rairv
+   use constituents,      only: pcnst
+   use physconst,         only: gravit, zvir, cpairv, rairv
    use geopotential,      only: geopotential_t
    use check_energy,      only: check_energy_timestep_init
-   use dynamics_vars,     only: T_FVDYCORE_GRID
-   use dyn_comp,          only: dyn_import_t, dyn_export_t
+   use dynamics_vars,     only: T_FVDYCORE_GRID, t_fvdycore_state
+   use dyn_internal_state,only: get_dyn_state
+   use dyn_comp,          only: dyn_import_t, dyn_export_t, fv_print_dpcoup_warn
    use cam_abortutils,    only: endrun
 #if defined ( SPMD )
    use spmd_dyn,          only: local_dp_map, block_buf_nrecs, chunk_buf_nrecs
@@ -25,8 +25,7 @@ module dp_coupling
 !--------------------------------------------
 !  Variables needed for WACCM-X
 !--------------------------------------------
-   use constituents,  only: cnst_get_ind, cnst_mw  !Needed to access constituent molecular weights
-   use shr_const_mod, only: shr_const_rgas         !Gas constant
+   use constituents,  only: cnst_get_ind           !Needed to access constituent indices
 !
 ! !PUBLIC MEMBER FUNCTIONS:
       PUBLIC d_p_coupling, p_d_coupling
@@ -34,11 +33,11 @@ module dp_coupling
 !
 ! !DESCRIPTION:
 !
-!      This module provides 
+!      This module provides
 !
 !      \begin{tabular}{|l|l|} \hline \hline
 !        d\_p\_coupling    &  dynamics output to physics input \\ \hline
-!        p\_d\_coupling    &  physics output to dynamics input \\ \hline 
+!        p\_d\_coupling    &  physics output to dynamics input \\ \hline
 !                                \hline
 !      \end{tabular}
 !
@@ -51,7 +50,7 @@ module dp_coupling
 !   02.03.01   Worley     Support for nontrivial physics remapping
 !   03.03.28   Boville    set all physics_state elements, add check_energy_timestep_init
 !   03.08.13   Sawyer     Removed ghost N1 region in u3sxy
-!   05.06.28   Sawyer     Simplified interfaces -- only XY decomposition 
+!   05.06.28   Sawyer     Simplified interfaces -- only XY decomposition
 !   05.10.25   Sawyer     Extensive refactoring, dyn_interface
 !   05.11.10   Sawyer     Now using dyn_import/export_t containers
 !   06.07.01   Sawyer     Transitioned constituents to T_TRACERS
@@ -59,7 +58,7 @@ module dp_coupling
 !EOP
 !-----------------------------------------------------------------------
 
-   private 
+   private
    real(r8), parameter ::  D0_5                    =  0.5_r8
    real(r8), parameter ::  D1_0                    =  1.0_r8
 
@@ -69,17 +68,18 @@ CONTAINS
 !BOP
 ! !IROUTINE: d_p_coupling --- convert dynamics output to physics input
 !
-! !INTERFACE: 
+! !INTERFACE:
   subroutine d_p_coupling(grid, phys_state, phys_tend,  pbuf2d, dyn_out)
 
 ! !USES:
     use physics_buffer, only: physics_buffer_desc, pbuf_get_chunk, &
                               pbuf_get_field
-    use constituents,   only: cnst_get_type_byind, qmin
+    use constituents,   only: qmin
     use physics_types,  only: set_state_pdry, set_wet_to_dry
 
-    use pmgrid,         only: plev, plevp
+    use pmgrid,         only: plev
     use ctem,           only: ctem_diags, do_circulation_diags
+    use diag_module,    only: fv_diag_am_calc
     use gravity_waves_sources, only: gws_src_fnct
     use physconst,      only: physconst_update
     use shr_const_mod,  only: shr_const_rwv
@@ -87,25 +87,27 @@ CONTAINS
     use qbo,            only: qbo_use_forcing
     use phys_control,   only: use_gw_front, use_gw_front_igw, waccmx_is
     use zonal_mean,     only: zonal_mean_3D
+    use d2a3dikj_mod,   only: d2a3dikj
+    use qneg_module,   only: qneg3
 
 !-----------------------------------------------------------------------
     implicit none
 !-----------------------------------------------------------------------
 ! !INPUT PARAMETERS:
 !
-    type(T_FVDYCORE_GRID), intent(in) :: grid ! FV Dynamics grid
+    type(t_fvdycore_grid), intent(in) :: grid
     type(physics_buffer_desc), pointer :: pbuf2d(:,:)
-    type(dyn_export_t), intent(in)    :: dyn_out  ! dynamics export 
+    type(dyn_export_t), intent(in)    :: dyn_out  ! dynamics export
 
 ! !OUTPUT PARAMETERS:
 
     type(physics_state), intent(inout), dimension(begchunk:endchunk) :: phys_state
     type(physics_tend ), intent(inout), dimension(begchunk:endchunk) :: phys_tend
-    
+
 
 ! !DESCRIPTION:
 !
-!   Coupler for converting dynamics output variables into physics 
+!   Coupler for converting dynamics output variables into physics
 !   input variables
 !
 ! !REVISION HISTORY:
@@ -124,11 +126,18 @@ CONTAINS
 !BOC
 ! !LOCAL VARIABLES:
 
+    type(t_fvdycore_state), pointer :: dyn_state
+
 ! Variables from dynamics export container
     real(r8), pointer :: phisxy(:,:)              ! surface geopotential
     real(r8), pointer :: psxy (:,:)               ! surface pressure
     real(r8), pointer :: u3sxy(:,:,:)             ! u-wind on d-grid
     real(r8), pointer :: v3sxy(:,:,:)             ! v-wind on d-grid
+    real(r8), pointer :: du3sxy(:,:,:)            ! u-wind increment on d-grid
+    real(r8), pointer :: dv3sxy(:,:,:)            ! v-wind increment on d-grid
+    real(r8), pointer :: dua3sxy(:,:,:)           ! u-wind adv. inc. on d-grid
+    real(r8), pointer :: dva3sxy(:,:,:)           ! v-wind adv. inc. on d-grid
+    real(r8), pointer :: duf3sxy(:,:,:)           ! u-wind fixer inc.on d-grid
     real(r8), pointer :: ptxy (:,:,:)             ! Virtual pot temp
     real(r8), pointer :: tracer(:,:,:,:)          ! constituents
     real(r8), pointer :: omgaxy(:,:,:)            ! vertical velocity
@@ -147,8 +156,6 @@ CONTAINS
                                      ! offsets into block buffer for packing data
     integer :: cpter(pcols,0:pver)   ! offsets into chunk buffer for unpacking data
 
-    real(r8) :: rlat(pcols)          ! array of latitudes (radians)
-    real(r8) :: rlon(pcols)          ! array of longitudes (radians)
     real(r8) :: qmavl                ! available q at level pver-1
     real(r8) :: dqreq                ! q change at pver-1 required to remove q<qmin at pver
     real(r8) :: qbot                 ! bottom level q before change
@@ -157,6 +164,13 @@ CONTAINS
     real(r8) :: fraction
     real(r8), allocatable :: u3(:, :, :)       ! u-wind on a-grid
     real(r8), allocatable :: v3(:, :, :)       ! v-wind on a-grid
+    real(r8), allocatable :: du3 (:, :, :)     ! u-wind increment on a-grid
+    real(r8), allocatable :: dv3 (:, :, :)     ! v-wind increment on a-grid
+    real(r8), allocatable :: dua3(:, :, :)     ! u-wind adv. inc. on a-grid
+    real(r8), allocatable :: dva3(:, :, :)     ! v-wind adv. inc. on a-grid
+    real(r8), allocatable :: duf3(:, :, :)     ! u-wind fixer inc.on a-grid
+    real(r8), allocatable :: dummy(:,:, :)     ! dummy work array ~ v3sxy*0
+
     real(r8), allocatable, dimension(:) :: bbuffer, cbuffer
                                      ! transpose buffers
 
@@ -164,12 +178,11 @@ CONTAINS
 
     real(r8) :: uzm(plev,grid%jfirstxy:grid%jlastxy) ! Zonal mean zonal wind
 
-    integer  :: im, jm, km, kmp1, iam
+    integer  :: km, kmp1, iam
     integer  :: ifirstxy, ilastxy, jfirstxy, jlastxy
     integer  :: ic, jc
     integer  :: astat
     integer  :: boff
-    logical, save :: debug_adjust_print = .true. ! true => print out tracer adjustment msgs
 
 !--------------------------------------------
 !  Variables needed for WACCM
@@ -195,11 +208,13 @@ CONTAINS
 #if (! defined SPMD)
     integer  :: block_buf_nrecs = 0
     integer  :: chunk_buf_nrecs = 0
-    logical  :: local_dp_map=.true. 
+    logical  :: local_dp_map=.true.
 #endif
     type(physics_buffer_desc), pointer :: pbuf_chnk(:)
 
 !---------------------------End Local workspace-------------------------
+
+    dyn_state => get_dyn_state()
 
     if (use_gw_front .or. use_gw_front_igw) then
 
@@ -237,8 +252,6 @@ CONTAINS
     pkxy     => dyn_out%pk
     pkzxy    => dyn_out%pkz
 
-    im       = grid%im
-    jm       = grid%jm
     km       = grid%km
     kmp1     = km + 1
 
@@ -257,7 +270,7 @@ CONTAINS
     allocate (v3(ifirstxy:ilastxy, km, jfirstxy:jlastxy))
 
     if (iam .lt. grid%npes_xy) then
-       call d2a3dikj( grid, u3sxy,  v3sxy, u3, v3 )
+       call d2a3dikj(grid, dyn_state%am_correction, u3sxy,  v3sxy, u3, v3)
     end if  ! (iam .lt. grid%npes_xy)
 
     call t_stopf  ('d2a3dikj')
@@ -265,12 +278,44 @@ CONTAINS
     if ( do_circulation_diags ) then
        call t_startf('DP_CPLN_ctem')
        call ctem_diags( u3, v3, omgaxy, ptxy(:,jfirstxy:jlastxy,:), tracer(:,jfirstxy:jlastxy,:,1), &
-                         psxy, pexy, grid)
+                        psxy, pexy, grid)
        call t_stopf('DP_CPLN_ctem')
     endif
-    if (use_gw_front .or. use_gw_front_igw) then
+
+    if (dyn_state%am_diag) then
+       du3sxy   => dyn_out%du3s
+       dv3sxy   => dyn_out%dv3s
+       dua3sxy  => dyn_out%dua3s
+       dva3sxy  => dyn_out%dva3s
+       duf3sxy  => dyn_out%duf3s
+       allocate (du3 (ifirstxy:ilastxy, km, jfirstxy:jlastxy))
+       allocate (dv3 (ifirstxy:ilastxy, km, jfirstxy:jlastxy))
+       allocate (dua3(ifirstxy:ilastxy, km, jfirstxy:jlastxy))
+       allocate (dva3(ifirstxy:ilastxy, km, jfirstxy:jlastxy))
+       allocate (duf3(ifirstxy:ilastxy, km, jfirstxy:jlastxy))
+       allocate (dummy(ifirstxy:ilastxy,jfirstxy:jlastxy, km))
+       du3(:,:,:)   = 0._r8
+       dv3(:,:,:)   = 0._r8
+       dua3(:,:,:)  = 0._r8
+       dva3(:,:,:)  = 0._r8
+       duf3(:,:,:)  = 0._r8
+       dummy(:,:,:) = 0._r8
+
+       if (iam .lt. grid%npes_xy) then
+             ! (note dummy use of dva3 hence call order matters)
+          call d2a3dikj(grid, dyn_state%am_correction,duf3sxy,   dummy, duf3 ,dva3)
+          call d2a3dikj(grid, dyn_state%am_correction,dua3sxy, dva3sxy, dua3, dva3)
+          call d2a3dikj(grid, dyn_state%am_correction, du3sxy,  dv3sxy, du3 , dv3 )
+       end if  ! (iam .lt. grid%npes_xy)
+
+       call t_startf('DP_CPLN_fv_am')
+       call fv_diag_am_calc(grid, psxy, pexy, du3, dv3, dua3, dva3, duf3)
+       call t_stopf('DP_CPLN_fv_am')
+    endif
+
+    if ((iam .lt. grid%npes_xy) .and. (use_gw_front .or. use_gw_front_igw)) then
        call t_startf('DP_CPLN_gw_sources')
-       call gws_src_fnct (u3,v3,ptxy,  tracer(:,jfirstxy:jlastxy,:,1), pexy, grid, frontgf, frontga)
+       call gws_src_fnct(grid, u3, v3, ptxy, tracer(:,jfirstxy:jlastxy,:,1), pexy, frontgf, frontga)
        call t_stopf('DP_CPLN_gw_sources')
     end if
     if (qbo_use_forcing) then
@@ -356,7 +401,7 @@ chnk_loop1 : &
                 end do
              end do
           end do
- 
+
        end do chnk_loop1
 
     else has_local_map
@@ -389,9 +434,7 @@ chnk_loop1 : &
        endif
 
 !$omp parallel do private (j, i, ib, k, m)
-!dir$ concurrent
        do j=jfirstxy,jlastxy
-!dir$ concurrent
           do i=ifirstxy,ilastxy
              ib = (j-jfirstxy)*(ilastxy-ifirstxy+1) + (i-ifirstxy+1)
 
@@ -402,7 +445,6 @@ chnk_loop1 : &
              bbuffer(bpter(ib,0)+2) = psxy(i,j)
              bbuffer(bpter(ib,0)+3) = phisxy(i,j)
 
-!dir$ concurrent
              do k=1,km
 
                 bbuffer(bpter(ib,k))   = pexy(i,k,j)
@@ -411,7 +453,7 @@ chnk_loop1 : &
                 bbuffer(bpter(ib,k)+3) = v3    (i,k,j)
                 bbuffer(bpter(ib,k)+4) = omgaxy(i,k,j)
                 bbuffer(bpter(ib,k)+5) = ptxy(i,j,k) / (D1_0 + zvir*tracer(i,j,k,1))
-                bbuffer(bpter(ib,k)+6) = pkxy(i,j,pver+1) / pkzxy(i,j,k) 
+                bbuffer(bpter(ib,k)+6) = pkxy(i,j,pver+1) / pkzxy(i,j,k)
 
                 if (use_gw_front .or. use_gw_front_igw) then
                    bbuffer(bpter(ib,k)+7) = frontgf(i,k,j)
@@ -498,7 +540,7 @@ chnk_loop2 : &
 !------------------------------------------------------
 !  Get indices to access O, O2, H, H2, and N species
 !------------------------------------------------------
-    if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
+    if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
       call cnst_get_ind('O', ixo)
       call cnst_get_ind('O2', ixo2)
       call cnst_get_ind('H', ixh)
@@ -523,7 +565,7 @@ chnk_loop2 : &
 
 ! Attempt to remove negative constituents in bottom layer only by moving from next level
 ! This is a BAB kludge to avoid masses of warning messages for cloud water and ice, since
-! the vertical remapping operator currently being used for cam is not strictly monotonic 
+! the vertical remapping operator currently being used for cam is not strictly monotonic
 ! at the endpoints.
        do m=1,pcnst
           do i=1,ncol
@@ -540,16 +582,15 @@ chnk_loop2 : &
                    phys_state(lchnk)%q(i,pver-1,m) = phys_state(lchnk)%q(i,pver-1,m) - dqreq
                    ! Comment out these log messages since they can make the log files so
                    ! large that they're unusable.
-                   !if (dqreq>1.e-14_r8 .and. debug_adjust_print) write(iulog,*) 'dpcoup dqreq', m, lchnk, i, qbot, qbotm1, dqreq
-                    if (dqreq>qmin(m) .and. dqreq>fraction*qbotm1 .and. debug_adjust_print) &
+                    if (dqreq>qmin(m) .and. dqreq>fraction*qbotm1 .and. (trim(fv_print_dpcoup_warn) == "full")) &
                                                                 write(iulog,*) 'dpcoup dqreq', m, lchnk, i, qbot, qbotm1, dqreq
-                else 
+                else
                    ! Comment out these log messages since they can make the log files so
                    ! large that they're unusable.
-                   !if (debug_adjust_print) write(iulog,*) 'dpcoup cant adjust', m, lchnk, i, qbot, qbotm1, dqreq
-                    if (dqreq>qmin(m) .and. debug_adjust_print) write(iulog,*) 'dpcoup cant adjust', m, lchnk, i, &
-                         qbot, qbotm1, dqreq
-                end if
+                    if (dqreq>qmin(m) .and. (trim(fv_print_dpcoup_warn) == "full")) then
+                       write(iulog,*) 'dpcoup cant adjust', m, lchnk, i, qbot, qbotm1, dqreq
+                    end if
+                 end if
              end if
           end do
        end do
@@ -567,7 +608,7 @@ chnk_loop2 : &
                 mmrSum_O_O2_H = phys_state(lchnk)%q(i,k,ixo)+phys_state(lchnk)%q(i,k,ixo2)+phys_state(lchnk)%q(i,k,ixh)
 
                 if ((1._r8-mmrMin-mmrSum_O_O2_H) < 0._r8) then
-           
+
                    phys_state(lchnk)%q(i,k,ixo) = phys_state(lchnk)%q(i,k,ixo) * (1._r8 - N2mmrMin) / mmrSum_O_O2_H
 
                    phys_state(lchnk)%q(i,k,ixo2) = phys_state(lchnk)%q(i,k,ixo2) * (1._r8 - N2mmrMin) / mmrSum_O_O2_H
@@ -579,28 +620,26 @@ chnk_loop2 : &
                 if(phys_state(lchnk)%q(i,k,ixh2) .gt. 6.e-5_r8) then
                    phys_state(lchnk)%q(i,k,ixh2) = 6.e-5_r8
                 endif
-	     
+
              end do
           end do
        endif
 
 !-----------------------------------------------------------------------------
 ! Call physconst_update to compute cpairv, rairv, mbarv, and cappav as constituent dependent variables
-! and compute molecular viscosity(kmvis) and conductivity(kmcnd) 
+! and compute molecular viscosity(kmvis) and conductivity(kmcnd)
 !-----------------------------------------------------------------------------
        if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
-         call physconst_update(phys_state(lchnk)%q, phys_state(lchnk)%t, &
-                                cnst_mw(ixo), cnst_mw(ixo2), cnst_mw(ixh), cnst_mw(ixn), &
-                                                           ixo, ixo2, ixh, pcnst, lchnk, ncol)
+         call physconst_update(phys_state(lchnk)%q, phys_state(lchnk)%t, lchnk, ncol)
        endif
 
 !------------------------------------------------------------------------
 ! Fill local zvirv variable; calculated for WACCM-X
 !------------------------------------------------------------------------
-       if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then 
+       if ( waccmx_is('ionosphere') .or. waccmx_is('neutral') ) then
          zvirv(:,:) = shr_const_rwv / rairv(:,:,lchnk) -1._r8
        else
-         zvirv(:,:) = zvir    
+         zvirv(:,:) = zvir
        endif
 !
 ! Compute initial geopotential heights
@@ -638,8 +677,15 @@ chnk_loop2 : &
 
     deallocate (u3)
     deallocate (v3)
+    if (dyn_state%am_diag) then
+       deallocate (du3)
+       deallocate (dv3)
+       deallocate (dua3)
+       deallocate (dva3)
+       deallocate (duf3)
+       deallocate (dummy)
+    end if
 
-!EOC
   end subroutine d_p_coupling
 !-----------------------------------------------------------------------
 
@@ -647,7 +693,7 @@ chnk_loop2 : &
 !BOP
 ! !IROUTINE: p_d_coupling --- convert physics output to dynamics input
 !
-! !INTERFACE: 
+! !INTERFACE:
   subroutine p_d_coupling(grid, phys_state, phys_tend, &
                           dyn_in, dtime, zvir, cappa, ptop)
 
@@ -655,7 +701,9 @@ chnk_loop2 : &
 #if ( defined OFFLINE_DYN )
    use metdata,     only: get_met_fields
 #endif
- 
+   use physics_buffer, only: physics_buffer_desc
+   use physconst,      only: physconst_calc_kappav
+
 !-----------------------------------------------------------------------
     implicit none
 
@@ -692,6 +740,8 @@ chnk_loop2 : &
 !BOC
 ! !LOCAL VARIABLES:
 
+    type(t_fvdycore_state), pointer :: dyn_state
+
 ! Variables from the dynamics import container
 
     real(r8), pointer :: psxy(:,:)
@@ -724,7 +774,6 @@ chnk_loop2 : &
     integer, allocatable, dimension(:,:) :: bpter
                                      ! offsets into block buffer for unpacking data
     integer :: cpter(pcols,0:pver)   ! offsets into chunk buffer for packing data
-    integer :: iqa, iqb, iqc, iqd, mq     ! used for tracer transpose grouping
 
     real(r8) :: dt5
     real(r8), allocatable, dimension(:) :: &
@@ -732,11 +781,15 @@ chnk_loop2 : &
 #if (! defined SPMD)
     integer  :: block_buf_nrecs = 0
     integer  :: chunk_buf_nrecs = 0
-    logical  :: local_dp_map=.true. 
+    logical  :: local_dp_map=.true.
 #endif
-    integer  :: im, jm, km, ng_d, ng_s, iam
-    integer  :: ifirstxy, ilastxy, jfirstxy, jlastxy 
-    integer  :: jfirst, jlast, kfirst, klast
+    integer  :: km, iam
+    integer  :: ifirstxy, ilastxy, jfirstxy, jlastxy
+
+    real(r8) :: cappa3v( grid%ifirstxy:grid%ilastxy,&
+                         grid%jfirstxy:grid%jlastxy, grid%km )
+
+    dyn_state => get_dyn_state()
 
 ! Pull the variables out of the dynamics export container
 
@@ -750,24 +803,14 @@ chnk_loop2 : &
     pexy    => dyn_in%pe
     delpxy  => dyn_in%delp
     pkxy    => dyn_in%pk
-    pkzxy   => dyn_in%pkz    
+    pkzxy   => dyn_in%pkz
 
-    im   = grid%im
-    jm   = grid%jm
     km   = grid%km
 
     ifirstxy = grid%ifirstxy
     ilastxy  = grid%ilastxy
     jfirstxy = grid%jfirstxy
     jlastxy  = grid%jlastxy
-
-    jfirst   = grid%jfirst
-    jlast    = grid%jlast
-    kfirst   = grid%kfirst
-    klast    = grid%klast
-
-    ng_d     = grid%ng_d
-    ng_s     = grid%ng_s
 
     iam      = grid%iam
 
@@ -835,9 +878,7 @@ chnk_loop2 : &
                 cbuffer(cpter(i,0):cpter(i,0)+3+pcnst) = 0.0_r8
              end do
 
-!dir$ concurrent
              do k=1,km
-!dir$ concurrent
                 do i=1,ncol
 
                    cbuffer(cpter(i,k))   = phys_tend(lchnk)%dvdt(i,k)
@@ -850,7 +891,7 @@ chnk_loop2 : &
                    end do
 
                 end do
-  
+
              end do
 
           end do
@@ -865,11 +906,8 @@ chnk_loop2 : &
           endif
 
 !$omp parallel do private (j, i, ib, k, m)
-!dir$ concurrent
           do j=jfirstxy,jlastxy
-!dir$ concurrent
              do k=1,km
-!dir$ concurrent
                 do i=ifirstxy,ilastxy
                    ib = (j-jfirstxy)*(ilastxy-ifirstxy+1) + (i-ifirstxy+1)
 
@@ -894,7 +932,6 @@ chnk_loop2 : &
 
 ! WS: 02.08.06: Update t3 to temperature
 !$omp parallel do private(i,j,k)
-!dir$ concurrent
        do k=1,km
           do j = jfirstxy,jlastxy
              do i = ifirstxy,ilastxy
@@ -911,7 +948,8 @@ chnk_loop2 : &
        call t_barrierf('sync_uv3s_update', grid%commxy)
        call t_startf('uv3s_update')
        if (iam .lt. grid%npes_xy) then
-          call uv3s_update( grid, dudtxy, u3sxy, dvdtxy, v3sxy, dt5 )
+          call uv3s_update(grid, dudtxy, u3sxy, dvdtxy, v3sxy, dt5, &
+                           dyn_state%am_correction)
        end if  ! (iam .lt. grid%npes_xy)
        call t_stopf('uv3s_update')
 
@@ -924,7 +962,12 @@ chnk_loop2 : &
     call t_barrierf('sync_p_d_adjust', grid%commxy)
     call t_startf ('p_d_adjust')
     if (iam .lt. grid%npes_xy) then
-       call p_d_adjust(grid, tracer, dummy_pelnxy, pkxy, pkzxy, zvir,  cappa, &
+       if (grid%high_alt) then
+          call physconst_calc_kappav(ifirstxy,ilastxy,jfirstxy,jlastxy,1,km, grid%ntotq, tracer, cappa3v )
+       else
+          cappa3v = cappa
+       endif
+       call p_d_adjust(grid, tracer, dummy_pelnxy, pkxy, pkzxy, zvir, cappa3v, &
                        delpxy, ptxy, pexy, psxy, ptop)
     end if  ! (iam .lt. grid%npes_xy)
     call t_stopf  ('p_d_adjust')

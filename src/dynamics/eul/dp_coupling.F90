@@ -6,9 +6,8 @@ module dp_coupling
 
    use shr_kind_mod,      only: r8 => shr_kind_r8
    use ppgrid,            only: pcols, pver
-   use rgrid,             only: nlon
    use pmgrid,            only: plev, beglat, endlat, plon
-   
+
    use phys_grid
    use physics_types,     only: physics_state, physics_tend
    use constituents,      only: pcnst
@@ -37,10 +36,11 @@ CONTAINS
 ! Coupler for converting dynamics output variables into physics input variables
 ! also writes dynamics variables (on physics grid) to history file
 !------------------------------------------------------------------------------
-    use physconst,     only: cappa
-    use constituents,  only: cnst_get_type_byind, qmin
-    use physics_types, only: set_state_pdry
-    use physics_buffer, only : pbuf_get_chunk, physics_buffer_desc
+    use physconst,      only: cappa
+    use constituents,   only: cnst_get_type_byind, qmin
+    use physics_types,  only: set_state_pdry
+    use physics_buffer, only: pbuf_get_chunk, physics_buffer_desc
+    use qneg_module,    only: qneg3
 
 !------------------------------Arguments--------------------------------
     real(r8), intent(in) :: ps  (plon, beglat:endlat)            ! surface pressure
@@ -50,11 +50,11 @@ CONTAINS
     real(r8), intent(in) :: q3  (plon, plev, pcnst, beglat:endlat) ! constituents
     real(r8), intent(in) :: omga(plon, plev, beglat:endlat)      ! vertical velocity
     real(r8), intent(in) :: phis(plon, beglat:endlat)            ! Surface geopotential
-    real(r8), intent(in) :: pdeld (:,:,beglat:)  
+    real(r8), intent(in) :: pdeld (:,:,beglat:)
     type(physics_buffer_desc), pointer                               :: pbuf2d(:,:)
     type(physics_state), intent(inout), dimension(begchunk:endchunk) :: phys_state
     type(physics_tend ), intent(inout), dimension(begchunk:endchunk) :: phys_tend
-    
+
 !
 !---------------------------Local workspace-----------------------------
 #if (! defined SPMD)
@@ -64,7 +64,7 @@ CONTAINS
     integer  :: block_buf_nrecs = 0
     integer  :: chunk_buf_nrecs = 0
     integer  :: mpicom = 0
-    logical  :: local_dp_map=.true. 
+    logical  :: local_dp_map=.true.
 #endif
 
     integer :: i,k,j,m,lchnk         ! indices
@@ -85,7 +85,7 @@ CONTAINS
 
 ! Determine which constituents are wet and which are dry
     do m=2,pcnst
-       if (cnst_get_type_byind(m).eq.'wet') then  
+       if (cnst_get_type_byind(m).eq.'wet') then
           wetq(m) = .true.
        else
           wetq(m) = .false.
@@ -107,7 +107,7 @@ CONTAINS
              phys_state(lchnk)%ps   (i)     = ps  (lons(i),lats(i))
              phys_state(lchnk)%phis (i)     = phis(lons(i),lats(i))
           end do
-  
+
           do k=1,plev
              do i=1,ncol
                 phys_state(lchnk)%t    (i,k)   = t3  (lons(i),k,lats(i))
@@ -127,7 +127,7 @@ CONTAINS
           ! convert moist-type constituents from dry to moist mixing ratio
 
           do m=2,pcnst
-             if (wetq(m)) then  
+             if (wetq(m)) then
                 do k=1,plev
                    do i=1,ncol
                       phys_state(lchnk)%q(i,k,m) = q3(lons(i),k,m,lats(i))*(1._r8 - q3(lons(i),k,1,lats(i)))
@@ -146,7 +146,7 @@ CONTAINS
 
     else
 
-       tsize = 5 + pcnst  
+       tsize = 5 + pcnst
 
        if (tsize*max(block_buf_nrecs,chunk_buf_nrecs) > spmdbuf_siz) then
           call endrun ('p_d_coupling: communication buffers (spmdbuf_siz) too small')
@@ -159,7 +159,7 @@ CONTAINS
 
           call block_to_chunk_send_pters(j,plon,plev+1,tsize,bpter)
 
-          do i=1,nlon(j)
+          do i=1,plon
              buf1(bpter(i,0))   = ps  (i,j)
              buf1(bpter(i,0)+1) = phis(i,j)
           end do
@@ -167,7 +167,7 @@ CONTAINS
 !$OMP PARALLEL DO PRIVATE (K, I, M)
           do k=1,plev
 
-             do i=1,nlon(j)
+             do i=1,plon
 
                 buf1(bpter(i,k))   = t3  (i,k,j)
                 buf1(bpter(i,k)+1) = u3  (i,k,j)
@@ -178,7 +178,7 @@ CONTAINS
                 ! convert moist-type constituents from dry to moist mixing ratio
 
                 do m=2,pcnst
-                   if (wetq(m)) then  
+                   if (wetq(m)) then
                       buf1(bpter(i,k)+3+m) = q3(i,k,m,j)*(1._r8 - q3(i,k,1,j))
                    else
                       buf1(bpter(i,k)+3+m) = q3(i,k,m,j)
@@ -321,7 +321,7 @@ CONTAINS
     integer  :: block_buf_nrecs = 0
     integer  :: chunk_buf_nrecs = 0
     integer  :: mpicom = 0
-    logical  :: local_dp_map=.true. 
+    logical  :: local_dp_map=.true.
 #endif
 
     integer :: i,j,k,m,lchnk         ! indices
@@ -336,7 +336,7 @@ CONTAINS
 
 ! Determine which constituents are wet and which are dry
     do m=2,pcnst
-       if (cnst_get_type_byind(m).eq.'wet') then  
+       if (cnst_get_type_byind(m).eq.'wet') then
           wetq(m) = .true.
        else
           wetq(m) = .false.
@@ -366,11 +366,11 @@ CONTAINS
           do i=1,ncol
              flx_net(lons(i),lats(i))   = phys_tend(lchnk)%flx_net(i)
           end do
-          
+
           ! convert moist-type constituents from moist to dry mixing ratio
 
           do m=2,pcnst
-             if (wetq(m)) then  
+             if (wetq(m)) then
                 do k=1,plev
                    do i=1,ncol
                       qminus(lons(i),k,m,lats(i)) = phys_state(lchnk)%q(i,k,m) /     &
@@ -418,7 +418,7 @@ CONTAINS
                 ! convert moist-type constituents from moist to dry mixing ratio
 
                 do m=2,pcnst
-                   if (wetq(m)) then  
+                   if (wetq(m)) then
                       buf2(cpter(i,k)+2+m) = phys_state(lchnk)%q(i,k,m) /     &
                            (1._r8 - phys_state(lchnk)%q(i,k,1))
                    else
@@ -444,14 +444,14 @@ CONTAINS
 
           call chunk_to_block_recv_pters(j,plon,plev+1,tsize,bpter)
 
-          do i=1,nlon(j)
+          do i=1,plon
              flx_net(i,j) = buf1(bpter(i,0))
           end do
 
 !$OMP PARALLEL DO PRIVATE (K, I, M)
           do k=1,plev
 
-             do i=1,nlon(j)
+             do i=1,plon
 
                 t2(i,k,j) = buf1(bpter(i,k))
                 fu(i,k,j) = buf1(bpter(i,k)+1)

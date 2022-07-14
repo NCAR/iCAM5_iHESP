@@ -14,7 +14,7 @@ module ocn_filenames
 
    use shr_kind_mod,     only: shr_kind_cs, shr_kind_cl
    use shr_sys_mod,      only: shr_sys_abort
-   use filenames,        only: caseid    !CAM specific use
+   use cam_control_mod,  only: caseid
 
    implicit none
 

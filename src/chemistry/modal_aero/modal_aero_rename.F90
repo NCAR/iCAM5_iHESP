@@ -16,10 +16,10 @@
   use ppgrid,          only: pcols, pver
   use constituents,    only: pcnst, cnst_name
   use spmd_utils,      only: masterproc
-  use modal_aero_data, only: maxd_aspectype, ntot_amode
+  use modal_aero_data, only: maxspec_renamexf=>nspec_max, ntot_amode
   use modal_aero_data, only: alnsg_amode, voltonumblo_amode, voltonumbhi_amode, dgnum_amode, nspec_amode
-  use modal_aero_data, only: lspectype_amode, specmw_amode, specdens_amode, lmassptr_amode, lmassptrcw_amode
-  use modal_aero_data, only: numptr_amode, numptrcw_amode, modeptr_coarse, modeptr_accum, lspectype_amode
+  use modal_aero_data, only: specmw_amode, specdens_amode, lmassptr_amode, lmassptrcw_amode
+  use modal_aero_data, only: numptr_amode, numptrcw_amode, modeptr_coarse, modeptr_accum
   use modal_aero_data, only: specmw_amode, specdens_amode, lmassptr_amode, lmassptrcw_amode, numptr_amode, numptrcw_amode
   use modal_aero_data, only: dgnumhi_amode, dgnumlo_amode, cnst_name_cw, modeptr_aitken
 
@@ -32,7 +32,6 @@
 
 ! !PUBLIC DATA MEMBERS:
   integer, parameter :: pcnstxx = gas_pcnst
-  integer, parameter, public :: maxspec_renamexf = maxd_aspectype
 
 ! *** select one of the 3 following options
 ! *** for maxpair_renamexf = 2 or 3, use mode definition files with
@@ -55,33 +54,37 @@
   integer, parameter, public :: method_optbb_renamexf = 2
 
   integer, public :: npair_renamexf = -123456789
-  integer, public :: modefrm_renamexf(maxpair_renamexf)
-  integer, public :: modetoo_renamexf(maxpair_renamexf)
-  integer, public :: nspecfrm_renamexf(maxpair_renamexf)
+  integer, protected, public :: modefrm_renamexf(maxpair_renamexf)
+  integer, protected, public :: modetoo_renamexf(maxpair_renamexf)
+  integer, protected, public :: nspecfrm_renamexf(maxpair_renamexf)
 
-  integer, public :: lspecfrma_renamexf(maxspec_renamexf,maxpair_renamexf)
-  integer, public :: lspecfrmc_renamexf(maxspec_renamexf,maxpair_renamexf)
-  integer, public :: lspectooa_renamexf(maxspec_renamexf,maxpair_renamexf)
-  integer, public :: lspectooc_renamexf(maxspec_renamexf,maxpair_renamexf)
+  integer, allocatable, protected, public :: lspecfrma_renamexf(:,:)
+  integer, allocatable, protected, public :: lspecfrmc_renamexf(:,:)
+  integer, allocatable, protected, public :: lspectooa_renamexf(:,:)
+  integer, allocatable, protected, public :: lspectooc_renamexf(:,:)
 
-  integer, public :: igrow_shrink_renamexf(maxpair_renamexf)
-  integer, public :: ixferable_all_renamexf(maxpair_renamexf)
-  integer, public :: ixferable_all_needed_renamexf(maxpair_renamexf)
-  integer, public :: ixferable_a_renamexf(maxspec_renamexf,maxpair_renamexf)
-  integer, public :: ixferable_c_renamexf(maxspec_renamexf,maxpair_renamexf)
+  integer, protected, public :: igrow_shrink_renamexf(maxpair_renamexf)
+  integer, protected, public :: ixferable_all_renamexf(maxpair_renamexf)
+  integer, protected, public :: ixferable_all_needed_renamexf(maxpair_renamexf)
+  integer, allocatable, protected, public :: ixferable_a_renamexf(:,:)
+  integer, allocatable, protected, public :: ixferable_c_renamexf(:,:)
+
+  logical, public :: strat_only_renamexf(maxpair_renamexf)
+! strat_only_renamexf - when true for a particular renaming pair, renaming is only
+!                       done in stratosphere (when k < troplev(icol) )
 
 ! !PRIVATE DATA MEMBERS:
-  integer :: ido_mode_calcaa(ntot_amode)
+  integer, allocatable :: ido_mode_calcaa(:)
   real (r8) :: dp_belowcut(maxpair_renamexf)
   real (r8) :: dp_cut(maxpair_renamexf)
   real (r8) :: dp_xferall_thresh(maxpair_renamexf)
   real (r8) :: dp_xfernone_threshaa(maxpair_renamexf)
-  real (r8) :: dryvol_smallest(ntot_amode)
-  real (r8) :: factoraa(ntot_amode)
-  real (r8) :: factoryy(ntot_amode)
+  real (r8), allocatable :: dryvol_smallest(:)
+  real (r8), allocatable :: factoraa(:)
+  real (r8), allocatable :: factoryy(:)
   real (r8) :: lndp_cut(maxpair_renamexf)
   real (r8) :: factor_3alnsg2(maxpair_renamexf)
-  real (r8) :: v2nhirlx(ntot_amode), v2nlorlx(ntot_amode)
+  real (r8), allocatable :: v2nhirlx(:), v2nlorlx(:)
 
   logical :: modal_accum_coarse_exch = .false.
 
@@ -106,6 +109,21 @@ contains
   subroutine modal_aero_rename_init(modal_accum_coarse_exch_in)
     logical, optional, intent(in) :: modal_accum_coarse_exch_in
     
+    allocate( lspecfrma_renamexf(maxspec_renamexf,maxpair_renamexf) )
+    allocate( lspecfrmc_renamexf(maxspec_renamexf,maxpair_renamexf) )
+    allocate( lspectooa_renamexf(maxspec_renamexf,maxpair_renamexf) )
+    allocate( lspectooc_renamexf(maxspec_renamexf,maxpair_renamexf) )
+
+    allocate( ixferable_a_renamexf(maxspec_renamexf,maxpair_renamexf) )
+    allocate( ixferable_c_renamexf(maxspec_renamexf,maxpair_renamexf) )
+    allocate( ido_mode_calcaa(ntot_amode) )
+
+    allocate( dryvol_smallest(ntot_amode) )
+    allocate( factoraa(ntot_amode) )
+    allocate( factoryy(ntot_amode) )
+
+    allocate( v2nhirlx(ntot_amode), v2nlorlx(ntot_amode) )
+
     if (present(modal_accum_coarse_exch_in)) then
        modal_accum_coarse_exch = modal_accum_coarse_exch_in
     endif
@@ -299,7 +317,7 @@ contains
 
 ! local variables
    integer, parameter :: ldiag1=-1
-   integer :: i, icol_diag, ipair, iq, j, k, l, l1, l2, la, lc, lunout
+   integer :: i, icol_diag, ipair, iq, j, k, l, l1, la, lc, lunout
    integer :: lsfrma, lsfrmc, lstooa, lstooc
    integer :: mfrm, mtoo, n, n1, n2, ntot_msa_a
    integer :: idomode(ntot_amode)
@@ -412,10 +430,9 @@ contains
 		deldryvol_a(1:ncol,:,n) = 0.0_r8
 		deldryvol_c(1:ncol,:,n) = 0.0_r8
 		do l1 = 1, nspec_amode(n)
-		    l2 = lspectype_amode(l1,n)
 !   dum_m2v converts (kmol-AP/kmol-air) to (m3-AP/kmol-air)
 !            [m3-AP/kmol-AP]= [kg-AP/kmol-AP]  / [kg-AP/m3-AP]
-		    dum_m2v = specmw_amode(l2) / specdens_amode(l2)
+                    dum_m2v = specmw_amode(l1,n) / specdens_amode(l1,n)
 		    dum_m2vdt = dum_m2v*deltat
 		    la = lmassptr_amode(l1,n)-loffset
 		    if (la > 0) then
@@ -661,10 +678,11 @@ mainloop1_ipair:  do ipair = 1, npair_renamexf
 	implicit none
 
 !   local variables
-	integer ipair, iq, iqfrm, iqfrm_aa, iqtoo, iqtoo_aa,   &
-      	  lsfrma, lsfrmc, lstooa, lstooc, lunout,   &
-      	  mfrm, mtoo, n1, n2, nsamefrm, nsametoo, nspec
-
+	integer :: ipair, iq, iqfrm, iqtoo
+	integer :: lsfrma, lsfrmc, lstooa, lstooc, lunout
+	integer :: mfrm, mtoo
+	integer :: n1, n2, nspec
+	integer :: nchfrma, nchfrmc, nchfrmskip, nchtooa, nchtooc, nchtooskip
 
 	lunout = iulog
 !
@@ -686,21 +704,33 @@ mainloop1_ipair:  do ipair = 1, npair_renamexf
 !   define species involved in each tail-xfer pairing
 !	(include aerosol water)
 !
-	do 1900 ipair = 1, npair_renamexf
+aa_ipair: do ipair = 1, npair_renamexf
 	mfrm = modefrm_renamexf(ipair)
 	mtoo = modetoo_renamexf(ipair)
-
+	if (mfrm < 10) then
+	    nchfrmskip = 1
+	else if (mfrm < 100) then
+	    nchfrmskip = 2
+	else
+	    nchfrmskip = 3
+	end if
+	if (mtoo < 10) then
+	    nchtooskip = 1
+	else if (mtoo < 100) then
+	    nchtooskip = 2
+	else
+	    nchtooskip = 3
+	end if
 	nspec = 0
-	do 1490 iqfrm = -1, nspec_amode(mfrm)
-	    iqtoo = iqfrm
-	    if (iqfrm .eq. -1) then
+aa_iqfrm: do iqfrm = -1, nspec_amode(mfrm)
+	    if (iqfrm == -1) then
 		lsfrma = numptr_amode(mfrm)
 		lstooa = numptr_amode(mtoo)
 		lsfrmc = numptrcw_amode(mfrm)
 		lstooc = numptrcw_amode(mtoo)
-	    else if (iqfrm .eq. 0) then
+	    else if (iqfrm == 0) then
 !   bypass transfer of aerosol water due to renaming
-                goto 1490
+                cycle aa_iqfrm
 !               lsfrma = lwaterptr_amode(mfrm)
 !               lsfrmc = 0
 !               lstooa = lwaterptr_amode(mtoo)
@@ -712,65 +742,62 @@ mainloop1_ipair:  do ipair = 1, npair_renamexf
 		lstooc = 0
 	    end if
 
-	    if ((lsfrma .lt. 1) .or. (lsfrma .gt. pcnst)) then
-		write(lunout,9100) mfrm, iqfrm, lsfrma
-		call endrun( 'modal_aero_rename_no_acc_crs_init error' )
-	    end if
-	    if (iqfrm .le. 0) goto 1430
 
-	    if ((lsfrmc .lt. 1) .or. (lsfrmc .gt. pcnst)) then
-		write(lunout,9102) mfrm, iqfrm, lsfrmc
-		call endrun( 'modal_aero_rename_no_acc_crs_init error' )
+	    if ((lsfrma < 1) .or. (lsfrma > pcnst)) then
+		write(lunout,9100) mfrm, iqfrm, lsfrma
+		call endrun( 'modal_aero_rename_init error aa' )
 	    end if
+	    if ((lsfrmc < 1) .or. (lsfrmc > pcnst)) then
+		write(lunout,9102) mfrm, iqfrm, lsfrmc
+		call endrun( 'modal_aero_rename_init error bb' )
+	    end if
+
+
+	    if (iqfrm > 0) then
+		nchfrma = len( trim( cnst_name(lsfrma) ) ) - nchfrmskip
 
 ! find "too" species having same lspectype_amode as the "frm" species
-! several species in a mode may have the same lspectype_amode, so also
-!    use the ordering as a criterion (e.g., 1st <--> 1st, 2nd <--> 2nd)
-	    iqfrm_aa = 1
-	    iqtoo_aa = 1
-	    if (iqfrm .gt. nspec_amode(mfrm)) then
-		iqfrm_aa = nspec_amode(mfrm) + 1
-		iqtoo_aa = nspec_amode(mtoo) + 1
-	    end if
-	    nsamefrm = 0
-	    do iq = iqfrm_aa, iqfrm
-		if ( lspectype_amode(iq   ,mfrm) .eq.   &
-      		     lspectype_amode(iqfrm,mfrm) ) then
-		    nsamefrm = nsamefrm + 1
-		end if
-	    end do
-	    nsametoo = 0
-	    do iqtoo = iqtoo_aa, nspec_amode(mtoo)
-		if ( lspectype_amode(iqtoo,mtoo) .eq.   &
-      		     lspectype_amode(iqfrm,mfrm) ) then
-		    nsametoo = nsametoo + 1
-		    if (nsametoo .eq. nsamefrm) then
-			lstooc = lmassptrcw_amode(iqtoo,mtoo)
+! AND same cnst_name (except for last 1/2/3 characters which are the mode index)
+		do iqtoo = 1, nspec_amode(mtoo)
+!		    if ( lspectype_amode(iqtoo,mtoo) .eq.   &
+!			 lspectype_amode(iqfrm,mfrm) ) then
 			lstooa = lmassptr_amode(iqtoo,mtoo)
-			goto 1430
-		    end if
-		end if
-	    end do
+			nchtooa = len( trim( cnst_name(lstooa) ) ) - nchtooskip
+			if (cnst_name(lsfrma)(1:nchfrma) == cnst_name(lstooa)(1:nchtooa)) then
+			! interstitial names match, so check cloudborne names too
+			    nchfrmc = len( trim( cnst_name_cw(lsfrmc) ) ) - nchfrmskip
+			    lstooc = lmassptrcw_amode(iqtoo,mtoo)
+			    nchtooc = len( trim( cnst_name_cw(lstooc) ) ) - nchtooskip
+			    if (cnst_name_cw(lsfrmc)(1:nchfrmc) /= &
+			        cnst_name_cw(lstooc)(1:nchtooc)) lstooc = 0
+			    exit
+			else
+			    lstooa = 0
+			end if
+!		    end if
+		end do
+	    end if ! (iqfrm > 0)
 
-1430	    nspec = nspec + 1
-	    if ((lstooc .lt. 1) .or. (lstooc .gt. pcnst)) lstooc = 0
-	    if ((lstooa .lt. 1) .or. (lstooa .gt. pcnst)) lstooa = 0
-	    if (lstooa .eq. 0) then
+	    if ((lstooc < 1) .or. (lstooc > pcnst)) lstooc = 0
+	    if ((lstooa < 1) .or. (lstooa > pcnst)) lstooa = 0
+	    if (lstooa == 0) then
 		write(lunout,9104) mfrm, iqfrm, lsfrma, iqtoo, lstooa
-		call endrun( 'modal_aero_rename_no_acc_crs_init error' )
+		call endrun( 'modal_aero_rename_init error cc' )
 	    end if
-	    if ((lstooc .eq. 0) .and. (iqfrm .ne. 0)) then
+	    if ((lstooc == 0) .and. (iqfrm /= 0)) then
 		write(lunout,9104) mfrm, iqfrm, lsfrmc, iqtoo, lstooc
-		call endrun( 'modal_aero_rename_no_acc_crs_init error' )
+		call endrun( 'modal_aero_rename_init error dd' )
 	    end if
+
+	    nspec = nspec + 1
 	    lspecfrma_renamexf(nspec,ipair) = lsfrma
 	    lspectooa_renamexf(nspec,ipair) = lstooa
 	    lspecfrmc_renamexf(nspec,ipair) = lsfrmc
 	    lspectooc_renamexf(nspec,ipair) = lstooc
-1490	continue
+	end do aa_iqfrm
 
 	nspecfrm_renamexf(ipair) = nspec
-1900	continue
+	end do aa_ipair
 
 9100	format( / '*** subr. modal_aero_rename_no_acc_crs_init' /   &
       	'lspecfrma out of range' /   &
@@ -928,7 +955,7 @@ mainloop1_ipair:  do ipair = 1, npair_renamexf
    integer, parameter :: ldiag1 = -1
    integer :: i, icol_diag, ipair, iq
    integer :: j, k
-   integer :: l, l1, l2, la, lc, lunout
+   integer :: l, l1, la, lc, lunout
    integer :: lsfrma, lsfrmc, lstooa, lstooc
    integer :: mfrm, mtoo, n, n1, n2, ntot_msa_a
    integer, save :: lun = -1  ! logical unit for diagnostics (6, or other
@@ -1033,10 +1060,9 @@ mainloop1_ipair:  do ipair = 1, npair_renamexf
 
 	n = mfrm
 	do l1 = 1, nspec_amode(n)
-	    l2 = lspectype_amode(l1,n)
 !   tmp_m2v converts (kmol-AP/kmol-air) to (m3-AP/kmol-air)
 !            [m3-AP/kmol-AP]= [kg-AP/kmol-AP]  / [kg-AP/m3-AP]
-	    tmp_m2v = specmw_amode(l2) / specdens_amode(l2)
+            tmp_m2v = specmw_amode(l1,n) / specdens_amode(l1,n)
 	    tmp_m2vdt = tmp_m2v*deltat
 	    la = lmassptr_amode(l1,n)-loffset
 	    if (la > 0) then
@@ -1082,6 +1108,11 @@ mainloop1_i:  do i = 1, ncol
 	if (is_dorename_atik) then
 	    if (.not. dorename_atik(i,k)) cycle mainloop1_i
 	end if
+
+!   if strat_only_renamexf is true, then cycle when at or below the tropopause level
+        if ( strat_only_renamexf(ipair) ) then
+            if ( k >= troplev(i) ) cycle mainloop1_i
+        end if
 
 
 !   dryvol_t_old is the old total (a+c) dry-volume for the "from" mode 
@@ -1471,16 +1502,19 @@ grow_shrink_conditional1: &
 		mtoo = modeptr_accum
 		igrow_shrink_renamexf(ipair) = 1
 		ixferable_all_needed_renamexf(ipair) = 1
+                strat_only_renamexf(ipair) = .false.
 	    else if (itmpa == 1003) then
 		mfrm = modeptr_accum
 		mtoo = modeptr_coarse
 		igrow_shrink_renamexf(ipair) = 1
 		ixferable_all_needed_renamexf(ipair) = 0
+                strat_only_renamexf(ipair) = .true.
 	    else if (itmpa == 3001) then
 		mfrm = modeptr_coarse
 		mtoo = modeptr_accum
 		igrow_shrink_renamexf(ipair) = -1
 		ixferable_all_needed_renamexf(ipair) = 0
+                strat_only_renamexf(ipair) = .true.
 	    else
 		write(lunout,'(/2a,3(1x,i12))') &
 		    '*** subr. modal_aero_rename_acc_crs_init', &
@@ -1697,13 +1731,13 @@ grow_shrink_conditional1: &
 	    dp_xfernone_threshaa(ipair) = dgnum_amode(mfrm)
 
 	    if ((mfrm == modeptr_accum) .and. (mtoo == modeptr_coarse)) then
-		dp_cut(ipair)               = 1.0e-6_r8
-		dp_xfernone_threshaa(ipair) = 0.9e-6_r8
-		dp_xferall_thresh(ipair)    = 1.1e-6_r8
+		dp_cut(ipair)               = 4.4e-7_r8 
+		dp_xfernone_threshaa(ipair) = 1.6e-7_r8 
+		dp_xferall_thresh(ipair)    = 4.7e-7_r8 
 	    else if ((mfrm == modeptr_coarse) .and. (mtoo == modeptr_accum)) then
-		dp_cut(ipair)               = 1.0e-6_r8
-		dp_xfernone_threshaa(ipair) = 1.0e-6_r8
-		dp_xferall_thresh(ipair)    = 0.9e-6_r8
+		dp_cut(ipair)               = 4.4e-7_r8
+		dp_xfernone_threshaa(ipair) = 4.4e-7_r8
+		dp_xferall_thresh(ipair)    = 4.1e-7_r8
 	    end if
 
 	    lndp_cut(ipair) = log( dp_cut(ipair) )

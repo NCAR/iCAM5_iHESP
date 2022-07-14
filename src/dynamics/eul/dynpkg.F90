@@ -21,8 +21,7 @@ subroutine dynpkg (adv_state, t2      ,fu      ,fv      ,etamid  ,          &
    use scan2,        only: scan2run
    use scamMod,      only: single_column,scm_crm_mode,switch,wfldh
 #if ( defined BFB_CAM_SCAM_IOP )
-   use iop, only: t2sav
-   use rgrid, only: nlon
+   use iop, only: t2sav,fusav,fvsav
 #endif
    use perf_mod
 !-----------------------------------------------------------------------
@@ -83,7 +82,9 @@ subroutine dynpkg (adv_state, t2      ,fu      ,fv      ,etamid  ,          &
 !
 #if ( defined BFB_CAM_SCAM_IOP )
 do c=beglat,endlat
-   t2sav(:nlon(c),:,c)= t2(:nlon(c),:,c)
+   t2sav(:plon,:,c)= t2(:plon,:,c)
+   fusav(:plon,:,c)= fu(:plon,:,c)
+   fvsav(:plon,:,c)= fv(:plon,:,c)
 enddo
 #endif
 

@@ -21,7 +21,7 @@ use ppgrid,          only: pcols, pver, pverp
 use physics_types,   only: physics_state, physics_ptend
 use camsrfexch,      only: cam_in_t     
 use cam_logfile,     only: iulog
-use cam_history,     only: addfld, add_default, phys_decomp, outfld
+use cam_history,     only: addfld, add_default, outfld
 use constituents,    only: pcnst, cnst_get_ind, cnst_name
 use rad_constituents,only: rad_cnst_get_info, rad_cnst_get_mode_num_idx, rad_cnst_get_mam_mmr_idx
 
@@ -99,35 +99,35 @@ subroutine phys_debug_state_init(tags)
    ntags = size(tags)
    do i = 1, ntags
 
-      call addfld('T_'//trim(tags(i)), 'K', pver, 'A', 'T at tag '//trim(tags(i)), phys_decomp)
+      call addfld('T_'//trim(tags(i)), (/ 'lev' /), 'A', 'K', 'T at tag '//trim(tags(i)))
       call add_default('T_'//trim(tags(i)), 1, ' ')
 
-      call addfld('U_'//trim(tags(i)), 'm/s', pver, 'A', 'U at tag '//trim(tags(i)), phys_decomp)
+      call addfld('U_'//trim(tags(i)), (/ 'lev' /), 'A', 'm/s', 'U at tag '//trim(tags(i)))
       call add_default('U_'//trim(tags(i)), 1, ' ')
 
-      call addfld('V_'//trim(tags(i)), 'm/s', pver, 'A', 'V at tag '//trim(tags(i)), phys_decomp)
+      call addfld('V_'//trim(tags(i)), (/ 'lev' /), 'A', 'm/s', 'V at tag '//trim(tags(i)))
       call add_default('V_'//trim(tags(i)), 1, ' ')
 
-      call addfld('QV_'//trim(tags(i)), 'kg/kg', pver, 'A', 'QV at tag '//trim(tags(i)), phys_decomp)
+      call addfld('QV_'//trim(tags(i)), (/ 'lev' /), 'A', 'kg/kg', 'QV at tag '//trim(tags(i)))
       call add_default('QV_'//trim(tags(i)), 1, ' ')
 
       if (ixcldliq > 0) then
-         call addfld('QL_'//trim(tags(i)), 'kg/kg', pver, 'A', 'QL at tag '//trim(tags(i)), phys_decomp)
+         call addfld('QL_'//trim(tags(i)), (/ 'lev' /), 'A', 'kg/kg', 'QL at tag '//trim(tags(i)))
          call add_default('QL_'//trim(tags(i)), 1, ' ')
       end if
 
       if (ixcldice > 0) then
-         call addfld('QI_'//trim(tags(i)), 'kg/kg', pver, 'A', 'QI at tag '//trim(tags(i)), phys_decomp)
+         call addfld('QI_'//trim(tags(i)), (/ 'lev' /), 'A', 'kg/kg', 'QI at tag '//trim(tags(i)))
          call add_default('QI_'//trim(tags(i)), 1, ' ')
       end if
 
       if (ixnumliq > 0) then
-         call addfld('NL_'//trim(tags(i)), '1/kg', pver, 'A', 'NL at tag '//trim(tags(i)), phys_decomp)
+         call addfld('NL_'//trim(tags(i)), (/ 'lev' /), 'A', '1/kg', 'NL at tag '//trim(tags(i)))
          call add_default('NL_'//trim(tags(i)), 1, ' ')
       end if
 
       if (ixnumice > 0) then
-         call addfld('NI_'//trim(tags(i)), '1/kg', pver, 'A', 'NI at tag '//trim(tags(i)), phys_decomp)
+         call addfld('NI_'//trim(tags(i)), (/ 'lev' /), 'A', '1/kg', 'NI at tag '//trim(tags(i)))
          call add_default('NI_'//trim(tags(i)), 1, ' ')
       end if
 
@@ -138,8 +138,8 @@ subroutine phys_debug_state_init(tags)
             unit = '1/kg'
             if (cnst_is_mam_mmr(j)) unit = 'kg/kg'
 
-            call addfld(trim(cnst_name(j))//'_'//trim(tags(i)), trim(unit), pver, &
-               'A', trim(cnst_name(j))//' at tag '//trim(tags(i)), phys_decomp)
+            call addfld(trim(cnst_name(j))//'_'//trim(tags(i)), (/ 'lev' /), &
+               'A', trim(unit), trim(cnst_name(j))//' at tag '//trim(tags(i)))
             call add_default(trim(cnst_name(j))//'_'//trim(tags(i)), 1, ' ')
 
          end if
