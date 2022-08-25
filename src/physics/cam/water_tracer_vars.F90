@@ -55,6 +55,12 @@ integer, parameter, public    :: WTRC_WSET_STD  = 1     ! water set index for "r
   real(r8), public   :: wtrc_fixed_alpha(pwtspec) = 1._r8       ! default standard fractionation factor, used when wisotope is false
   real(r8), public   :: wtrc_fixed_rstd(pwtspec)  = 1._r8       ! default standard isotope ratio, used when wisotope is false
 
+  real(r8), public   :: wtrc_limiter_18O_hgh      = 1.20_r8 
+  real(r8), public   :: wtrc_limiter_18O_low      = 0.50_r8 
+  real(r8), public   :: wtrc_limiter_HDO_hgh      = 1.60_r8 
+  real(r8), public   :: wtrc_limiter_HDO_low      = 0.20_r8 
+  real(r8), public   :: wtrc_limiter_phis_crit    = 10000._r8
+
   character(len=32), public      :: water_tracer_model = "none"
 
 !

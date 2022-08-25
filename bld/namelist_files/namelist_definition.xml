@@ -3591,6 +3591,42 @@ test pruposes.
 Default: 1.0
 </entry>
 
+<entry id="wtrc_limiter_18O_hgh" type="real"  category="water_tracers"
+    group="water_tracer_nl" valid_values="">
+Limiter on the 18O/16O raio in vapor and precipitation export
+Set the upper end for 18O
+Default: 1.2
+</entry>
+
+<entry id="wtrc_limiter_18O_low" type="real"  category="water_tracers"
+    group="water_tracer_nl" valid_values="">
+Limiter on the 18O/16O raio in vapor and precipitation export
+Set the lower end for 18O
+Default: 0.5
+</entry>
+
+<entry id="wtrc_limiter_HDO_hgh" type="real"  category="water_tracers"
+    group="water_tracer_nl" valid_values="">
+Limiter on the HDO/16O raio in vapor and precipitation export
+Set the upper end for HDO
+Default: 1.6
+</entry>
+
+<entry id="wtrc_limiter_HDO_low" type="real"  category="water_tracers"
+    group="water_tracer_nl" valid_values="">
+Limiter on the HDO/16O raio in vapor and precipitation export
+Set the lower end for HDO
+Default: 0.2
+</entry>
+
+<entry id="wtrc_limiter_phis_crit" type="real"  category="water_tracers"
+    group="water_tracer_nl" valid_values="">
+Limiter on the HDO/16O raio in vapor
+Only apply limiter to 18O and HDO vapor when phis > wtrc_limiter_phis_crit
+Default: 10000.0
+</entry>
+
+
 <!-- Test Tracers -->
 
 <entry id="tracers_flag" type="logical" category="test_tracers"

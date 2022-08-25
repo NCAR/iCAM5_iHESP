@@ -218,13 +218,13 @@ contains
     use cam_cpl_indices
     !Water isotopes:
     use water_tracer_vars, only: wtrc_nsrfvap, wtrc_iasrfvap, wtrc_indices, wtrc_species, &
-                                 trace_water
+                                 trace_water, wtrc_limiter_18O_hgh, wtrc_limiter_18O_low, wtrc_limiter_HDO_hgh, wtrc_limiter_HDO_low
     use water_tracers    , only: wtrc_ratio
     use water_isotopes   , only: isph2o, isph216o, isphdo, isph218o
     !
     ! Arguments
     !
-    type(cam_out_t), intent(in)    :: cam_out(begchunk:endchunk) 
+    type(cam_out_t), intent(in) :: cam_out(begchunk:endchunk) 
     real(r8)       , intent(inout) :: a2x(:,:)
     !
     ! Local variables
@@ -234,6 +234,7 @@ contains
     integer :: ncols            ! Number of columns
    !water tracers:
     logical :: pass16, passD, pass18 !logicals that prevent the passing of water tag infromation to iCLM4.
+    real(r8):: wiso_fixed
     !-----------------------------------------------------------------------
 
     ! Copy from component arrays into chunk array data structure
@@ -278,12 +279,22 @@ contains
                   end if 
                 case (isphdo)
                   if(passD) then !pass on HDO?
-                    a2x(index_a2x_Sa_shum_HDO   ,ig) = cam_out(c)%qbot(i,wtrc_indices(wtrc_iasrfvap(j))) 
+                    wiso_fixed = cam_out(c)%qbot(i,wtrc_indices(wtrc_iasrfvap(j)))
+                    if ((wiso_fixed > wtrc_limiter_HDO_hgh*cam_out(c)%qbot(i,1)) .or. &
+                        (wiso_fixed < wtrc_limiter_HDO_low*cam_out(c)%qbot(i,1))) then
+                        wiso_fixed = cam_out(c)%qbot(i,1)
+                    end if
+                    a2x(index_a2x_Sa_shum_HDO   ,ig) = wiso_fixed
                     passD = .false.
                   end if
                 case (isph218o)
                   if(pass18) then !pass on H218O?    
-                    a2x(index_a2x_Sa_shum_18O   ,ig) = cam_out(c)%qbot(i,wtrc_indices(wtrc_iasrfvap(j))) 
+                    wiso_fixed = cam_out(c)%qbot(i,wtrc_indices(wtrc_iasrfvap(j)))
+                    if ((wiso_fixed > wtrc_limiter_18O_hgh*cam_out(c)%qbot(i,1)) .or. &
+                        (wiso_fixed < wtrc_limiter_18O_low*cam_out(c)%qbot(i,1))) then
+                        wiso_fixed = cam_out(c)%qbot(i,1)
+                    end if
+                    a2x(index_a2x_Sa_shum_18O   ,ig) = wiso_fixed
                     pass18 = .false.
                   end if
               end select
@@ -310,14 +321,62 @@ contains
             a2x(index_a2x_Faxa_snowl_16O,ig)=cam_out(c)%precsl_16O(i)*1000._r8
             a2x(index_a2x_Faxa_rainc_16O,ig)=cam_out(c)%precrc_16O(i)*1000._r8
             a2x(index_a2x_Faxa_snowc_16O,ig)=cam_out(c)%precsc_16O(i)*1000._r8
-            a2x(index_a2x_Faxa_rainl_HDO,ig)=cam_out(c)%precrl_HDO(i)*1000._r8
-            a2x(index_a2x_Faxa_snowl_HDO,ig)=cam_out(c)%precsl_HDO(i)*1000._r8
-            a2x(index_a2x_Faxa_rainc_HDO,ig)=cam_out(c)%precrc_HDO(i)*1000._r8
-            a2x(index_a2x_Faxa_snowc_HDO,ig)=cam_out(c)%precsc_HDO(i)*1000._r8
-            a2x(index_a2x_Faxa_rainl_18O,ig)=cam_out(c)%precrl_18O(i)*1000._r8
-            a2x(index_a2x_Faxa_snowl_18O,ig)=cam_out(c)%precsl_18O(i)*1000._r8
-            a2x(index_a2x_Faxa_rainc_18O,ig)=cam_out(c)%precrc_18O(i)*1000._r8
-            a2x(index_a2x_Faxa_snowc_18O,ig)=cam_out(c)%precsc_18O(i)*1000._r8
+
+            wiso_fixed = cam_out(c)%precrl_HDO(i) 
+            if ((wiso_fixed > wtrc_limiter_HDO_hgh*cam_out(c)%precrl_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_HDO_low*cam_out(c)%precrl_16O(i))) then
+                wiso_fixed = cam_out(c)%precrl_16O(i)
+            end if
+            a2x(index_a2x_Faxa_rainl_HDO,ig)=wiso_fixed*1000._r8
+
+            wiso_fixed = cam_out(c)%precsl_HDO(i) 
+            if ((wiso_fixed > wtrc_limiter_HDO_hgh*cam_out(c)%precsl_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_HDO_low*cam_out(c)%precsl_16O(i))) then
+                wiso_fixed = cam_out(c)%precsl_16O(i)
+            end if
+            a2x(index_a2x_Faxa_snowl_HDO,ig)=wiso_fixed*1000._r8
+
+            wiso_fixed = cam_out(c)%precrc_HDO(i) 
+            if ((wiso_fixed > wtrc_limiter_HDO_hgh*cam_out(c)%precrc_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_HDO_low*cam_out(c)%precrc_16O(i))) then
+                wiso_fixed = cam_out(c)%precrc_16O(i)
+            end if
+            a2x(index_a2x_Faxa_rainc_HDO,ig)=wiso_fixed*1000._r8
+
+            wiso_fixed = cam_out(c)%precsc_HDO(i) 
+            if ((wiso_fixed > wtrc_limiter_HDO_hgh*cam_out(c)%precsc_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_HDO_low*cam_out(c)%precsc_16O(i))) then
+                wiso_fixed = cam_out(c)%precsc_16O(i)
+            end if
+            a2x(index_a2x_Faxa_snowc_HDO,ig)=wiso_fixed*1000._r8
+            
+            wiso_fixed = cam_out(c)%precrl_18O(i) 
+            if ((wiso_fixed > wtrc_limiter_18O_hgh*cam_out(c)%precrl_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_18O_low*cam_out(c)%precrl_16O(i))) then
+                wiso_fixed = cam_out(c)%precrl_16O(i)
+            end if
+            a2x(index_a2x_Faxa_rainl_18O,ig)=wiso_fixed*1000._r8
+
+            wiso_fixed = cam_out(c)%precsl_18O(i) 
+            if ((wiso_fixed > wtrc_limiter_18O_hgh*cam_out(c)%precsl_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_18O_low*cam_out(c)%precsl_16O(i))) then
+                wiso_fixed = cam_out(c)%precsl_16O(i)
+            end if
+            a2x(index_a2x_Faxa_snowl_18O,ig)=wiso_fixed*1000._r8
+
+            wiso_fixed = cam_out(c)%precrc_18O(i) 
+            if ((wiso_fixed > wtrc_limiter_18O_hgh*cam_out(c)%precrc_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_18O_low*cam_out(c)%precrc_16O(i))) then
+                wiso_fixed = cam_out(c)%precrc_16O(i)
+            end if
+            a2x(index_a2x_Faxa_rainc_18O,ig)=wiso_fixed*1000._r8
+
+            wiso_fixed = cam_out(c)%precsc_18O(i) 
+            if ((wiso_fixed > wtrc_limiter_18O_hgh*cam_out(c)%precsc_16O(i)) .or. &
+                (wiso_fixed < wtrc_limiter_18O_low*cam_out(c)%precsc_16O(i))) then
+                wiso_fixed = cam_out(c)%precsc_16O(i)
+            end if
+            a2x(index_a2x_Faxa_snowc_18O,ig)=wiso_fixed*1000._r8
           end if
           !----------------------
 

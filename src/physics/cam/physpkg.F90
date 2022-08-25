@@ -2388,6 +2388,10 @@ subroutine tphysbc (ztodt,               &
        snow_sed(:ncol) = snow_sed(:ncol) + snow_sed_carma(:ncol)
     end if
 
+   if(trace_water) then
+     call wtrc_mass_fixer(state)
+   end if
+
     if ( .not. deep_scheme_does_scav_trans() ) then
 
        ! -------------------------------------------------------------------------------
@@ -2433,6 +2437,10 @@ subroutine tphysbc (ztodt,               &
        call t_stopf('bc_aerosols')
 
    endif
+
+   if(trace_water) then
+     call wtrc_mass_fixer(state)
+   end if
 
     !===================================================
     ! Moist physical parameteriztions complete: 

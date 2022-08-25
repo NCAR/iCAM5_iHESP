@@ -169,8 +169,8 @@ subroutine wtrc_readnl(nlfile)
       wtrc_type_names, wtrc_srfvap_names, wtrc_srfpcp_names, &
       wtrc_tag_names, wtrc_alpha_kinetic, wtrc_check_total_h2o, &
       wtrc_detrain_in_macrop, wtrc_niter, wtrc_citer, wtrc_qmin, wtrc_check_show_types, &
-      wtrc_fixed_alpha, wtrc_fixed_rstd, wtrc_lzmlin, wtrc_srf_bucket_mode
-
+      wtrc_fixed_alpha, wtrc_fixed_rstd, wtrc_lzmlin, wtrc_srf_bucket_mode, &
+      wtrc_limiter_18O_hgh, wtrc_limiter_18O_low, wtrc_limiter_HDO_hgh, wtrc_limiter_HDO_low, wtrc_limiter_phis_crit
 
      if (masterproc) then
        unitn = getunit()
@@ -184,6 +184,12 @@ subroutine wtrc_readnl(nlfile)
        end if
        close(unitn)
        call freeunit(unitn)
+
+       write(iulog,*) 'wtrc_limiter_18O_hgh = ', wtrc_limiter_18O_hgh
+       write(iulog,*) 'wtrc_limiter_18O_low = ', wtrc_limiter_18O_low
+       write(iulog,*) 'wtrc_limiter_HDO_hgh = ', wtrc_limiter_HDO_hgh
+       write(iulog,*) 'wtrc_limiter_HDO_low = ', wtrc_limiter_HDO_low
+       write(iulog,*) 'wtrc_limiter_phis_crit = ', wtrc_limiter_phis_crit
      end if
 
 #ifdef SPMD
@@ -212,6 +218,11 @@ subroutine wtrc_readnl(nlfile)
     call mpibcast(wtrc_srfvap_names,      len(wtrc_srfvap_names(1))*WTRC_MAX_CNST,  mpichar, 0, mpicom)
     call mpibcast(wtrc_srfpcp_names,      len(wtrc_srfpcp_names(1))*WTRC_MAX_CNST,  mpichar, 0, mpicom)
     call mpibcast(wtrc_tag_names,         len(wtrc_tag_names(1))*WTRC_MAX_CNST,     mpichar, 0, mpicom)
+    call mpibcast(wtrc_limiter_18O_hgh,   1,                    mpir8,   0, mpicom)
+    call mpibcast(wtrc_limiter_18O_low,   1,                    mpir8,   0, mpicom)
+    call mpibcast(wtrc_limiter_HDO_hgh,   1,                    mpir8,   0, mpicom)
+    call mpibcast(wtrc_limiter_HDO_low,   1,                    mpir8,   0, mpicom)
+    call mpibcast(wtrc_limiter_phis_crit, 1,                    mpir8,   0, mpicom)
 #endif
 end subroutine wtrc_readnl
 
@@ -2781,6 +2792,7 @@ subroutine wtrc_mass_fixer(state)
 !***************************
 
 use physics_types, only: physics_state
+use shr_const_mod, only: shr_const_pi
 
 !*****************
 !Delcare variables
@@ -2797,6 +2809,10 @@ integer  :: ncol    !number of horizontal variables
 real(r8) :: oval    !original value (used to calculate ratio).
 real(r8) :: diff    !mass difference between standard tracer and bulk water
 real(r8) :: R       !water tracer ratio
+
+real(r8)            :: wtlat, wtphis
+real(r8), parameter :: radtodeg = 180.0_r8/shr_const_pi
+real(r8)            :: diff_limit
 
 !**************
 !set ncol value
@@ -2854,6 +2870,43 @@ if(wisotope) then
     end do
   end do
 end if
+
+!******************************
+!Additional limiter to take care out-of-bound values
+!******************************
+do i = 1,ncol
+  !Need to define lat/lon for water tracers:
+  wtlat = state%lat(i)*radtodeg
+  wtphis = state%phis(i)
+
+  do k= 1,pver
+    do p=1,pwtype
+      do m=2,wtrc_nwset
+        !Set limit value:
+        if(m == isphdo) then !HDO has higher limit
+          diff_limit = wtrc_limiter_HDO_hgh
+        else
+          diff_limit = wtrc_limiter_18O_hgh
+        end if
+        if(state%q(i,k,wtrc_iatype(m,p)) .gt. diff_limit*state%q(i,k,wtrc_iatype(1,p))) then !Increase limiter -JN
+          state%q(i,k,wtrc_iatype(m,p)) = state%q(i,k,wtrc_iatype(1,p))
+        else !This else is only for iHESP -JN
+          if(abs(wtlat) < 60._r8 .and. wtphis > wtrc_limiter_phis_crit) then !Only adjust values above topography and outside high latitudes
+            !Set limit value:
+            if(m == isphdo) then !HDO has higher limit
+              diff_limit = wtrc_limiter_HDO_low + 0.005_r8*(k - pver)  !reduce cut-off with height
+            else
+              diff_limit = wtrc_limiter_18O_low + 0.005_r8*(k - pver) !reduce cut-off with height
+            end if
+            if(state%q(i,k,wtrc_iatype(m,p)) < diff_limit*state%q(i,k,wtrc_iatype(1,p))) then
+              state%q(i,k,wtrc_iatype(m,p)) = state%q(i,k,wtrc_iatype(1,p))
+            end if
+          end if
+        end if
+      end do
+    end do
+  end do
+end do
 
 end subroutine wtrc_mass_fixer
 
