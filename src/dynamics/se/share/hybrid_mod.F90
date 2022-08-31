@@ -583,14 +583,14 @@ contains
     character(len=32) :: instring, string1, string2
     integer :: thr1=1, thr2=1
 
-    if ( omp_get_nested() ) then
-      call GET_ENVIRONMENT_VARIABLE('OMP_NUM_THREADS', instring)
-      call split_string(instring, string1, string2, ',')
-      read (string1,'(I4)') thr1; read (string2,'(I4)') thr2
-    else
-      call GET_ENVIRONMENT_VARIABLE('OMP_NUM_THREADS', instring)
+    call GET_ENVIRONMENT_VARIABLE('OMP_NUM_THREADS', instring)
+    ! omp_get_nested is deprecated
+!    if ( omp_get_nested() ) then
+!      call split_string(instring, string1, string2, ',')
+!      read (string1,'(I4)') thr1; read (string2,'(I4)') thr2
+!    else
       read (instring,'(I4)') thr1
-    endif
+!    endif
     maxthreads = thr1 * thr2
 
   end subroutine get_number_threads
