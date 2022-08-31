@@ -1402,7 +1402,7 @@ end subroutine wtrc_register
                       !calculate raindrop radius based off rain rate:
                       !NOTE: mean diameter in mm = 4/(4.1*R^-0.21), with R in mm/hr, assuming
                       !a Marshall-Palmer distribution. -JN
-                      radius = 2._r8/(4.1_r8*((rmass(i,1)/gravit/dtime)*60._r8*60._r8)**-0.21_r8)
+                      radius = 2._r8/(4.1_r8*((rmass(i,1)/gravit/dtime)*60._r8*60._r8)** (-0.21_r8))
 
                       !convert radius to meters:
                       radius = radius/1000._r8
@@ -2332,7 +2332,7 @@ ak = (1._r8/difrm(ispec))**dkfac
 
 !NOTE: mean diameter in mm = 4/(4.1*R^-0.21), with R in mm/hr, assuming a Marshall-Palmer distribution. -JN
 
-radius = 2._r8/(4.1_r8*((rmass0/gravit/dtime)*60._r8*60._r8)**-0.21_r8)
+radius = 2._r8/(4.1_r8*((rmass0/gravit/dtime)*60._r8*60._r8)** (-0.21_r8))
 
 !convert radius to meters:
 radius = radius/1000._r8
@@ -4051,7 +4051,7 @@ if(wisotope .and. (m .gt. 1) .and. (totrnfx(i,k) .gt. 0._r8)) then !Are water is
   !calculate radius based off rain rate:
   !NOTE: mean diameter in mm = 4/(4.1*R^-0.21), with R in mm/hr, assuming
   !Marshall-Palmer distribution. -JN
-   radius = 2._r8/(4.1_r8*(totrnfx(i,k)*60._r8*60._r8)**-0.21_r8)
+   radius = 2._r8/(4.1_r8*(totrnfx(i,k)*60._r8*60._r8)** (-0.21_r8))
 
   !convert radius to meters:
    radius = radius/1000._r8

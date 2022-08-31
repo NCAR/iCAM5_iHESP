@@ -4806,7 +4806,7 @@ end subroutine uwshcu_readnl
               !calculate raindrop radius based off rain rate:
               !NOTE: mean diameter in mm = 4/(4.1*R^-0.21), with R in mm/hr, assuming
               !a Marshall-Palmer distribution. -JN
-              rain_radius = 2._r8/(4.1_r8*(wtflxrn(k,1)*60._r8*60._r8)**-0.21_r8)
+              rain_radius = 2._r8/(4.1_r8*(wtflxrn(k,1)*60._r8*60._r8)** (-0.21_r8))
 
               !convert radius to meters:
               rain_radius = rain_radius/1000._r8
