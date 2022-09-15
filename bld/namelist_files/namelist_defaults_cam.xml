@@ -745,6 +745,7 @@
 <micro_mg_sub_version microphys="mg1.5">  5          </micro_mg_sub_version>
 <micro_mg_num_steps   microphys="mg1.5">  2          </micro_mg_num_steps>
 <micro_mg_dcs         microphys="mg1.5">  250.D-6    </micro_mg_dcs>
+<micro_mg_dcs         microphys="mg1.5" hgrid="1.9x2.5">   400.D-6    </micro_mg_dcs>
 
 <micro_mg_version     microphys="mg2">                                 2          </micro_mg_version>
 <micro_mg_sub_version microphys="mg2">                                 0          </micro_mg_sub_version>
@@ -827,6 +828,7 @@
 <dust_emis_fact dyn="se"                   phys="cam5"                  >0.55D0</dust_emis_fact>
 <dust_emis_fact dyn="se" hgrid="ne120np4"  phys="cam5"                  >1.05D0</dust_emis_fact>
 <dust_emis_fact dyn="fv"                   phys="cam5" clubb_sgs="1"    >0.13D0</dust_emis_fact>
+<dust_emis_fact dyn="fv" hgrid="1.9x2.5"   phys="cam5"                  >0.35D0</dust_emis_fact>
 
 <!-- Wet scavenging of modal aerosols -->
 <sol_facti_cloud_borne                                                >1.0D0</sol_facti_cloud_borne>
@@ -895,8 +897,6 @@
 <cldfrc_rhminl dyn="se"          phys="cam5" microphys="mg1"          > 0.950D0 </cldfrc_rhminl>
 <cldfrc_rhminl                   phys="cam5"                          > 0.8975D0 </cldfrc_rhminl>
 <cldfrc_rhminl hgrid="1.9x2.5"   phys="cam5" microphys="mg1"          > 0.8875D0 </cldfrc_rhminl>
-<cldfrc_rhminl hgrid="1.9x2.5"   phys="cam5"                          > 0.9125D0 </cldfrc_rhminl>
-
 <cldfrc_rhminl hgrid="1.9x2.5"   phys="cam4"                          > 0.910D0 </cldfrc_rhminl>
 <cldfrc_rhminl hgrid="0.9x1.25"  phys="cam4"                          > 0.920D0 </cldfrc_rhminl>
 <cldfrc_rhminl hgrid="0.47x0.63" phys="cam4"                          > 0.920D0 </cldfrc_rhminl>

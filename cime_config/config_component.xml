@@ -112,7 +112,7 @@
     <default_value></default_value>
     <values match="last" modifier='additive'>
       <value compset="_CAM40">-phys cam4</value>
-      <value compset="_CAM50">-phys cam5</value>
+      <value compset="_CAM50">-phys cam5 -water_tracer h2o_h216o_hdo_h218o </value>
       <value compset="_CAM60">-phys cam6</value>
 
       <!-- Modifiers for CAM runs -->
