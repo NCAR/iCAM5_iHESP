@@ -3,7 +3,7 @@
 <namelist_defaults>
 
 <!-- dust -->
-<dust_emis_fact> 1.05D0 </dust_emis_fact>
+<!-- <dust_emis_fact> 1.05D0 </dust_emis_fact>-->
 
 <!-- se_ftype -->
 <se_ftype> 2 </se_ftype>
@@ -67,9 +67,9 @@
 
 <!-- microphysics -->
 
-<micro_mg_dcs> 600.D-6 </micro_mg_dcs>
+<!-- <micro_mg_dcs> 600.D-6 </micro_mg_dcs> -->
 <!-- Cloud fraction -->
 
-<cldfrc_rhminl                             > 0.950D0   </cldfrc_rhminl>
+<!-- <cldfrc_rhminl                             > 0.950D0   </cldfrc_rhminl> -->
 
 </namelist_defaults>
