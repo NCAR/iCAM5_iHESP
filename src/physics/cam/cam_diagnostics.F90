@@ -49,7 +49,7 @@ public :: &
    diag_physvar_ic,    &
    diag_readnl          ! read namelist options
 
-logical, public :: inithist_all = .false. ! Flag to indicate set of fields to be 
+logical, public :: inithist_all = .false. ! Flag to indicate set of fields to be
                                           ! included on IC file
                                           !  .false.  include only required fields
                                           !  .true.   include required *and* optional fields
@@ -78,15 +78,15 @@ integer          :: history_budget_histfile_num    ! output history file number 
 logical          :: history_waccm                  ! outputs typically used for WACCM
 
 !Physics buffer indices
-integer  ::      qcwat_idx  = 0 
-integer  ::      tcwat_idx  = 0 
-integer  ::      lcwat_idx  = 0 
-integer  ::      cld_idx    = 0 
-integer  ::      concld_idx = 0 
-integer  ::      tke_idx    = 0 
-integer  ::      kvm_idx    = 0 
-integer  ::      kvh_idx    = 0 
-integer  ::      cush_idx   = 0 
+integer  ::      qcwat_idx  = 0
+integer  ::      tcwat_idx  = 0
+integer  ::      lcwat_idx  = 0
+integer  ::      cld_idx    = 0
+integer  ::      concld_idx = 0
+integer  ::      tke_idx    = 0
+integer  ::      kvm_idx    = 0
+integer  ::      kvh_idx    = 0
+integer  ::      cush_idx   = 0
 integer  ::      t_ttend_idx = 0
 
 integer  ::      prec_dp_idx  = 0
@@ -106,7 +106,7 @@ contains
 ! ===============================================================================
 
 subroutine diag_register
-    
+
    ! Request physics buffer space for fields that persist across timesteps.
    call pbuf_add_field('T_TTEND', 'global', dtype_r8, (/pcols,pver,dyn_time_lvls/), t_ttend_idx)
 
@@ -147,7 +147,7 @@ subroutine diag_readnl(nlfile)
    ! Broadcast namelist variables
    call mpibcast(diag_cnst_conv_tend, len(diag_cnst_conv_tend), mpichar,  0, mpicom)
 #endif
-   
+
 end subroutine diag_readnl
 
 !================================================================================================
@@ -159,7 +159,7 @@ subroutine diag_init()
    use cam_history,        only: addfld, add_default, phys_decomp
    use constituent_burden, only: constituent_burden_init
    use cam_control_mod,    only: moist_physics, ideal_phys
-   use tidal_diag,         only: tidal_diag_init 
+   use tidal_diag,         only: tidal_diag_init
 
    integer :: k, m
    integer :: ixcldice, ixcldliq ! constituent indices for cloud liquid and ice water.
@@ -190,15 +190,15 @@ subroutine diag_init()
                    'T-tendency due to BAB kluge at end of tphysac (diagnostic not part of T-budget)' ,phys_decomp)
    end if
    call addfld ('TTEND_TOT   ','K/s' ,pver, 'A','Total temperature tendency'   ,phys_decomp)
-  
+
    ! column burdens for all constituents except water vapor
    call constituent_burden_init
 
    call addfld ('Z3      ','m       ',pver, 'A','Geopotential Height (above sea level)',phys_decomp)
-   call addfld ('Z1000   ','m       ',1,    'A','Geopotential Z at 700 mbar pressure surface',phys_decomp)
+   call addfld ('Z1000   ','m       ',1,    'A','Geopotential Z at 1000 mbar pressure surface',phys_decomp)
    call addfld ('Z700    ','m       ',1,    'A','Geopotential Z at 700 mbar pressure surface',phys_decomp)
    ! nanr
-   call addfld ('Z850    ','m       ',1,    'A','Geopotential Z at 850 mbar pressure surface',phys_decomp)	
+   call addfld ('Z850    ','m       ',1,    'A','Geopotential Z at 850 mbar pressure surface',phys_decomp)
    call addfld ('Z500    ','m       ',1,    'A','Geopotential Z at 500 mbar pressure surface',phys_decomp)
    call addfld ('Z300    ','m       ',1,    'A','Geopotential Z at 300 mbar pressure surface',phys_decomp)
    call addfld ('Z250    ','m       ',1,    'A','Geopotential Z at 250 mbar pressure surface',phys_decomp)
@@ -262,24 +262,25 @@ subroutine diag_init()
    call addfld ('T300    ','K       ',1,    'A','Temperature at 300 mbar pressure surface',phys_decomp)
    call addfld ('T200    ','K       ',1,    'A','Temperature at 200 mbar pressure surface',phys_decomp)
    call addfld ('Q850    ','kg/kg   ',1,    'A','Specific Humidity at 850 mbar pressure surface',phys_decomp)
-   call addfld ('Q200    ','kg/kg   ',1,    'A','Specific Humidity at 700 mbar pressure surface',phys_decomp)
-   call addfld ('U925    ','m/s     ',1,    'A','Zonal wind at 850 mbar pressure surface',phys_decomp)
+   call addfld ('Q500    ','kg/kg   ',1,    'A','Specific Humidity at 500 mbar pressure surface',phys_decomp)
+   call addfld ('Q200    ','kg/kg   ',1,    'A','Specific Humidity at 200 mbar pressure surface',phys_decomp)
+   call addfld ('U925    ','m/s     ',1,    'A','Zonal wind at 925 mbar pressure surface',phys_decomp)
    call addfld ('U850    ','m/s     ',1,    'A','Zonal wind at 850 mbar pressure surface',phys_decomp)
    ! nanr
    call addfld ('U500    ','m/s     ',1,    'A','Zonal wind at 500 mbar pressure surface',phys_decomp)
-   call addfld ('U600    ','m/s     ',1,    'A','Zonal wind at 500 mbar pressure surface',phys_decomp)
-   call addfld ('U700    ','m/s     ',1,    'A','Zonal wind at 500 mbar pressure surface',phys_decomp)
+   call addfld ('U600    ','m/s     ',1,    'A','Zonal wind at 600 mbar pressure surface',phys_decomp)
+   call addfld ('U700    ','m/s     ',1,    'A','Zonal wind at 700 mbar pressure surface',phys_decomp)
    call addfld ('U250    ','m/s     ',1,    'A','Zonal wind at 250 mbar pressure surface',phys_decomp)
    call addfld ('U200    ','m/s     ',1,    'A','Zonal wind at 200 mbar pressure surface',phys_decomp)
    call addfld ('U010    ','m/s     ',1,    'A','Zonal wind at  10 mbar pressure surface',phys_decomp)
-   call addfld ('V925    ','m/s     ',1,    'A','Meridional wind at 850 mbar pressure surface',phys_decomp)
+   call addfld ('V925    ','m/s     ',1,    'A','Meridional wind at 925 mbar pressure surface',phys_decomp)
    call addfld ('V850    ','m/s     ',1,    'A','Meridional wind at 850 mbar pressure surface',phys_decomp)
    call addfld ('V200    ','m/s     ',1,    'A','Meridional wind at 200 mbar pressure surface',phys_decomp)
    call addfld ('V250    ','m/s     ',1,    'A','Meridional wind at 250 mbar pressure surface',phys_decomp)
    ! nanr
    call addfld ('V500    ','m/s     ',1,    'A','Meridional wind at 500 mbar pressure surface',phys_decomp)
-   call addfld ('V600    ','m/s     ',1,    'A','Meridional wind at 500 mbar pressure surface',phys_decomp)
-   call addfld ('V700    ','m/s     ',1,    'A','Meridional wind at 500 mbar pressure surface',phys_decomp)
+   call addfld ('V600    ','m/s     ',1,    'A','Meridional wind at 600 mbar pressure surface',phys_decomp)
+   call addfld ('V700    ','m/s     ',1,    'A','Meridional wind at 700 mbar pressure surface',phys_decomp)
 
    call addfld ('TT      ','K2      ',pver, 'A','Eddy temperature variance' ,phys_decomp)
 
@@ -306,10 +307,10 @@ subroutine diag_init()
    call addfld ('ATMEINT  ','J/m2    ',1, 'A','Vertically integrated total atmospheric energy ',phys_decomp)
 
    call addfld ('T1000      ','K     ',1,   'A','Temperature at 1000 mbar pressure surface',phys_decomp)
-   call addfld ('T925       ','K     ',1,   'A','Temperature at 925 mbar pressure surface',phys_decomp)   
+   call addfld ('T925       ','K     ',1,   'A','Temperature at 925 mbar pressure surface',phys_decomp)
    call addfld ('T700       ','K     ',1,   'A','Temperature at 700 mbar pressure surface',phys_decomp)
    call addfld ('T010       ','K     ',1,   'A','Temperature at 10 mbar pressure surface',phys_decomp)
-   call addfld ('Q1000      ','kg/kg ',1,   'A','Specific Humidity at 1000 mbar pressure surface',phys_decomp)   
+   call addfld ('Q1000      ','kg/kg ',1,   'A','Specific Humidity at 1000 mbar pressure surface',phys_decomp)
    call addfld ('Q925       ','kg/kg ',1,   'A','Specific Humidity at 925 mbar pressure surface',phys_decomp)
 
    call addfld ('T7001000   ','K     ',1,   'A','Temperature difference 700 mb - 1000 mb',phys_decomp)
@@ -317,17 +318,17 @@ subroutine diag_init()
    call addfld ('THE7001000 ','K     ',1,   'A','ThetaE difference 700 mb - 1000 mb',phys_decomp)
 
    call addfld ('T8501000   ','K     ',1,   'A','Temperature difference 850 mb - 1000 mb',phys_decomp)
-   call addfld ('TH8501000  ','K     ',1,   'A','Theta difference 850 mb - 1000 mb',phys_decomp)   
+   call addfld ('TH8501000  ','K     ',1,   'A','Theta difference 850 mb - 1000 mb',phys_decomp)
    call addfld ('THE8501000 ','K     ',1,   'A','ThetaE difference 850 mb - 1000 mb',phys_decomp)
-   call addfld ('T9251000   ','K     ',1,   'A','Temperature difference 925 mb - 1000 mb',phys_decomp) 
-   call addfld ('TH9251000  ','K     ',1,   'A','Theta difference 925 mb - 1000 mb',phys_decomp)   
-   call addfld ('THE9251000 ','K     ',1,   'A','ThetaE difference 925 mb - 1000 mb',phys_decomp) 
+   call addfld ('T9251000   ','K     ',1,   'A','Temperature difference 925 mb - 1000 mb',phys_decomp)
+   call addfld ('TH9251000  ','K     ',1,   'A','Theta difference 925 mb - 1000 mb',phys_decomp)
+   call addfld ('THE9251000 ','K     ',1,   'A','ThetaE difference 925 mb - 1000 mb',phys_decomp)
 
    ! This field is added by radiation when full physics is used
    if ( ideal_phys )then
       call addfld('QRS     ', 'K/s     ', pver, 'A', 'Solar heating rate', phys_decomp)
    end if
- 
+
    ! ----------------------------
    ! determine default variables
    ! ----------------------------
@@ -364,7 +365,7 @@ subroutine diag_init()
          call add_default('QRS     ', 1, ' ')
       end if
    end if
-   
+
    if (history_vdiag) then
      call add_default ('U200', 2, ' ')
      call add_default ('V200', 2, ' ')
@@ -410,9 +411,9 @@ subroutine diag_init()
       end if
    end if
 
-   ! create history variables for fourier coefficients of the diurnal 
+   ! create history variables for fourier coefficients of the diurnal
    ! and semidiurnal tide in T, U, V, and Z3
-   call tidal_diag_init() 
+   call tidal_diag_init()
 
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Exit here for adiabatic/ideal physics cases !
@@ -621,7 +622,7 @@ subroutine diag_init()
    call addfld ('TPERT&IC   ','K       ',1,    'I','Perturbation temperature (eddies in PBL)'        ,phys_decomp)
    call addfld ('QPERT&IC   ','kg/kg   ',1,    'I','Perturbation specific humidity (eddies in PBL)'  ,phys_decomp)
    ! nanr
-   call addfld ('TBOT&IC    ','K       ',1,    'I','Lowest model level temperature '                 ,phys_decomp)	
+   call addfld ('TBOT&IC    ','K       ',1,    'I','Lowest model level temperature '                 ,phys_decomp)
 
 
    ! Initial file - Optional fields
@@ -639,11 +640,11 @@ subroutine diag_init()
       call add_default ('CUSH&IC    ',0, 'I')
       call add_default ('KVH&IC     ',0, 'I')
       call add_default ('KVM&IC     ',0, 'I')
-      ! nanr	
-      call add_default ('TBOT&IC    ',0, 'I')   
+      ! nanr
+      call add_default ('TBOT&IC    ',0, 'I')
    end if
 
-   ! CAM export state 
+   ! CAM export state
    call addfld('a2x_BCPHIWET', 'kg/m2/s', 1, 'A', 'wetdep of hydrophilic black carbon',   phys_decomp)
    call addfld('a2x_BCPHIDRY', 'kg/m2/s', 1, 'A', 'drydep of hydrophilic black carbon',   phys_decomp)
    call addfld('a2x_BCPHODRY', 'kg/m2/s', 1, 'A', 'drydep of hydrophobic black carbon',   phys_decomp)
@@ -664,18 +665,18 @@ subroutine diag_init()
   lcwat_idx  = pbuf_get_index('LCWAT',ierr)
   cld_idx    = pbuf_get_index('CLD')
   concld_idx = pbuf_get_index('CONCLD')
-  
+
   tke_idx  = pbuf_get_index('tke')
   kvm_idx  = pbuf_get_index('kvm')
   kvh_idx  = pbuf_get_index('kvh')
   cush_idx = pbuf_get_index('cush')
-  
+
   pblh_idx  = pbuf_get_index('pblh')
   tpert_idx = pbuf_get_index('tpert')
   qpert_idx = pbuf_get_index('qpert',ierr)
 
-  prec_dp_idx  = pbuf_get_index('PREC_DP') 
-  snow_dp_idx  = pbuf_get_index('SNOW_DP') 
+  prec_dp_idx  = pbuf_get_index('PREC_DP')
+  snow_dp_idx  = pbuf_get_index('SNOW_DP')
   prec_sh_idx  = pbuf_get_index('PREC_SH')
   snow_sh_idx  = pbuf_get_index('SNOW_SH')
   prec_sed_idx = pbuf_get_index('PREC_SED')
@@ -744,11 +745,11 @@ subroutine diag_conv_tend_ini(state,pbuf)
 
 ! Initialize convective tendency calcs.
 
-   
+
 ! Argument:
 
    type(physics_state), intent(in) :: state
-   
+
    type(physics_buffer_desc), pointer :: pbuf(:)
 
 ! Local variables:
@@ -786,8 +787,8 @@ end subroutine diag_conv_tend_ini
 
   subroutine diag_phys_writeout(state, psl)
 
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Purpose: record dynamics variables on physics grid
 !
 !-----------------------------------------------------------------------
@@ -804,7 +805,7 @@ end subroutine diag_conv_tend_ini
 ! Arguments
 !
    type(physics_state), intent(inout) :: state
-   real(r8), optional , intent(out)   :: psl(pcols) 
+   real(r8), optional , intent(out)   :: psl(pcols)
 !
 !---------------------------Local workspace-----------------------------
 !
@@ -818,12 +819,12 @@ end subroutine diag_conv_tend_ini
     real(r8) p_surf(pcols)    ! data interpolated to a pressure surface
     real(r8) p_surf_t1(pcols)    ! data interpolated to a pressure surface
     real(r8) p_surf_t2(pcols)    ! data interpolated to a pressure surface
-    real(r8) p_surf_q1(pcols)    ! data interpolated to a pressure surface    
-    real(r8) p_surf_q2(pcols)    ! data interpolated to a pressure surface        
+    real(r8) p_surf_q1(pcols)    ! data interpolated to a pressure surface
+    real(r8) p_surf_q2(pcols)    ! data interpolated to a pressure surface
     real(r8) tem2(pcols,pver) ! temporary workspace
     real(r8) timestep(pcols)  ! used for outfld call
-    real(r8) esl(pcols,pver)   ! saturation vapor pressures 
-    real(r8) esi(pcols,pver)   ! 
+    real(r8) esl(pcols,pver)   ! saturation vapor pressures
+    real(r8) esi(pcols,pver)   !
     real(r8) dlon(pcols)      ! width of grid cell (meters)
     integer  plon             ! number of longitudes
 
@@ -860,7 +861,7 @@ end subroutine diag_conv_tend_ini
 
     if ( moist_physics) then
        call outfld('PDELDRY ',state%pdeldry, pcols, lchnk)
-       call outfld('PSDRY',   state%psdry,   pcols, lchnk) 
+       call outfld('PSDRY',   state%psdry,   pcols, lchnk)
     end if
 
     call outfld('PHIS    ',state%phis,    pcols,   lchnk     )
@@ -872,13 +873,13 @@ end subroutine diag_conv_tend_ini
 #endif
 
 !
-! Add height of surface to midpoint height above surface 
+! Add height of surface to midpoint height above surface
 !
     do k = 1, pver
        z3(:ncol,k) = state%zm(:ncol,k) + state%phis(:ncol)*rga
     end do
     call outfld('Z3      ',z3,pcols,lchnk)
-!           
+!
 ! Output Z3 on pressure surfaces
 !
     if (hist_fld_active('Z1000')) then
@@ -894,7 +895,7 @@ end subroutine diag_conv_tend_ini
        call vertinterp(ncol, pcols, pver, state%pmid, 85000._r8, z3, p_surf)
        call outfld('Z850    ', p_surf, pcols, lchnk)
     end if
-    ! -- end	
+    ! -- end
     if (hist_fld_active('Z500')) then
        call vertinterp(ncol, pcols, pver, state%pmid, 50000._r8, z3, p_surf)
        call outfld('Z500    ', p_surf, pcols, lchnk)
@@ -962,7 +963,7 @@ end subroutine diag_conv_tend_ini
     ftem(:ncol,:) = sqrt( state%u(:ncol,:)**2 + state%v(:ncol,:)**2)
     call outfld ('WSPEED  ',ftem    ,pcols   ,lchnk     )
     call outfld ('WSPDSRFMX',ftem(:,pver)   ,pcols   ,lchnk     )
-    call outfld ('WSPDSRFAV',ftem(:,pver)   ,pcols   ,lchnk     ) 
+    call outfld ('WSPDSRFAV',ftem(:,pver)   ,pcols   ,lchnk     )
 
 ! Vertical velocity and advection
 
@@ -1003,7 +1004,7 @@ end subroutine diag_conv_tend_ini
        call outfld('OMEGA200', p_surf, pcols, lchnk)
     end if
 ! -- end
-!     
+!
 ! Mass of q, by layer and vertically integrated
 !
     ftem(:ncol,:) = state%q(:ncol,:,1) * state%pdel(:ncol,:) * rga
@@ -1080,7 +1081,7 @@ end subroutine diag_conv_tend_ini
        end if
 
        if (hist_fld_active('RHW') .or. hist_fld_active('RHI') .or. hist_fld_active('RHCFMIP') ) then
-	  
+
           ! RH w.r.t liquid (water)
           call qsat_water (state%t(:ncol,:), state%pmid(:ncol,:), &
                esl(:ncol,:), ftem(:ncol,:))
@@ -1109,7 +1110,7 @@ end subroutine diag_conv_tend_ini
 		end if
              end do
           end do
-          
+
           call outfld ('RHCFMIP  ',ftem2    ,pcols   ,lchnk     )
 
        end if
@@ -1119,9 +1120,9 @@ end subroutine diag_conv_tend_ini
 ! Sea level pressure
 !
     if (present(psl) .or. hist_fld_active('PSL')) then
-       call cpslec (ncol, state%pmid, state%phis, state%ps, state%t,psl_tmp, gravit, rair) 
+       call cpslec (ncol, state%pmid, state%phis, state%ps, state%t,psl_tmp, gravit, rair)
        call outfld ('PSL     ',psl_tmp  ,pcols, lchnk     )
-       if (present(psl)) then	
+       if (present(psl)) then
           psl(:ncol) = psl_tmp(:ncol)
        end if
     end if
@@ -1148,12 +1149,16 @@ end subroutine diag_conv_tend_ini
        call vertinterp(ncol, pcols, pver, state%pmid, 85000._r8, state%q(1,1,1), p_surf)
        call outfld('Q850    ', p_surf, pcols, lchnk )
     end if
+    if (hist_fld_active('Q500')) then
+       call vertinterp(ncol, pcols, pver, state%pmid, 50000._r8, state%q(1,1,1), p_surf)
+       call outfld('Q500    ', p_surf, pcols, lchnk )
+    end if
     if (hist_fld_active('Q200')) then
        call vertinterp(ncol, pcols, pver, state%pmid, 20000._r8, state%q(1,1,1), p_surf)
        call outfld('Q200    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('U925')) then
-       call vertinterp(ncol, pcols, pver, state%pmid, 85000._r8, state%u, p_surf)
+       call vertinterp(ncol, pcols, pver, state%pmid, 92500._r8, state%u, p_surf)
        call outfld('U925    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('U850')) then
@@ -1170,11 +1175,11 @@ end subroutine diag_conv_tend_ini
        call outfld('U500    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('U600')) then
-       call vertinterp(ncol, pcols, pver, state%pmid, 50000._r8, state%u, p_surf)
+       call vertinterp(ncol, pcols, pver, state%pmid, 60000._r8, state%u, p_surf)
        call outfld('U600    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('U700')) then
-       call vertinterp(ncol, pcols, pver, state%pmid, 50000._r8, state%u, p_surf)
+       call vertinterp(ncol, pcols, pver, state%pmid, 70000._r8, state%u, p_surf)
        call outfld('U700    ', p_surf, pcols, lchnk )
     end if
 ! -- end
@@ -1187,7 +1192,7 @@ end subroutine diag_conv_tend_ini
        call outfld('U010    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('V925')) then
-       call vertinterp(ncol, pcols, pver, state%pmid, 85000._r8, state%v, p_surf)
+       call vertinterp(ncol, pcols, pver, state%pmid, 92500._r8, state%v, p_surf)
        call outfld('V925    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('V850')) then
@@ -1208,11 +1213,11 @@ end subroutine diag_conv_tend_ini
        call outfld('V500    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('V600')) then
-       call vertinterp(ncol, pcols, pver, state%pmid, 50000._r8, state%v, p_surf)
+       call vertinterp(ncol, pcols, pver, state%pmid, 60000._r8, state%v, p_surf)
        call outfld('V600    ', p_surf, pcols, lchnk )
     end if
     if (hist_fld_active('V700')) then
-       call vertinterp(ncol, pcols, pver, state%pmid, 50000._r8, state%v, p_surf)
+       call vertinterp(ncol, pcols, pver, state%pmid, 70000._r8, state%v, p_surf)
        call outfld('V700    ', p_surf, pcols, lchnk )
     end if
 ! -- end
@@ -1250,7 +1255,7 @@ end subroutine diag_conv_tend_ini
     ftem(:ncol,:) = (cpair*state%t(:ncol,:) +  ftem1(:ncol,:) + latvap*state%q(:ncol,:,1) + &
          0.5_r8*(state%u(:ncol,:)**2+state%v(:ncol,:)**2))*(state%pdel(:ncol,:)/gravit)
     !! vertically integrate
-    do k=2,pver       
+    do k=2,pver
 	ftem(:ncol,1) = ftem(:ncol,1) + ftem(:ncol,k)
     end do
     call outfld ('ATMEINT   ',ftem(:ncol,1)  ,pcols   ,lchnk     )
@@ -1258,7 +1263,7 @@ end subroutine diag_conv_tend_ini
 !! Boundary layer atmospheric stability, temperature, water vapor diagnostics
 
     if (hist_fld_active('T1000')      .or. &
-        hist_fld_active('T9251000')   .or. & 
+        hist_fld_active('T9251000')   .or. &
         hist_fld_active('TH9251000')  .or. &
         hist_fld_active('THE9251000') .or. &
         hist_fld_active('T8501000')   .or. &
@@ -1271,7 +1276,7 @@ end subroutine diag_conv_tend_ini
     end if
 
     if (hist_fld_active('T925')       .or. &
-        hist_fld_active('T9251000')   .or. & 
+        hist_fld_active('T9251000')   .or. &
         hist_fld_active('TH9251000')  .or. &
         hist_fld_active('THE9251000')) then
        call vertinterp(ncol, pcols, pver, state%pmid, 92500._r8, state%t, p_surf_t2)
@@ -1299,26 +1304,26 @@ end subroutine diag_conv_tend_ini
     end if
 
     if (hist_fld_active('Q1000')) then
-       call outfld('Q1000    ', p_surf_q1, pcols, lchnk ) 
+       call outfld('Q1000    ', p_surf_q1, pcols, lchnk )
     end if
 
     if (hist_fld_active('Q925')) then
-       call outfld('Q925    ', p_surf_q2, pcols, lchnk )  
+       call outfld('Q925    ', p_surf_q2, pcols, lchnk )
     end if
 
     if (hist_fld_active('T9251000')) then
-       p_surf = p_surf_t2-p_surf_t1  
-       call outfld('T9251000    ', p_surf, pcols, lchnk ) 
+       p_surf = p_surf_t2-p_surf_t1
+       call outfld('T9251000    ', p_surf, pcols, lchnk )
     end if
 
     if (hist_fld_active('TH9251000')) then
-       p_surf = (p_surf_t2*(1000.0_r8/925.0_r8)**cappa)-(p_surf_t1*(1.0_r8)**cappa)   
-       call outfld('TH9251000    ', p_surf, pcols, lchnk )    
+       p_surf = (p_surf_t2*(1000.0_r8/925.0_r8)**cappa)-(p_surf_t1*(1.0_r8)**cappa)
+       call outfld('TH9251000    ', p_surf, pcols, lchnk )
     end if
 
     if (hist_fld_active('THE9251000')) then
        p_surf = (p_surf_t2*(1000.0_r8/925.0_r8)**cappa)*exp((2500000.0_r8*p_surf_q2)/(1004.0_r8*p_surf_t2))- &
-            (p_surf_t1*(1.0_r8)**cappa)*exp((2500000.0_r8*p_surf_q1)/(1004.0_r8*p_surf_t1))  
+            (p_surf_t1*(1.0_r8)**cappa)*exp((2500000.0_r8*p_surf_q1)/(1004.0_r8*p_surf_t1))
        call outfld('THE9251000    ', p_surf, pcols, lchnk )
     end if
 
@@ -1330,20 +1335,20 @@ end subroutine diag_conv_tend_ini
 
     !!! at 1000 mb and 850 mb
     if (hist_fld_active('T8501000')) then
-       p_surf = p_surf_t2-p_surf_t1  
-       call outfld('T8501000    ', p_surf, pcols, lchnk ) 
+       p_surf = p_surf_t2-p_surf_t1
+       call outfld('T8501000    ', p_surf, pcols, lchnk )
     end if
 
     if (hist_fld_active('TH8501000')) then
-       p_surf = (p_surf_t2*(1000.0_r8/850.0_r8)**cappa)-(p_surf_t1*(1.0_r8)**cappa)   
-       call outfld('TH8501000    ', p_surf, pcols, lchnk )   
+       p_surf = (p_surf_t2*(1000.0_r8/850.0_r8)**cappa)-(p_surf_t1*(1.0_r8)**cappa)
+       call outfld('TH8501000    ', p_surf, pcols, lchnk )
     end if
 
     if (hist_fld_active('THE8501000')) then
        call vertinterp(ncol, pcols, pver, state%pmid, 85000._r8, state%q(1,1,1), p_surf_q2)
        p_surf = (p_surf_t2*(1000.0_r8/850.0_r8)**cappa)*exp((2500000.0_r8*p_surf_q2)/(1004.0_r8*p_surf_t2))- &
-            (p_surf_t1*(1.0_r8)**cappa)*exp((2500000.0_r8*p_surf_q1)/(1004.0_r8*p_surf_t1))  
-       call outfld('THE8501000    ', p_surf, pcols, lchnk ) 
+            (p_surf_t1*(1.0_r8)**cappa)*exp((2500000.0_r8*p_surf_q1)/(1004.0_r8*p_surf_t1))
+       call outfld('THE8501000    ', p_surf, pcols, lchnk )
     end if
 
     if (hist_fld_active('T7001000')  .or. &
@@ -1380,12 +1385,12 @@ end subroutine diag_conv_tend_ini
        call vertinterp(ncol, pcols, pver, state%pmid, 1000._r8, state%t, p_surf)
        call outfld('T010           ', p_surf, pcols, lchnk )
     end if
-    
-    
+
+
     !---------------------------------------------------------
-    ! tidal diagnostics 
+    ! tidal diagnostics
     !---------------------------------------------------------
-    call tidal_diag_write(state) 
+    call tidal_diag_write(state)
 
     return
   end subroutine diag_phys_writeout
@@ -1393,8 +1398,8 @@ end subroutine diag_conv_tend_ini
 
 subroutine diag_conv(state, ztodt, pbuf)
 
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Output diagnostics associated with all convective processes.
 !
 !-----------------------------------------------------------------------
@@ -1422,7 +1427,7 @@ subroutine diag_conv(state, ztodt, pbuf)
    real(r8)          :: wtprect(pcols)             !total water tracer precipitation
 
 ! Local variables:
-   
+
    integer :: i, k, m, lchnk, ncol
 
    real(r8) :: rtdt
@@ -1527,8 +1532,8 @@ end subroutine diag_conv
 
 subroutine diag_surf (cam_in, cam_out, ps, trefmxav, trefmnav )
 
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Purpose: record surface diagnostics
 !
 !-----------------------------------------------------------------------
@@ -1544,7 +1549,7 @@ subroutine diag_surf (cam_in, cam_out, ps, trefmxav, trefmnav )
     type(cam_in_t),  intent(in) :: cam_in
     type(cam_out_t), intent(in) :: cam_out
 
-    real(r8), intent(inout) :: trefmnav(pcols) ! daily minimum tref  
+    real(r8), intent(inout) :: trefmnav(pcols) ! daily minimum tref
     real(r8), intent(inout) :: trefmxav(pcols) ! daily maximum tref
 
     real(r8), intent(in)    :: ps(pcols)       ! Surface pressure.
@@ -1586,13 +1591,13 @@ subroutine diag_surf (cam_in, cam_out, ps, trefmxav, trefmnav )
       call outfld('buck18', cam_in%buck18, pcols, lchnk)
     end if
 
-! 
+!
 ! Calculate and output reference height RH (RHREFHT)
 
    call qsat(cam_in%tref(:ncol), ps(:ncol), tem2(:ncol), ftem(:ncol))
        ftem(:ncol) = cam_in%qref(:ncol)/ftem(:ncol)*100._r8
 
-      
+
     call outfld('RHREFHT',   ftem,      pcols, lchnk)
 
 
@@ -1645,8 +1650,8 @@ end subroutine diag_surf
 
 subroutine diag_export(cam_out)
 
-!----------------------------------------------------------------------- 
-! 
+!-----------------------------------------------------------------------
+!
 ! Purpose: Write export state to history file
 !
 !-----------------------------------------------------------------------
@@ -1716,9 +1721,9 @@ end subroutine diag_export
 !
    integer       , intent(in) :: lchnk  ! chunk identifier
    type(physics_buffer_desc), pointer :: pbuf(:)
-   
+
    type(cam_out_t), intent(inout) :: cam_out
-   type(cam_in_t),  intent(inout) :: cam_in 
+   type(cam_in_t),  intent(inout) :: cam_in
 !
 !---------------------------Local workspace-----------------------------
 !
@@ -1768,11 +1773,11 @@ end subroutine diag_export
 
       call pbuf_get_field(pbuf, kvh_idx,  conv_var_3d)
       call outfld('KVH&IC    ',conv_var_3d, pcols,lchnk)
- 
+
       call pbuf_get_field(pbuf, cush_idx, conv_var_2d ,(/1,itim_old/),  (/pcols,1/))
       call outfld('CUSH&IC   ',conv_var_2d, pcols,lchnk)
 
-      if (qpert_idx > 0) then 
+      if (qpert_idx > 0) then
          call pbuf_get_field(pbuf, qpert_idx, qpert)
          call outfld('QPERT&IC   ', qpert, pcols, lchnk)
       end if
@@ -1801,11 +1806,11 @@ subroutine diag_phys_tend_writeout(state, pbuf,  tend, ztodt, tmp_q, tmp_cldliq,
 
    use check_energy,    only: check_energy_get_integrals
    use physconst,       only: cpair
-   
+
    ! Arguments
 
-   type(physics_state), intent(in   ) :: state 
-   
+   type(physics_state), intent(in   ) :: state
+
    type(physics_buffer_desc), pointer :: pbuf(:)
    type(physics_tend ), intent(in   ) :: tend
    real(r8)           , intent(in   ) :: ztodt                  ! physics timestep
@@ -1828,7 +1833,7 @@ subroutine diag_phys_tend_writeout(state, pbuf,  tend, ztodt, tmp_q, tmp_cldliq,
    real(r8) :: heat_glob         ! global energy integral (FV only)
    integer  :: ixcldice, ixcldliq! constituent indices for cloud liquid and ice water.
    ! CAM pointers to get variables from the physics buffer
-   real(r8), pointer, dimension(:,:) :: t_ttend  
+   real(r8), pointer, dimension(:,:) :: t_ttend
    integer  :: itim_old
 
    !-----------------------------------------------------------------------
@@ -1921,7 +1926,7 @@ end subroutine diag_phys_tend_writeout
 !
 ! Arguments
 !
-   type(physics_state), intent(in) :: state 
+   type(physics_state), intent(in) :: state
 !
 !---------------------------Local workspace-----------------------------
 !
