@@ -111,8 +111,8 @@ end type dyn_export_t
 !
 !----------------------------------------------------------------------
 
-
-logical, parameter         :: DEBUG = .true.
+! Not used as far as I can tell
+!logical, parameter         :: DEBUG = .true.
 
 ! The FV core is always called in its "full physics" mode.  We don't want
 ! the dycore to know what physics package is responsible for the forcing.
